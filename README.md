@@ -6,7 +6,7 @@
 </p>
 
 <h1 align="center">
-  CoreX Pro — Sovereign Hybrid Homelab
+  CoreX Pro - Sovereign Hybrid Homelab
 </h1>
 
 <p align="center">
@@ -32,7 +32,7 @@
 
 You use Google Drive, Google Photos, Gmail, Bitwarden, Zapier, Vercel, ChatGPT, and a dozen other cloud services. You pay monthly for each, your data lives on someone else's servers, and you're one policy change away from losing access to your own files.
 
-CoreX Pro replaces all of them with self-hosted alternatives running on a single machine in your home. One bash script sets up everything — encrypted, backed up, accessible from anywhere via Cloudflare Tunnel.
+CoreX Pro replaces all of them with self-hosted alternatives running on a single machine in your home. One bash script sets up everything - encrypted, backed up, accessible from anywhere via Cloudflare Tunnel.
 
 **Who is this for?**
 
@@ -57,7 +57,7 @@ CoreX Pro replaces all of them with self-hosted alternatives running on a single
 git clone https://github.com/itismowgli/corex-pro.git
 cd corex-pro
 
-# 2. Edit configuration (REQUIRED — update IP, domain, tunnel token)
+# 2. Edit configuration (REQUIRED - update IP, domain, tunnel token)
 nano install-corex-master.sh
 
 # 3. Run
@@ -73,20 +73,20 @@ After completion, your credentials are saved to `/root/corex-credentials.txt` an
 
 ## 📦 What You Get
 
-| Replaces | With | Why Self-Host? |
-|----------|------|---------------|
-| Google Drive / Dropbox | **Nextcloud** | Unlimited storage, no monthly fees, your encryption keys |
-| Google Photos / iCloud | **Immich** | Face recognition, ML search, no storage limits, no AI training |
-| Gmail / Outlook | **Stalwart Mail** | Full email server, no scanning, custom domain |
-| Bitwarden / 1Password | **Vaultwarden** | Zero-knowledge passwords, family sharing, free |
-| Zapier / Make | **n8n** | Unlimited automations, no per-task pricing |
-| Vercel / Netlify | **Coolify** | Deploy any app, no vendor lock-in |
-| ChatGPT / Claude API | **Ollama + Open WebUI** | Local LLMs, zero API costs, full privacy |
-| Time Machine + NAS | **SMB via Docker** | Encrypted macOS backups to your own hardware |
-| UptimeRobot | **Uptime Kuma** | Beautiful status pages, unlimited monitors |
-| Datadog / New Relic | **Grafana + Prometheus** | Full observability, no per-host pricing |
-| Cloudflare Access | **Cloudflare Tunnel** | Zero port-forwarding, encrypted tunnel |
-| Pi-hole | **AdGuard Home** | DNS-level ad blocking + DNS rewrites for local routing |
+| Replaces               | With                     | Why Self-Host?                                                 |
+| ---------------------- | ------------------------ | -------------------------------------------------------------- |
+| Google Drive / Dropbox | **Nextcloud**            | Unlimited storage, no monthly fees, your encryption keys       |
+| Google Photos / iCloud | **Immich**               | Face recognition, ML search, no storage limits, no AI training |
+| Gmail / Outlook        | **Stalwart Mail**        | Full email server, no scanning, custom domain                  |
+| Bitwarden / 1Password  | **Vaultwarden**          | Zero-knowledge passwords, family sharing, free                 |
+| Zapier / Make          | **n8n**                  | Unlimited automations, no per-task pricing                     |
+| Vercel / Netlify       | **Coolify**              | Deploy any app, no vendor lock-in                              |
+| ChatGPT / Claude API   | **Ollama + Open WebUI**  | Local LLMs, zero API costs, full privacy                       |
+| Time Machine + NAS     | **SMB via Docker**       | Encrypted macOS backups to your own hardware                   |
+| UptimeRobot            | **Uptime Kuma**          | Beautiful status pages, unlimited monitors                     |
+| Datadog / New Relic    | **Grafana + Prometheus** | Full observability, no per-host pricing                        |
+| Cloudflare Access      | **Cloudflare Tunnel**    | Zero port-forwarding, encrypted tunnel                         |
+| Pi-hole                | **AdGuard Home**         | DNS-level ad blocking + DNS rewrites for local routing         |
 
 ---
 
@@ -115,9 +115,9 @@ After completion, your credentials are saved to `/root/corex-credentials.txt` an
 
 Services are deployed across three isolated Docker networks:
 
-- **`proxy-net`** — All web-facing services + Traefik + Cloudflare Tunnel
-- **`monitoring-net`** — Prometheus + Grafana + exporters (no internet access)
-- **`ai-net`** — Ollama + Open WebUI + Browserless (sandboxed)
+- **`proxy-net`** - All web-facing services + Traefik + Cloudflare Tunnel
+- **`monitoring-net`** - Prometheus + Grafana + exporters (no internet access)
+- **`ai-net`** - Ollama + Open WebUI + Browserless (sandboxed)
 
 ### Storage Strategy
 
@@ -152,7 +152,7 @@ External SSD (/dev/sdX)
 
 ## 🧰 Services & Use Cases
 
-### 🔀 Traefik — Reverse Proxy & TLS
+### 🔀 Traefik - Reverse Proxy & TLS
 
 **What:** Automatic HTTPS for all services. Routes `*.yourdomain.com` to the right container.
 
@@ -164,11 +164,12 @@ External SSD (/dev/sdX)
 
 ---
 
-### 🛡 AdGuard Home — DNS & Ad Blocking
+### 🛡 AdGuard Home - DNS & Ad Blocking
 
 **What:** Network-wide DNS server that blocks ads, trackers, and malware domains. Also serves as your local DNS for routing `*.yourdomain.com` to your server's LAN IP.
 
 **When to use:**
+
 - Block ads on every device on your network (including smart TVs, phones, IoT)
 - Route your subdomains locally so LAN traffic never hits the internet
 - Monitor DNS queries for suspicious activity
@@ -181,11 +182,12 @@ External SSD (/dev/sdX)
 
 ---
 
-### 🐳 Portainer — Docker Management
+### 🐳 Portainer - Docker Management
 
 **What:** Web UI for managing Docker containers, images, volumes, and networks.
 
 **When to use:**
+
 - View container logs without SSH
 - Restart services from your phone
 - Monitor resource usage per container
@@ -195,11 +197,12 @@ External SSD (/dev/sdX)
 
 ---
 
-### ☁️ Nextcloud — File Storage & Sync
+### ☁️ Nextcloud - File Storage & Sync
 
 **What:** Self-hosted Google Drive / Dropbox. File sync, calendar, contacts, notes, video calls, kanban boards.
 
 **When to use:**
+
 - Sync files across all your devices
 - Share files/folders with family or team via links
 - Collaborative document editing
@@ -214,11 +217,12 @@ External SSD (/dev/sdX)
 
 ---
 
-### 📸 Immich — Photo & Video Management
+### 📸 Immich - Photo & Video Management
 
 **What:** Self-hosted Google Photos. AI-powered face recognition, smart search, automatic mobile backup.
 
 **When to use:**
+
 - Automatic photo backup from iOS/Android
 - Search photos by content ("beach sunset", "dog", "birthday")
 - Face recognition and people grouping
@@ -232,11 +236,12 @@ External SSD (/dev/sdX)
 
 ---
 
-### 🔐 Vaultwarden — Password Manager
+### 🔐 Vaultwarden - Password Manager
 
 **What:** Lightweight, self-hosted Bitwarden server. Works with all official Bitwarden clients.
 
 **When to use:**
+
 - Store and autofill passwords across all devices
 - Share passwords with family (Organizations feature)
 - Store secure notes, credit cards, identities
@@ -253,11 +258,12 @@ External SSD (/dev/sdX)
 
 ---
 
-### ✉️ Stalwart Mail — Email Server
+### ✉️ Stalwart Mail - Email Server
 
 **What:** All-in-one email server: SMTP, IMAP, CalDAV, CardDAV. Written in Rust.
 
 **When to use:**
+
 - Host email on your own domain (`you@yourdomain.com`)
 - Full control over email data (no scanning, no AI training)
 - CalDAV/CardDAV for calendar and contacts sync
@@ -272,11 +278,12 @@ External SSD (/dev/sdX)
 
 ---
 
-### 🚀 Coolify — Web Hosting PaaS
+### 🚀 Coolify - Web Hosting PaaS
 
 **What:** Self-hosted Vercel / Netlify / Heroku. Deploy web apps with git push.
 
 **When to use:**
+
 - Deploy static sites, Next.js, Laravel, Rails, Django apps
 - Automatic deployments from GitHub/GitLab
 - Preview deployments for pull requests
@@ -289,11 +296,12 @@ External SSD (/dev/sdX)
 
 ---
 
-### ⚡ n8n — Workflow Automation
+### ⚡ n8n - Workflow Automation
 
 **What:** Self-hosted Zapier / Make.com. Visual workflow builder with 400+ integrations.
 
 **When to use:**
+
 - Automate repetitive tasks (RSS to email, form submissions to Slack)
 - Connect services that don't natively integrate
 - Build webhook-triggered workflows
@@ -306,11 +314,12 @@ External SSD (/dev/sdX)
 
 ---
 
-### 💾 Time Machine — macOS Backups
+### 💾 Time Machine - macOS Backups
 
 **What:** Network Time Machine server via SMB. Your Mac backs up to your server automatically.
 
 **When to use:**
+
 - Automatic hourly macOS backups over Wi-Fi
 - Restore individual files or full system from any backup point
 - No need for a dedicated external drive on your desk
@@ -321,11 +330,12 @@ External SSD (/dev/sdX)
 
 ---
 
-### 📊 Uptime Kuma — Status Monitoring
+### 📊 Uptime Kuma - Status Monitoring
 
 **What:** Self-hosted UptimeRobot. Beautiful status pages and multi-protocol monitoring.
 
 **When to use:**
+
 - Monitor uptime of all your services
 - Get notifications when something goes down (email, Slack, Discord, Telegram)
 - Public status page for your team or users
@@ -335,11 +345,12 @@ External SSD (/dev/sdX)
 
 ---
 
-### 📈 Grafana + Prometheus — Metrics & Dashboards
+### 📈 Grafana + Prometheus - Metrics & Dashboards
 
 **What:** Full observability stack. Prometheus collects metrics, Grafana visualizes them.
 
 **When to use:**
+
 - Monitor CPU, RAM, disk, and network usage over time
 - Per-container resource metrics (via cAdvisor)
 - Custom dashboards for any metric
@@ -353,31 +364,34 @@ External SSD (/dev/sdX)
 
 ---
 
-### 🤖 Ollama — Local LLM Engine
+### 🤖 Ollama - Local LLM Engine
 
 **What:** Run large language models locally. Supports Llama, Mistral, CodeLlama, Gemma, and more.
 
 **When to use:**
+
 - Private AI chat (no data sent to OpenAI/Anthropic/Google)
 - Code generation and review
 - Document analysis and summarization
 - AI-powered automation via n8n + Ollama
 
 **Recommended models:**
-- `llama3.2:3b` — Fast, good for chat (3GB RAM)
-- `mistral:7b` — Balanced quality/speed (7GB RAM)
-- `codellama:7b` — Coding assistant (7GB RAM)
-- `gemma2:9b` — Strong general-purpose (9GB RAM)
+
+- `llama3.2:3b` - Fast, good for chat (3GB RAM)
+- `mistral:7b` - Balanced quality/speed (7GB RAM)
+- `codellama:7b` - Coding assistant (7GB RAM)
+- `gemma2:9b` - Strong general-purpose (9GB RAM)
 
 **Access:** API at `http://YOUR_IP:11434`
 
 ---
 
-### 💬 Open WebUI — AI Chat Interface
+### 💬 Open WebUI - AI Chat Interface
 
 **What:** Self-hosted ChatGPT-like interface that connects to Ollama.
 
 **When to use:**
+
 - Chat with local LLMs through a polished web interface
 - Multi-model conversations (switch models mid-chat)
 - Upload documents for RAG (retrieval-augmented generation)
@@ -388,11 +402,12 @@ External SSD (/dev/sdX)
 
 ---
 
-### 🌐 Browserless — Headless Chrome
+### 🌐 Browserless - Headless Chrome
 
 **What:** Chrome browser as an API. For AI agents, web scraping, PDF generation.
 
 **When to use:**
+
 - n8n workflows that need to interact with web pages
 - AI agents that need to browse the web (via Ollama + Browserless)
 - Generate PDFs from HTML
@@ -403,19 +418,21 @@ External SSD (/dev/sdX)
 
 ---
 
-### 🛡 CrowdSec — Community Intrusion Prevention
+### 🛡 CrowdSec - Community Intrusion Prevention
 
 **What:** Community-powered IPS. Detects attack patterns and shares threat intelligence globally.
 
 **When to use:** Always running. Monitors Traefik logs, SSH logs, and system logs for:
+
 - Brute force attacks
 - CVE exploit attempts
 - Bot and crawler abuse
 - Port scanning
 
-**How it works:** Detects threats locally, reports to CrowdSec community, receives blocklists of known-bad IPs from the community. You block attackers *before* they even target you.
+**How it works:** Detects threats locally, reports to CrowdSec community, receives blocklists of known-bad IPs from the community. You block attackers _before_ they even target you.
 
 **Commands:**
+
 ```bash
 docker exec crowdsec cscli decisions list    # View blocked IPs
 docker exec crowdsec cscli metrics           # View detection stats
@@ -423,11 +440,12 @@ docker exec crowdsec cscli metrics           # View detection stats
 
 ---
 
-### 🔒 Cloudflare Tunnel — Secure External Access
+### 🔒 Cloudflare Tunnel - Secure External Access
 
 **What:** Encrypted tunnel from Cloudflare's edge network to your server. No port forwarding required.
 
 **When to use:**
+
 - Access services from outside your home (phone on cellular, travel, work)
 - Zero exposed ports on your router
 - DDoS protection and WAF included (Cloudflare free tier)
@@ -464,7 +482,8 @@ TM_SIZE="400GB"                         # Time Machine partition size
 ### Setting a Static IP
 
 Your server needs a static LAN IP. Either:
-- Configure it in your router (DHCP reservation) — recommended
+
+- Configure it in your router (DHCP reservation) - recommended
 - Or set it on the server in `/etc/netplan/` config
 
 ---
@@ -473,7 +492,7 @@ Your server needs a static LAN IP. Either:
 
 After the script completes, follow these steps **in order**:
 
-### 1. AdGuard Home (DNS) — Do This First
+### 1. AdGuard Home (DNS) - Do This First
 
 1. Open `http://YOUR_IP:3000`
 2. Complete setup wizard
@@ -485,22 +504,22 @@ After the script completes, follow these steps **in order**:
 
 In [Cloudflare Dashboard](https://one.dash.cloudflare.com) → Networks → Tunnels → Public Hostnames, add:
 
-| Hostname | Service | URL |
-|----------|---------|-----|
-| `photos.yourdomain.com` | HTTP | `immich-server:2283` |
-| `nextcloud.yourdomain.com` | HTTP | `nextcloud:80` |
-| `vault.yourdomain.com` | HTTP | `vaultwarden:80` |
-| `n8n.yourdomain.com` | HTTP | `n8n:5678` |
-| `mail.yourdomain.com` | HTTP | `stalwart:8080` |
-| `status.yourdomain.com` | HTTP | `uptime-kuma:3001` |
-| `grafana.yourdomain.com` | HTTP | `grafana:3000` |
-| `ai.yourdomain.com` | HTTP | `open-webui:8080` |
+| Hostname                   | Service | URL                  |
+| -------------------------- | ------- | -------------------- |
+| `photos.yourdomain.com`    | HTTP    | `immich-server:2283` |
+| `nextcloud.yourdomain.com` | HTTP    | `nextcloud:80`       |
+| `vault.yourdomain.com`     | HTTP    | `vaultwarden:80`     |
+| `n8n.yourdomain.com`       | HTTP    | `n8n:5678`           |
+| `mail.yourdomain.com`      | HTTP    | `stalwart:8080`      |
+| `status.yourdomain.com`    | HTTP    | `uptime-kuma:3001`   |
+| `grafana.yourdomain.com`   | HTTP    | `grafana:3000`       |
+| `ai.yourdomain.com`        | HTTP    | `open-webui:8080`    |
 
 > ⚠️ Use **container names**, not `localhost`. Cloudflared runs inside Docker on `proxy-net`.
 
 ### 3. Create Admin Accounts
 
-Open each service and create your account **immediately** — first visitor becomes admin:
+Open each service and create your account **immediately** - first visitor becomes admin:
 
 - Portainer: `https://YOUR_IP:9443`
 - Nextcloud: `https://nextcloud.yourdomain.com`
@@ -544,7 +563,7 @@ sudo RESTIC_REPOSITORY=/mnt/corex-data/backups/restic-repo \
      RESTIC_PASSWORD='YOUR_RESTIC_PASSWORD' \
      restic snapshots
 
-# Restore (interactive — shows snapshots, asks confirmation)
+# Restore (interactive - shows snapshots, asks confirmation)
 sudo corex-restore.sh
 
 # Restore specific snapshot
@@ -574,18 +593,18 @@ sudo corex-restore.sh latest
 
 CoreX implements defense-in-depth:
 
-| Layer | Tool | What It Does |
-|-------|------|-------------|
-| Firewall | UFW | Default deny incoming, explicit per-port allow |
-| SSH | Custom port + max 3 attempts | Moves off port 22, limits brute force |
-| Brute Force | Fail2ban | 3 failures → 24hr IP ban |
-| IPS | CrowdSec | Community threat intel, blocks known attackers |
-| Kernel | sysctl hardening | Anti-spoofing, SYN flood protection, ICMP lockdown |
-| Updates | unattended-upgrades | Automatic security patches daily |
-| Containers | no-new-privileges | Prevents privilege escalation inside containers |
-| DNS | resolv.conf locked | `chattr +i` prevents tampering |
-| TLS | Let's Encrypt via Traefik | Auto-renewed HTTPS certificates |
-| Tunnel | Cloudflare | Zero exposed ports on router, DDoS protection |
+| Layer       | Tool                         | What It Does                                       |
+| ----------- | ---------------------------- | -------------------------------------------------- |
+| Firewall    | UFW                          | Default deny incoming, explicit per-port allow     |
+| SSH         | Custom port + max 3 attempts | Moves off port 22, limits brute force              |
+| Brute Force | Fail2ban                     | 3 failures → 24hr IP ban                           |
+| IPS         | CrowdSec                     | Community threat intel, blocks known attackers     |
+| Kernel      | sysctl hardening             | Anti-spoofing, SYN flood protection, ICMP lockdown |
+| Updates     | unattended-upgrades          | Automatic security patches daily                   |
+| Containers  | no-new-privileges            | Prevents privilege escalation inside containers    |
+| DNS         | resolv.conf locked           | `chattr +i` prevents tampering                     |
+| TLS         | Let's Encrypt via Traefik    | Auto-renewed HTTPS certificates                    |
+| Tunnel      | Cloudflare                   | Zero exposed ports on router, DDoS protection      |
 
 ### Hardening After Install
 
@@ -689,35 +708,36 @@ done
 
 ## 🗺 Port Reference
 
-| Port | Service | Protocol | Exposure |
-|------|---------|----------|----------|
-| 53 | AdGuard Home (DNS) | TCP/UDP | LAN |
-| 80 | Traefik (HTTP → HTTPS redirect) | TCP | Public via CF Tunnel |
-| 443 | Traefik (HTTPS) | TCP | Public via CF Tunnel |
-| 445 | Time Machine (SMB) | TCP | LAN only |
-| 2222 | SSH | TCP | LAN (or VPN) |
-| 2283 | Immich | TCP | Via Traefik |
-| 3000 | AdGuard Home (Admin UI) | TCP | LAN |
-| 3001 | Uptime Kuma | TCP | Via Traefik |
-| 3002 | Grafana | TCP | Via Traefik |
-| 3003 | Open WebUI | TCP | Via Traefik |
-| 3005 | Browserless | TCP | LAN |
-| 5678 | n8n | TCP | Via Traefik |
-| 8000 | Coolify | TCP | LAN |
-| 8080 | Traefik Dashboard | TCP | LAN |
-| 9090 | Prometheus | TCP | Internal |
-| 9443 | Portainer | TCP | LAN |
-| 11434 | Ollama API | TCP | LAN only |
-| 25/587/465 | Stalwart (SMTP) | TCP | Public |
-| 143/993 | Stalwart (IMAP) | TCP | Public |
+| Port       | Service                         | Protocol | Exposure             |
+| ---------- | ------------------------------- | -------- | -------------------- |
+| 53         | AdGuard Home (DNS)              | TCP/UDP  | LAN                  |
+| 80         | Traefik (HTTP → HTTPS redirect) | TCP      | Public via CF Tunnel |
+| 443        | Traefik (HTTPS)                 | TCP      | Public via CF Tunnel |
+| 445        | Time Machine (SMB)              | TCP      | LAN only             |
+| 2222       | SSH                             | TCP      | LAN (or VPN)         |
+| 2283       | Immich                          | TCP      | Via Traefik          |
+| 3000       | AdGuard Home (Admin UI)         | TCP      | LAN                  |
+| 3001       | Uptime Kuma                     | TCP      | Via Traefik          |
+| 3002       | Grafana                         | TCP      | Via Traefik          |
+| 3003       | Open WebUI                      | TCP      | Via Traefik          |
+| 3005       | Browserless                     | TCP      | LAN                  |
+| 5678       | n8n                             | TCP      | Via Traefik          |
+| 8000       | Coolify                         | TCP      | LAN                  |
+| 8080       | Traefik Dashboard               | TCP      | LAN                  |
+| 9090       | Prometheus                      | TCP      | Internal             |
+| 9443       | Portainer                       | TCP      | LAN                  |
+| 11434      | Ollama API                      | TCP      | LAN only             |
+| 25/587/465 | Stalwart (SMTP)                 | TCP      | Public               |
+| 143/993    | Stalwart (IMAP)                 | TCP      | Public               |
 
 ---
 
 ## 🤝 Contributing
 
-Contributions are welcome! This project was born from real-world deployment and debugging — every fix in the changelog came from an actual production issue.
+Contributions are welcome! This project was born from real-world deployment and debugging - every fix in the changelog came from an actual production issue.
 
 **Ways to contribute:**
+
 - Report bugs (include `docker logs` output and your Ubuntu version)
 - Add support for additional services
 - Improve documentation
@@ -725,35 +745,10 @@ Contributions are welcome! This project was born from real-world deployment and 
 - Create Ansible/Terraform alternatives
 
 **Before submitting a PR:**
+
 1. Test on a fresh Ubuntu 24.04 LTS Server install
 2. Run `bash -n install-corex-master.sh` to validate syntax
 3. Document any new configuration variables
-
----
-
-## 📜 License
-
-MIT License
-
-Copyright (c) 2025
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
 
 ---
 
@@ -768,5 +763,8 @@ Inspired by the self-hosting philosophy of [NetworkChuck](https://www.youtube.co
 ---
 
 <p align="center">
-  <strong>Own your data. Own your stack. 🏴</strong>
+  <strong>Own your data. Own your stack.</strong>
+</p>
+<p align="center">
+  <strong>Made with ❤️ in 🇮🇳</strong>
 </p>
