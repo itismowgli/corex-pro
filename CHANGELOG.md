@@ -36,7 +36,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
-## [v7.0.0] - 2025-02-10
+## [v1.0.0] - 2025-02-10
 
 ### Fixed
 
@@ -61,7 +61,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
-## [v6.0.0] - 2025-02-09
+## [v0.1.0] - 2025-02-09
 
 ### Added
 
@@ -91,10 +91,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 CoreX Pro uses semantic versioning: `MAJOR.MINOR.PATCH`
 
-- **MAJOR** (v7, v8...): Breaking changes, architectural shifts, new phases
-- **MINOR** (v1.1, v7.2...): New features, bug fixes, new scripts
+- **MAJOR** (v1, v2...): Breaking changes, architectural shifts, new phases
+- **MINOR** (v1.1, v1.2...): New features, bug fixes, new scripts
 - **PATCH** (v1.1.1, v1.1.2...): Small fixes, typos, documentation updates
 
 [v1.1.0]: https://github.com/itismowgli/corex-pro/releases/tag/v1.1.0
-[v7.0.0]: https://github.com/itismowgli/corex-pro/releases/tag/v7.0.0
-[v6.0.0]: https://github.com/itismowgli/corex-pro/releases/tag/v6.0.0
+[v1.0.0]: https://github.com/itismowgli/corex-pro/releases/tag/v1.0.0
+[v0.1.0]: https://github.com/itismowgli/corex-pro/releases/tag/v0.1.0
