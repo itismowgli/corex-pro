@@ -39,11 +39,14 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 # ── Determine repo location ──
-# Could be /opt/corex-pro (from curl install) or wherever the user cloned
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# When piped via curl, BASH_SOURCE is empty — fall back to /opt/corex-pro
+SCRIPT_DIR=""
+if [[ -n "${BASH_SOURCE[0]:-}" && "${BASH_SOURCE[0]:-}" != "bash" ]]; then
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+fi
 REPO_DIR=""
 
-if [[ -f "${SCRIPT_DIR}/install-corex-master.sh" ]]; then
+if [[ -n "$SCRIPT_DIR" && -f "${SCRIPT_DIR}/install-corex-master.sh" ]]; then
     REPO_DIR="$SCRIPT_DIR"
 elif [[ -f "/opt/corex-pro/install-corex-master.sh" ]]; then
     REPO_DIR="/opt/corex-pro"
@@ -88,7 +91,7 @@ show_banner() {
     echo "  ╚██████╗╚██████╔╝██║  ██║███████╗██╔╝ ██╗"
     echo "   ╚═════╝ ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝"
     echo -e "${NC}"
-    echo -e "  ${BOLD}CoreX Pro v1.1${NC} — Sovereign Hybrid Homelab"
+    echo -e "  ${BOLD}CoreX Pro v1.1.0${NC} — Sovereign Hybrid Homelab"
     echo ""
 }
 
@@ -97,8 +100,10 @@ check_ram() {
     local TOTAL_RAM=$(free -m | awk '/^Mem:/{print $2}')
     if [[ $TOTAL_RAM -lt 4000 ]]; then
         echo -e "${YELLOW}Warning: ${TOTAL_RAM}MB RAM detected. 8GB+ recommended.${NC}"
-        read -p "Continue anyway? (y/N): " ram_confirm
-        [[ "$ram_confirm" != "y" && "$ram_confirm" != "Y" ]] && exit 0
+        if [[ -t 0 ]]; then
+            read -p "Continue anyway? (y/N): " ram_confirm
+            [[ "$ram_confirm" != "y" && "$ram_confirm" != "Y" ]] && exit 0
+        fi
     fi
 }
 
@@ -110,6 +115,26 @@ do_install() {
     echo ""
 
     check_ram
+
+    # When piped via curl, stdin is not a terminal — can't use read or editors
+    if [[ ! -t 0 ]]; then
+        echo -e "${GREEN}Downloaded to: ${REPO_DIR}${NC}"
+        echo ""
+        echo -e "${YELLOW}${BOLD}Next steps:${NC}"
+        echo ""
+        echo "  1. Edit the configuration:"
+        echo "     sudo nano ${REPO_DIR}/install-corex-master.sh"
+        echo ""
+        echo "     Update: SERVER_IP, DOMAIN, EMAIL, TIMEZONE, CLOUDFLARE_TUNNEL_TOKEN"
+        echo ""
+        echo "  2. Run the installer:"
+        echo "     sudo bash ${REPO_DIR}/corex.sh install"
+        echo ""
+        echo "  Or run directly:"
+        echo "     sudo bash ${REPO_DIR}/install-corex-master.sh"
+        echo ""
+        return
+    fi
 
     echo -e "${YELLOW}${BOLD}You MUST edit the configuration before installing:${NC}"
     echo ""
@@ -132,7 +157,7 @@ do_install() {
     else
         echo ""
         echo "When you're ready:"
-        echo "  sudo bash ${REPO_DIR}/install-corex-master.sh"
+        echo "  sudo bash ${REPO_DIR}/corex.sh install"
     fi
 }
 
