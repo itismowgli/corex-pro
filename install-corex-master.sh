@@ -875,9 +875,9 @@ DCEOF
     ############################################################################
     # 8. TIME MACHINE — macOS Backup Server via SMB
     #    Uses host networking (required for SMB and mDNS/Bonjour discovery).
-    #    FIXED v7.1: Env var is PASSWORD (not TM_PASSWORD) for mbentley image.
-    #    FIXED v7.1: Data on shared pool (not dedicated partition) for flexibility.
-    #    FIXED v7.1: Removed dbus/avahi mounts (caused socket conflicts).
+    #    FIXED v1.1: Env var is PASSWORD (not TM_PASSWORD) for mbentley image.
+    #    FIXED v1.1: Data on shared pool (not dedicated partition) for flexibility.
+    #    FIXED v1.1: Removed dbus/avahi mounts (caused socket conflicts).
     #    macOS discovers via Bonjour automatically; manual connect also works:
     #      Finder → Go → Connect to Server → smb://SERVER_IP/CoreX_Backup
     ############################################################################

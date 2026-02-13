@@ -88,7 +88,7 @@ show_banner() {
     echo "  ╚██████╗╚██████╔╝██║  ██║███████╗██╔╝ ██╗"
     echo "   ╚═════╝ ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝"
     echo -e "${NC}"
-    echo -e "  ${BOLD}CoreX Pro v7.1${NC} — Sovereign Hybrid Homelab"
+    echo -e "  ${BOLD}CoreX Pro v1.1${NC} — Sovereign Hybrid Homelab"
     echo ""
 }
 
