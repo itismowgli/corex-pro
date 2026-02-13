@@ -22,8 +22,8 @@
   <a href="#-configuration">Configuration</a> •
   <a href="#-post-install-guide">Post-Install</a> •
   <a href="#-backup--restore">Backup</a> •
+  <a href="#-uninstall--rollback">Uninstall</a> •
   <a href="#-troubleshooting">Troubleshooting</a> •
-  <a href="#-license">License</a>
 </p>
 
 ---
@@ -52,12 +52,37 @@ CoreX Pro replaces all of them with self-hosted alternatives running on a single
 
 ## ⚡ Quickstart
 
+### One-Line Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/itismowgli/corex-pro/main/corex.sh | sudo bash
+```
+
+This downloads the repo, opens the config for you to edit, and runs the installer.
+
+### Manual Install
+
 ```bash
 # 1. Clone the repo
 git clone https://github.com/itismowgli/corex-pro.git
 cd corex-pro
 
-# 2. Edit configuration (REQUIRED - update IP, domain, tunnel token)
+# 2. Run the CLI (interactive menu)
+sudo bash corex.sh
+
+# Or run a specific command directly
+sudo bash corex.sh install       # Install
+sudo bash corex.sh nuke          # Uninstall / rollback
+sudo bash corex.sh migrate       # Change domain
+```
+
+### Direct Install (skip menu)
+
+```bash
+git clone https://github.com/itismowgli/corex-pro.git
+cd corex-pro
+
+# 3. Edit configuration (REQUIRED - update IP, domain, tunnel token)
 nano install-corex-master.sh
 
 # 3. Run
@@ -130,8 +155,8 @@ CoreX separates the "brain" (OS + Docker engine on local disk) from the "muscle"
 
 ```
 External SSD (/dev/sdX)
-├── Partition 1 (400GB) → /mnt/timemachine     # macOS Time Machine
-└── Partition 2 (~600GB) → /mnt/corex-data     # Everything else
+├── Partition 1 (500GB) → /mnt/timemachine     # macOS Time Machine
+└── Partition 2 (~500GB) → /mnt/corex-data     # Everything else
     ├── docker-configs/                         # docker-compose.yml per service
     │   ├── traefik/
     │   ├── nextcloud/
@@ -749,6 +774,61 @@ Contributions are welcome! This project was born from real-world deployment and 
 1. Test on a fresh Ubuntu 24.04 LTS Server install
 2. Run `bash -n install-corex-master.sh` to validate syntax
 3. Document any new configuration variables
+
+---
+
+## 🧹 Uninstall & Rollback
+
+CoreX Pro comes with a companion nuke script that cleanly reverses everything the installer did.
+
+```bash
+# Interactive - choose what to undo
+sudo bash corex.sh nuke
+
+# Preview what would happen (changes nothing)
+sudo bash corex.sh nuke --dry-run
+
+# Full nuke (still asks for confirmation)
+sudo bash corex.sh nuke --all
+```
+
+The nuke script has 10 phases - each asks for confirmation. You can selectively undo just containers, just firewall rules, just DNS, etc. Your SSD data is preserved unless you explicitly choose to wipe it (requires typing `WIPE MY DATA`).
+
+**Full documentation:** [NUKE.md](NUKE.md)
+
+---
+
+## 📁 Repo Structure
+
+```
+corex-pro/
+├── corex.sh                    # CLI entry point (install / nuke / migrate)
+├── install-corex-master.sh     # Main installer (1,900 lines, 7 phases)
+├── nuke-corex.sh               # Uninstall/rollback (10 phases)
+├── migrate-domain.sh           # Change domain across all services
+├── README.md                   # This file
+├── NUKE.md                     # Nuke script documentation
+└── LICENSE                     # MIT License
+```
+
+---
+
+## 🔀 Domain Migration
+
+Need to change your domain? One command updates all 14 services:
+
+```bash
+# Interactive (auto-detects current domain)
+sudo bash corex.sh migrate
+
+# Direct
+sudo bash corex.sh migrate olddomain.com newdomain.com
+
+# Preview changes without applying
+sudo bash corex.sh migrate --dry-run olddomain.com newdomain.com
+```
+
+The script backs up all compose files first, updates every reference, clears old TLS certs (Traefik auto-renews), restarts all services, and prints a checklist of manual steps (Cloudflare Tunnel hostnames, AdGuard DNS rewrites, mobile app URLs).
 
 ---
 
