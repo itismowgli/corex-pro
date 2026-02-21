@@ -198,6 +198,7 @@ do_doctor() {
     echo -e "${CYAN}${BOLD}── CoreX Pro Doctor ──${NC}"
     echo ""
     chmod +x "${REPO_DIR}/corex-manage.sh"
+    # corex-manage _load_config will auto-migrate v1→v2 if state.json is missing
     bash "${REPO_DIR}/corex-manage.sh" doctor
 }
 

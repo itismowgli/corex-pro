@@ -6,6 +6,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v2.0.1] - 2026-02-22
+
+### Fixed
+
+- **`corex doctor` on v1 installs:** `corex-manage.sh` was hard-failing with "No state file found" when `/etc/corex/state.json` didn't exist. `_load_config` now calls `_migrate_v1_if_needed()` automatically before reading state — detecting running Traefik, reconstructing state from `docker ps`, and writing `state.json` inline, then proceeding with the doctor health check without any user action required.
+- **v1→v2 migration coverage:** Expanded container-to-service mapping to include all sub-containers (nextcloud-db, nextcloud-redis, immich-redis, immich-ml, node-exporter, cadvisor, browserless) so all services are correctly detected from a v1 install.
+- **Duplicate service recording in migration:** Services with multiple containers (Nextcloud, Immich, monitoring) were being recorded multiple times; fixed with a `seen_svcs` deduplication guard.
+
+---
+
 ## [v2.0.0] - 2026-02-21
 
 This is a major architectural release. The monolithic 1,865-line installer is replaced by a modular `lib/` system. Existing v1 installations are not broken — a migration path reconstructs state from running containers automatically.
@@ -180,6 +190,7 @@ CoreX Pro uses semantic versioning: `MAJOR.MINOR.PATCH`
 - **MINOR** (v1.1, v1.2...): New features, bug fixes, new scripts
 - **PATCH** (v1.1.1, v1.1.2...): Small fixes, typos, documentation updates
 
+[v2.0.1]: https://github.com/itismowgli/corex-pro/releases/tag/v2.0.1
 [v2.0.0]: https://github.com/itismowgli/corex-pro/releases/tag/v2.0.0
 [v1.1.0]: https://github.com/itismowgli/corex-pro/releases/tag/v1.1.0
 [v1.0.0]: https://github.com/itismowgli/corex-pro/releases/tag/v1.0.0
