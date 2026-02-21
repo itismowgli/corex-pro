@@ -26,10 +26,95 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/common.sh"
 source "${SCRIPT_DIR}/lib/state.sh"
 
+# ── v1 → v2 migration ────────────────────────────────────────────────────────
+# Called automatically when state.json is missing but CoreX appears to be installed
+_migrate_v1_if_needed() {
+    [[ -f "$COREX_STATE_FILE" ]] && return 0  # already migrated
+
+    # Check if this looks like a v1 install (Traefik running)
+    if ! command -v docker &>/dev/null; then
+        return 1
+    fi
+    if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^traefik$"; then
+        return 1
+    fi
+
+    log_step "No state file found — detected v1 install. Migrating to v2..."
+
+    # Attempt to detect domain from existing Traefik config
+    local detected_domain=""
+    local traefik_yml
+    for traefik_yml in /mnt/corex-data/docker-configs/traefik/traefik.yml \
+                       /opt/corex-pro/docker-configs/traefik/traefik.yml; do
+        if [[ -f "$traefik_yml" ]]; then
+            detected_domain=$(grep -oP 'email:\s*\K\S+' "$traefik_yml" 2>/dev/null \
+                | sed 's/admin@//' | head -1) || true
+            break
+        fi
+    done
+
+    # Attempt to detect email from credentials file
+    local detected_email=""
+    if [[ -f "/root/corex-credentials.txt" ]]; then
+        detected_email=$(grep -i "email\|let.s encrypt" /root/corex-credentials.txt \
+            | grep -oP '[\w.+-]+@[\w.-]+\.[a-z]+' | head -1) || true
+    fi
+
+    local detected_ip
+    detected_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+
+    # Initialise state file
+    state_init
+    state_set "mode"      "with-domain"
+    state_set "domain"    "${detected_domain:-unknown}"
+    state_set "server_ip" "${detected_ip:-unknown}"
+    state_set "email"     "${detected_email:-}"
+
+    # Map running containers → service names
+    local running_containers
+    running_containers=$(docker ps --format '{{.Names}}' 2>/dev/null)
+    declare -A _C2S=(
+        [traefik]=traefik        [adguard]=adguard       [portainer]=portainer
+        [nextcloud]=nextcloud    [mariadb]=nextcloud      [nextcloud-db]=nextcloud
+        [nextcloud-redis]=nextcloud
+        [immich-server]=immich   [immich-postgres]=immich [immich-redis]=immich
+        [immich-ml]=immich
+        [vaultwarden]=vaultwarden
+        [n8n]=n8n
+        [stalwart]=stalwart
+        [timemachine]=timemachine
+        [coolify]=coolify
+        [crowdsec]=crowdsec
+        [cloudflared]=cloudflared
+        [ollama]=ai              [open-webui]=ai          [browserless]=ai
+        [uptime-kuma]=monitoring [grafana]=monitoring     [prometheus]=monitoring
+        [node-exporter]=monitoring [cadvisor]=monitoring
+    )
+    local container svc seen_svcs=""
+    for container in $running_containers; do
+        svc="${_C2S[$container]:-}"
+        if [[ -n "$svc" ]] && [[ "$seen_svcs" != *"|${svc}|"* ]]; then
+            state_service_installed "$svc" 2>/dev/null || true
+            seen_svcs="${seen_svcs}|${svc}|"
+        fi
+    done
+
+    log_success "v1→v2 migration complete."
+    if [[ "${detected_domain:-unknown}" == "unknown" ]]; then
+        log_warning "Could not auto-detect domain. Edit $COREX_STATE_FILE manually if needed."
+    else
+        log_info "Detected domain: ${detected_domain}"
+    fi
+    log_info "State written to: $COREX_STATE_FILE"
+    echo ""
+    return 0
+}
+
 # Load configuration from state.json
 _load_config() {
+    # Auto-migrate v1 installs before trying to read state
     if [[ ! -f "$COREX_STATE_FILE" ]]; then
-        log_error "No state file found at $COREX_STATE_FILE. Run the installer first."
+        _migrate_v1_if_needed || log_error "CoreX does not appear to be installed. Run: sudo bash corex.sh install"
     fi
     DOMAIN=$(state_get "domain")
     SERVER_IP=$(state_get "server_ip")
