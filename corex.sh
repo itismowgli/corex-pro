@@ -22,7 +22,7 @@
 set -uo pipefail
 
 # ── Version ──
-COREX_VERSION="1.1.0"
+COREX_VERSION="2.0.0"
 
 # ── Colors ──
 RED='\033[0;31m'
@@ -91,7 +91,7 @@ show_banner() {
     echo "  ╚██████╗╚██████╔╝██║  ██║███████╗██╔╝ ██╗"
     echo "   ╚═════╝ ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝"
     echo -e "${NC}"
-    echo -e "  ${BOLD}CoreX Pro v1.1.0${NC} — Sovereign Hybrid Homelab"
+    echo -e "  ${BOLD}CoreX Pro v${COREX_VERSION}${NC} — Sovereign Hybrid Homelab"
     echo ""
 }
 
@@ -116,49 +116,25 @@ do_install() {
 
     check_ram
 
-    # When piped via curl, stdin is not a terminal — can't use read or editors
+    # When piped via curl, stdin is not a terminal — wizard will use plain prompts
     if [[ ! -t 0 ]]; then
         echo -e "${GREEN}Downloaded to: ${REPO_DIR}${NC}"
         echo ""
-        echo -e "${YELLOW}${BOLD}Next steps:${NC}"
+        echo -e "${YELLOW}${BOLD}CoreX Pro v2 — Interactive Setup${NC}"
         echo ""
-        echo "  1. Edit the configuration:"
-        echo "     sudo nano ${REPO_DIR}/install-corex-master.sh"
+        echo "  Run the installer interactively:"
+        echo "    sudo bash ${REPO_DIR}/corex.sh install"
         echo ""
-        echo "     Update: SERVER_IP, DOMAIN, EMAIL, TIMEZONE, CLOUDFLARE_TUNNEL_TOKEN"
-        echo ""
-        echo "  2. Run the installer:"
-        echo "     sudo bash ${REPO_DIR}/corex.sh install"
-        echo ""
-        echo "  Or run directly:"
-        echo "     sudo bash ${REPO_DIR}/install-corex-master.sh"
+        echo "  The wizard will guide you through:"
+        echo "    • Mode selection (with-domain / local-only)"
+        echo "    • Service selection (choose only what you need)"
+        echo "    • Automatic secure password generation"
         echo ""
         return
     fi
 
-    echo -e "${YELLOW}${BOLD}You MUST edit the configuration before installing:${NC}"
-    echo ""
-    echo "  SERVER_IP, DOMAIN, EMAIL, TIMEZONE, CLOUDFLARE_TUNNEL_TOKEN"
-    echo ""
-
-    EDITOR_CMD="${EDITOR:-nano}"
-    command -v "$EDITOR_CMD" &>/dev/null || EDITOR_CMD="vi"
-
-    read -p "$(echo -e "${CYAN}Open config in ${EDITOR_CMD}? (Y/n): ${NC}")" edit_choice
-    if [[ "$edit_choice" != "n" && "$edit_choice" != "N" ]]; then
-        "$EDITOR_CMD" "${REPO_DIR}/install-corex-master.sh"
-    fi
-
-    echo ""
-    read -p "$(echo -e "${GREEN}Start installation? (y/N): ${NC}")" confirm
-    if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
-        chmod +x "${REPO_DIR}/install-corex-master.sh"
-        bash "${REPO_DIR}/install-corex-master.sh"
-    else
-        echo ""
-        echo "When you're ready:"
-        echo "  sudo bash ${REPO_DIR}/corex.sh install"
-    fi
+    chmod +x "${REPO_DIR}/install-corex-master.sh"
+    bash "${REPO_DIR}/install-corex-master.sh"
 }
 
 # ── Nuke ──
@@ -190,24 +166,46 @@ show_help() {
     echo "Usage: sudo bash corex.sh [command] [options]"
     echo ""
     echo "Commands:"
-    echo "  install          Install CoreX Pro (interactive config + deploy)"
+    echo "  install          Install CoreX Pro (wizard selects services)"
+    echo "  doctor           Health check + auto-repair all installed services"
+    echo "  manage <cmd>     Post-install service management (see below)"
     echo "  nuke             Uninstall / rollback (interactive per-phase)"
     echo "  migrate          Change domain across all services"
     echo "  update           Pull latest version from GitHub"
     echo "  version          Show current version"
     echo "  help             Show this help"
     echo ""
+    echo "Manage sub-commands:"
+    echo "  manage status              Show health of all services"
+    echo "  manage list                List installed vs available services"
+    echo "  manage add <service>       Install a skipped service"
+    echo "  manage remove <service>    Remove a service (prompts about data)"
+    echo "  manage update --all        Update all service images"
+    echo "  manage update <service>    Update a specific service"
+    echo ""
     echo "Nuke options:"
     echo "  nuke --all       Nuke everything (still confirms)"
     echo "  nuke --dry-run   Preview what would be removed"
     echo ""
-    echo "Migrate options:"
-    echo "  migrate old.com new.com            Direct migration"
-    echo "  migrate --dry-run old.com new.com  Preview changes"
-    echo ""
-    echo "Quick install (no clone needed):"
+    echo "Quick install (fresh server, one command):"
     echo "  curl -fsSL https://raw.githubusercontent.com/itismowgli/corex-pro/main/corex.sh | sudo bash"
     echo ""
+}
+
+# ── Doctor ──
+do_doctor() {
+    ensure_repo
+    echo -e "${CYAN}${BOLD}── CoreX Pro Doctor ──${NC}"
+    echo ""
+    chmod +x "${REPO_DIR}/corex-manage.sh"
+    bash "${REPO_DIR}/corex-manage.sh" doctor
+}
+
+# ── Manage ──
+do_manage() {
+    ensure_repo
+    chmod +x "${REPO_DIR}/corex-manage.sh"
+    bash "${REPO_DIR}/corex-manage.sh" "$@"
 }
 
 # ── Version ──
@@ -257,25 +255,41 @@ show_menu() {
 
     echo -e "  ${BOLD}What would you like to do?${NC}"
     echo ""
-    echo -e "  ${GREEN}1)${NC} Install CoreX Pro"
-    echo -e "  ${RED}2)${NC} Nuke / Rollback"
-    echo -e "  ${CYAN}3)${NC} Change Domain"
-    echo -e "  ${YELLOW}4)${NC} Update CoreX Pro"
-    echo -e "  ${NC}5)${NC} Help"
-    echo -e "  ${NC}6)${NC} Exit"
-    echo ""
-
-    read -p "  Choose [1-6]: " choice
-
-    case "$choice" in
-        1) do_install ;;
-        2) do_nuke ;;
-        3) do_migrate ;;
-        4) do_update ;;
-        5) show_help ;;
-        6) echo "Bye!"; exit 0 ;;
-        *) echo "Invalid choice."; exit 1 ;;
-    esac
+    if [[ "$INSTALLED" == "true" ]]; then
+        echo -e "  ${GREEN}1)${NC} Doctor (health check + auto-repair)"
+        echo -e "  ${CYAN}2)${NC} Manage services (add/remove/update)"
+        echo -e "  ${YELLOW}3)${NC} Update CoreX Pro"
+        echo -e "  ${CYAN}4)${NC} Change Domain"
+        echo -e "  ${RED}5)${NC} Nuke / Rollback"
+        echo -e "  ${NC}6)${NC} Help"
+        echo -e "  ${NC}7)${NC} Exit"
+        echo ""
+        read -r -p "  Choose [1-7]: " choice
+        case "$choice" in
+            1) do_doctor ;;
+            2) ensure_repo; bash "${REPO_DIR}/corex-manage.sh" ;;
+            3) do_update ;;
+            4) do_migrate ;;
+            5) do_nuke ;;
+            6) show_help ;;
+            7) echo "Bye!"; exit 0 ;;
+            *) echo "Invalid choice."; exit 1 ;;
+        esac
+    else
+        echo -e "  ${GREEN}1)${NC} Install CoreX Pro"
+        echo -e "  ${YELLOW}2)${NC} Update CoreX Pro"
+        echo -e "  ${NC}3)${NC} Help"
+        echo -e "  ${NC}4)${NC} Exit"
+        echo ""
+        read -r -p "  Choose [1-4]: " choice
+        case "$choice" in
+            1) do_install ;;
+            2) do_update ;;
+            3) show_help ;;
+            4) echo "Bye!"; exit 0 ;;
+            *) echo "Invalid choice."; exit 1 ;;
+        esac
+    fi
 }
 
 ################################################################################
@@ -302,6 +316,14 @@ case "$COMMAND" in
     update)
         show_banner
         do_update
+        ;;
+    doctor)
+        show_banner
+        do_doctor
+        ;;
+    manage)
+        shift
+        do_manage "$@"
         ;;
     version|--version|-v)
         show_version

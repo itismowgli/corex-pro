@@ -1,0 +1,39 @@
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Simulate the target server environment with all tools CoreX needs
+RUN apt-get update && apt-get install -y \
+    sudo \
+    curl \
+    git \
+    bash \
+    jq \
+    whiptail \
+    bats \
+    shellcheck \
+    docker.io \
+    docker-compose-v2 \
+    openssl \
+    cron \
+    ufw \
+    fail2ban \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create fake external SSD mount points (directories, not real partitions)
+# In real install these are actual SSD partitions
+RUN mkdir -p /mnt/corex-data/docker-configs \
+             /mnt/corex-data/service-data \
+             /mnt/corex-data/backups \
+             /mnt/timemachine
+
+# Create /etc/corex for state file
+RUN mkdir -p /etc/corex
+
+WORKDIR /opt/corex-pro
+
+# Copy the entire repo into the container
+COPY . .
+
+# Default: run the test suite
+CMD ["bash", "test/run-tests.sh"]
