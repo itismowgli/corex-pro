@@ -6,7 +6,92 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
-## [v1.1.0] - 2025-02-11
+## [v2.0.0] - 2026-02-21
+
+This is a major architectural release. The monolithic 1,865-line installer is replaced by a modular `lib/` system. Existing v1 installations are not broken — a migration path reconstructs state from running containers automatically.
+
+### Added
+
+- **`lib/` modular architecture** — All installer logic extracted into focused, testable modules:
+  - `lib/common.sh` — Shared logging, colors, and utility functions
+  - `lib/state.sh` — `/etc/corex/state.json` management via jq (tracks installed services and configuration)
+  - `lib/wizard.sh` — Full interactive setup wizard with whiptail UI + plain-read fallback
+  - `lib/preflight.sh` — Pre-flight checks and password generation (Phase 0)
+  - `lib/drive.sh` — SSD partitioning and mounting (Phase 1)
+  - `lib/security.sh` — SSH hardening, UFW, Fail2ban, sysctl (Phase 2)
+  - `lib/docker.sh` — Docker install and network creation (Phase 3)
+  - `lib/directories.sh` — Directory structure and file ownership (Phase 4)
+  - `lib/backup.sh` — Restic setup, corex-backup.sh, corex-restore.sh (Phase 6)
+  - `lib/summary.sh` — Credentials file and dashboard docs (Phase 7)
+
+- **Plugin-style service modules** — Each service is now a self-contained file in `lib/services/`:
+  - `traefik.sh`, `adguard.sh`, `portainer.sh`, `nextcloud.sh`, `immich.sh`
+  - `vaultwarden.sh`, `n8n.sh`, `stalwart.sh`, `timemachine.sh`, `coolify.sh`
+  - `crowdsec.sh`, `cloudflared.sh`, `monitoring.sh`, `ai.sh`
+  - Each module exports metadata vars and 6 lifecycle functions: `_dirs`, `_firewall`, `_deploy`, `_destroy`, `_status`, `_repair`
+  - Auto-discovered by wizard, doctor, and manage commands — drop a new file, it appears everywhere
+
+- **Interactive wizard** (`lib/wizard.sh`) — Replaces manual config editing:
+  - Guided prompts for domain, server IP, email, timezone, SSH port, Cloudflare token
+  - Service selection with whiptail checklist (categories: core, storage, security, productivity, AI, monitoring)
+  - Installation profiles: `minimal`, `full`, `privacy`, `dev`, `nodomain`
+  - Input validation with immediate re-prompting on invalid entries
+  - Plain-read fallback when running non-interactively or without whiptail
+
+- **`corex-manage.sh`** — Full post-install service manager:
+  - `status` — Live health table (HEALTHY / UNHEALTHY / MISSING) for all installed services
+  - `add <svc>` — Deploy a new service without re-running the installer
+  - `remove <svc>` — Stop and optionally delete a service and its data
+  - `enable / disable <svc>` — Start or stop a service without removing it
+  - `update [--all | <svc>]` — Pull latest images and recreate containers
+  - `repair [--all | <svc>]` — Force-recreate unhealthy containers (no data loss)
+  - `replace <svc>` — Full destroy + redeploy of a service
+  - `doctor` — Check all services and auto-repair unhealthy ones
+
+- **`corex.sh` new commands**:
+  - `doctor` — Runs `corex-manage doctor` (health check + auto-repair)
+  - `manage <cmd>` — Passes through to `corex-manage.sh`
+  - Context-aware interactive menu (shows different options pre/post install)
+
+- **`/etc/corex/state.json`** — Machine-readable installation state:
+  - Stores domain, server IP, email, timezone, SSH port, CF tunnel token
+  - Tracks each service: installed, enabled, installed_at timestamp
+  - Read/written by `lib/state.sh` functions; overridable with `COREX_STATE_FILE` env var for testing
+
+- **v1 → v2 migration** — Running the installer on an existing v1 system:
+  - Detects Traefik running + missing `state.json`
+  - Reconstructs state from `docker ps` output (container-to-service mapping)
+  - Writes `state.json` and exits — no restarts, no data changes
+
+- **Test infrastructure** (`test/`):
+  - `test/Dockerfile.test` — Ubuntu 24.04 container with bats, shellcheck, jq, docker-compose
+  - `test/run-tests.sh` — Test runner (unit + smoke)
+  - `test/unit/test_common.bats` — Unit tests for logging and utility functions
+  - `test/unit/test_state.bats` — Unit tests for all state.sh functions
+  - `test/unit/test_wizard.bats` — Unit tests for validation functions
+  - `test/smoke/test_all_compose.bats` — Validates generated docker-compose files for all 14 services
+
+- **`CLAUDE.md`** — Comprehensive AI assistant context document covering architecture, decisions, gotchas, conventions, and service dependency map
+
+### Changed
+
+- **`install-corex-master.sh`** refactored from 1,865-line monolith to ~200-line thin orchestrator:
+  - Sources all `lib/` modules; calls `run_wizard` then the 7 phases in sequence
+  - Loops over `SELECTED_SERVICES[]` from wizard; calls `_deploy_service` for each
+  - All business logic lives in the modules — orchestrator is just sequencing
+- **`corex.sh`** version bumped to `2.0.0`; banner uses `v${COREX_VERSION}` dynamically
+- **README** fully rewritten to document v2 architecture, wizard, manage commands, v1 upgrade path, and plugin extensibility
+
+### Architecture
+
+- No live server required for testing (Docker-in-Docker + bats)
+- Re-run on existing install → health check + repair only (healthy services never restarted)
+- Adding a new service = one file in `lib/services/` (zero changes to core scripts)
+- Strict mode (`set -uo pipefail`) on all new lib files; `set -e` kept on orchestrator
+
+---
+
+## [v1.1.0] - 2026-02-11
 
 ### Fixed
 
@@ -36,7 +121,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
-## [v1.0.0] - 2025-02-10
+## [v1.0.0] - 2026-02-10
 
 ### Fixed
 
@@ -61,7 +146,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
-## [v0.1.0] - 2025-02-09
+## [v0.1.0] - 2026-02-09
 
 ### Added
 
@@ -95,6 +180,7 @@ CoreX Pro uses semantic versioning: `MAJOR.MINOR.PATCH`
 - **MINOR** (v1.1, v1.2...): New features, bug fixes, new scripts
 - **PATCH** (v1.1.1, v1.1.2...): Small fixes, typos, documentation updates
 
+[v2.0.0]: https://github.com/itismowgli/corex-pro/releases/tag/v2.0.0
 [v1.1.0]: https://github.com/itismowgli/corex-pro/releases/tag/v1.1.0
 [v1.0.0]: https://github.com/itismowgli/corex-pro/releases/tag/v1.0.0
 [v0.1.0]: https://github.com/itismowgli/corex-pro/releases/tag/v0.1.0

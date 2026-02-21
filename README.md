@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/CoreX_Pro-v1.1.0-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
+  <img src="https://img.shields.io/badge/CoreX_Pro-v2.0.0-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
   <img src="https://img.shields.io/badge/Ubuntu-24.04_LTS-E95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Ubuntu">
   <img src="https://img.shields.io/badge/Docker-Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker">
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
@@ -11,7 +11,7 @@
 
 <p align="center">
   <strong>"Brains on System. Muscle on SSD."</strong><br>
-  One script. 14 services. Zero cloud dependency. Full data sovereignty.
+  One command. Choose your services. Zero cloud dependency. Full data sovereignty.
 </p>
 
 <p align="center">
@@ -19,11 +19,11 @@
   <a href="#-what-you-get">What You Get</a> •
   <a href="#-architecture">Architecture</a> •
   <a href="#-services--use-cases">Services</a> •
-  <a href="#-configuration">Configuration</a> •
   <a href="#-post-install-guide">Post-Install</a> •
+  <a href="#-managing-services">Managing Services</a> •
   <a href="#-backup--restore">Backup</a> •
   <a href="#-uninstall--rollback">Uninstall</a> •
-  <a href="#-troubleshooting">Troubleshooting</a> •
+  <a href="#-troubleshooting">Troubleshooting</a>
 </p>
 
 ---
@@ -32,7 +32,7 @@
 
 You use Google Drive, Google Photos, Gmail, Bitwarden, Zapier, Vercel, ChatGPT, and a dozen other cloud services. You pay monthly for each, your data lives on someone else's servers, and you're one policy change away from losing access to your own files.
 
-CoreX Pro replaces all of them with self-hosted alternatives running on a single machine in your home. One bash script sets up everything - encrypted, backed up, accessible from anywhere via Cloudflare Tunnel.
+CoreX Pro replaces all of them with self-hosted alternatives running on a single machine in your home. One command sets up everything — encrypted, backed up, accessible from anywhere via Cloudflare Tunnel. You choose exactly which services to install.
 
 **Who is this for?**
 
@@ -46,53 +46,50 @@ CoreX Pro replaces all of them with self-hosted alternatives running on a single
 - A machine running **Ubuntu 24.04 LTS Server** (mini PC, old laptop, NUC, or dedicated server)
 - **8GB+ RAM** (16GB recommended for AI services)
 - An **external SSD** (500GB minimum, 1TB recommended)
-- A **domain name** with DNS managed via Cloudflare (free tier works)
+- A **domain name** with DNS managed via Cloudflare (free tier works) — or run in local-only mode without one
 
 ---
 
 ## ⚡ Quickstart
 
-### One-Line Install
+### One-Line Install (fresh server)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/itismowgli/corex-pro/main/corex.sh | sudo bash
 ```
 
-This downloads the repo, opens the config for you to edit, and runs the installer.
+This downloads CoreX Pro, launches an **interactive wizard**, and lets you choose exactly which services to install. Takes about 10–15 minutes depending on your internet speed.
 
 ### Manual Install
 
 ```bash
-# 1. Clone the repo
 git clone https://github.com/itismowgli/corex-pro.git
 cd corex-pro
-
-# 2. Run the CLI (interactive menu)
-sudo bash corex.sh
-
-# Or run a specific command directly
-sudo bash corex.sh install       # Install
-sudo bash corex.sh nuke          # Uninstall / rollback
-sudo bash corex.sh migrate       # Change domain
+sudo bash corex.sh install
 ```
 
-### Direct Install (skip menu)
+### Interactive Menu (recommended for day-to-day use)
 
 ```bash
-git clone https://github.com/itismowgli/corex-pro.git
-cd corex-pro
-
-# 3. Edit configuration (REQUIRED - update IP, domain, tunnel token)
-nano install-corex-master.sh
-
-# 3. Run
-chmod +x install-corex-master.sh
-sudo bash install-corex-master.sh
+sudo bash corex.sh          # Shows context-aware menu
 ```
 
-The script walks you through drive selection, partitioning, and then auto-deploys everything. Takes about 10–15 minutes depending on your internet speed.
+The menu auto-detects whether CoreX is installed and shows relevant options.
 
-After completion, your credentials are saved to `/root/corex-credentials.txt` and a full dashboard guide is generated at `/root/CoreX_Dashboard_Credentials.md`.
+### All Commands
+
+```bash
+sudo bash corex.sh install          # Install (interactive wizard)
+sudo bash corex.sh doctor           # Health check + auto-repair all services
+sudo bash corex.sh manage status    # Live status dashboard
+sudo bash corex.sh manage add <svc> # Add a service you skipped during install
+sudo bash corex.sh update           # Pull latest CoreX Pro version
+sudo bash corex.sh migrate          # Change domain across all services
+sudo bash corex.sh nuke             # Uninstall / rollback
+sudo bash corex.sh help             # Full command reference
+```
+
+After install, credentials are at `/root/corex-credentials.txt` and a full guide at `/root/CoreX_Dashboard_Credentials.md`.
 
 ---
 
@@ -127,7 +124,8 @@ After completion, your credentials are saved to `/root/corex-credentials.txt` an
 │  AdGuard Home (DNS + ad blocking + local DNS rewrites)       │
 │  Traefik v3 (HTTPS termination, Let's Encrypt, auto-certs)  │
 ├─ SERVICES ──────────────────────────────────────────────────┤
-│  14 Docker containers on isolated networks                   │
+│  14 optional Docker containers on isolated networks          │
+│  You choose which ones to install — nothing forced           │
 ├─ BACKUP ────────────────────────────────────────────────────┤
 │  Restic (encrypted, deduplicated, daily at 3AM)              │
 ├─ STORAGE ───────────────────────────────────────────────────┤
@@ -155,23 +153,32 @@ CoreX separates the "brain" (OS + Docker engine on local disk) from the "muscle"
 
 ```
 External SSD (/dev/sdX)
-├── Partition 1 (500GB) → /mnt/timemachine     # macOS Time Machine
-└── Partition 2 (~500GB) → /mnt/corex-data     # Everything else
-    ├── docker-configs/                         # docker-compose.yml per service
+├── Partition 1 (optional) → /mnt/timemachine   # macOS Time Machine
+└── Partition 2            → /mnt/corex-data    # Everything else
+    ├── docker-configs/                          # docker-compose.yml per service
     │   ├── traefik/
     │   ├── nextcloud/
     │   ├── immich/
     │   └── ...
-    ├── service-data/                           # Persistent data
+    ├── service-data/                            # Persistent data
     │   ├── nextcloud-html/
     │   ├── immich-upload/
     │   ├── vaultwarden/
-    │   ├── ollama/         # Downloaded LLM models
+    │   ├── ollama/          # Downloaded LLM models
     │   └── ...
-    ├── timemachine-data/                       # TM backups (shared pool)
     └── backups/
-        └── restic-repo/                        # Encrypted backup snapshots
+        └── restic-repo/                         # Encrypted backup snapshots
 ```
+
+### Plugin-Style Extensibility
+
+Every service is a self-contained module in `lib/services/`. Adding a new service to CoreX requires only dropping one file:
+
+```
+lib/services/gitea.sh    ← drop this file, that's it
+```
+
+The wizard, `corex doctor`, and `corex manage` automatically discover and support it. No changes to any other file required.
 
 ---
 
@@ -181,9 +188,7 @@ External SSD (/dev/sdX)
 
 **What:** Automatic HTTPS for all services. Routes `*.yourdomain.com` to the right container.
 
-**When to use:** It's always running. Every service with a subdomain goes through Traefik.
-
-**How it works:** Traefik watches the Docker socket for containers with `traefik.enable=true` labels, automatically creates routes, and gets Let's Encrypt certificates via TLS-ALPN-01 challenge.
+**How it works:** Watches Docker socket for containers with `traefik.enable=true` labels, automatically creates routes, gets Let's Encrypt certificates via TLS-ALPN-01 challenge.
 
 **Access:** `http://YOUR_IP:8080` (dashboard)
 
@@ -193,15 +198,7 @@ External SSD (/dev/sdX)
 
 **What:** Network-wide DNS server that blocks ads, trackers, and malware domains. Also serves as your local DNS for routing `*.yourdomain.com` to your server's LAN IP.
 
-**When to use:**
-
-- Block ads on every device on your network (including smart TVs, phones, IoT)
-- Route your subdomains locally so LAN traffic never hits the internet
-- Monitor DNS queries for suspicious activity
-
-**How it works:** Runs on port 53, replaces your router's DNS. All devices on your network send DNS queries to your server. AdGuard checks blocklists and DNS rewrites before resolving.
-
-**Key setup:** Add DNS Rewrites: `*.yourdomain.com → YOUR_SERVER_IP`
+**Key setup:** Add DNS Rewrite: `*.yourdomain.com → YOUR_SERVER_IP`
 
 **Access:** `http://YOUR_IP:3000`
 
@@ -209,14 +206,7 @@ External SSD (/dev/sdX)
 
 ### 🐳 Portainer - Docker Management
 
-**What:** Web UI for managing Docker containers, images, volumes, and networks.
-
-**When to use:**
-
-- View container logs without SSH
-- Restart services from your phone
-- Monitor resource usage per container
-- Deploy additional containers via the UI
+**What:** Web UI for managing Docker containers, images, volumes, and networks. View logs, restart services, monitor resources — all from a browser.
 
 **Access:** `https://YOUR_IP:9443`
 
@@ -226,16 +216,6 @@ External SSD (/dev/sdX)
 
 **What:** Self-hosted Google Drive / Dropbox. File sync, calendar, contacts, notes, video calls, kanban boards.
 
-**When to use:**
-
-- Sync files across all your devices
-- Share files/folders with family or team via links
-- Collaborative document editing
-- Calendar and contacts sync (replaces Google Calendar)
-- Video calls (Nextcloud Talk, replaces Google Meet)
-
-**How it works:** MariaDB + Redis backend for performance. Traefik handles HTTPS. Desktop/mobile apps sync automatically.
-
 **Apps to install after setup:** Calendar, Contacts, Notes, Talk, Deck, Bookmarks
 
 **Access:** `https://nextcloud.yourdomain.com`
@@ -244,20 +224,10 @@ External SSD (/dev/sdX)
 
 ### 📸 Immich - Photo & Video Management
 
-**What:** Self-hosted Google Photos. AI-powered face recognition, smart search, automatic mobile backup.
-
-**When to use:**
-
-- Automatic photo backup from iOS/Android
-- Search photos by content ("beach sunset", "dog", "birthday")
-- Face recognition and people grouping
-- Shared albums with family
-- Memories and timeline view
-
-**How it works:** Includes a machine learning container that processes your library for face detection, object recognition, and CLIP-based search. Downloads ~1GB of ML models on first start.
+**What:** Self-hosted Google Photos. AI-powered face recognition, smart search, automatic mobile backup. Downloads ~1GB of ML models on first start.
 
 **Access:** `https://photos.yourdomain.com`
-**Mobile:** [iOS App](https://apps.apple.com/app/immich/id1613945652) / [Android App](https://play.google.com/store/apps/details?id=app.alextran.immich)
+**Mobile:** [iOS](https://apps.apple.com/app/immich/id1613945652) / [Android](https://play.google.com/store/apps/details?id=app.alextran.immich)
 
 ---
 
@@ -265,57 +235,28 @@ External SSD (/dev/sdX)
 
 **What:** Lightweight, self-hosted Bitwarden server. Works with all official Bitwarden clients.
 
-**When to use:**
+**Important:** Disable signups after creating your accounts (`SIGNUPS_ALLOWED: "false"`).
 
-- Store and autofill passwords across all devices
-- Share passwords with family (Organizations feature)
-- Store secure notes, credit cards, identities
-- Generate strong passwords
-- TOTP authenticator codes
-
-**How it works:** Rust implementation of the Bitwarden API. All data encrypted with your master password before storage. Admin panel at `/admin` for user management.
-
-**Important:** Set `SIGNUPS_ALLOWED: "false"` in docker-compose.yml after creating your accounts.
-
-**Access:** `https://vault.yourdomain.com`
-**Admin:** `https://vault.yourdomain.com/admin`
-**Clients:** [Browser Extension](https://bitwarden.com/download/) / iOS / Android / Desktop
+**Access:** `https://vault.yourdomain.com` / Admin: `https://vault.yourdomain.com/admin`
 
 ---
 
 ### ✉️ Stalwart Mail - Email Server
 
-**What:** All-in-one email server: SMTP, IMAP, CalDAV, CardDAV. Written in Rust.
-
-**When to use:**
-
-- Host email on your own domain (`you@yourdomain.com`)
-- Full control over email data (no scanning, no AI training)
-- CalDAV/CardDAV for calendar and contacts sync
-- Custom spam filtering via ManageSieve
-
-**How it works:** Handles all email protocols. Auto-generates admin credentials on first boot (captured by the script). Requires DNS records (MX, SPF, DKIM, DMARC) for proper deliverability.
+**What:** All-in-one email server: SMTP, IMAP, CalDAV, CardDAV. Written in Rust. Admin credentials auto-captured from first-boot logs.
 
 **Note:** Self-hosted email has deliverability challenges. Consider an SMTP relay (SMTP2GO, Mailgun free tier) for outbound mail.
 
 **Access:** `https://mail.yourdomain.com`
-**Ports:** 25 (SMTP), 587 (Submission), 465 (SMTPS), 143 (IMAP), 993 (IMAPS), 4190 (Sieve)
+**Ports:** 25 (SMTP), 587 (Submission), 465 (SMTPS), 143 (IMAP), 993 (IMAPS)
 
 ---
 
 ### 🚀 Coolify - Web Hosting PaaS
 
-**What:** Self-hosted Vercel / Netlify / Heroku. Deploy web apps with git push.
+**What:** Self-hosted Vercel / Netlify / Heroku. Deploy web apps with git push, managed databases, preview deployments.
 
-**When to use:**
-
-- Deploy static sites, Next.js, Laravel, Rails, Django apps
-- Automatic deployments from GitHub/GitLab
-- Preview deployments for pull requests
-- Managed databases (Postgres, MySQL, Redis, MongoDB)
-- Free SSL certificates for deployed apps
-
-**How it works:** Installs its own Docker stack and reverse proxy. Run the installer separately after CoreX setup to avoid port conflicts.
+**Note:** Installs via a helper script (separate from CoreX Traefik to avoid port conflicts).
 
 **Access:** `http://YOUR_IP:8000`
 
@@ -323,17 +264,7 @@ External SSD (/dev/sdX)
 
 ### ⚡ n8n - Workflow Automation
 
-**What:** Self-hosted Zapier / Make.com. Visual workflow builder with 400+ integrations.
-
-**When to use:**
-
-- Automate repetitive tasks (RSS to email, form submissions to Slack)
-- Connect services that don't natively integrate
-- Build webhook-triggered workflows
-- Scheduled data processing and reporting
-- AI agent workflows with Ollama integration
-
-**How it works:** Runs as user 1000:1000 for file permission compatibility. Encryption key protects stored credentials. Webhooks work via Cloudflare Tunnel.
+**What:** Self-hosted Zapier / Make.com. Visual workflow builder with 400+ integrations. AI agent workflows work with Ollama.
 
 **Access:** `https://n8n.yourdomain.com`
 
@@ -341,122 +272,39 @@ External SSD (/dev/sdX)
 
 ### 💾 Time Machine - macOS Backups
 
-**What:** Network Time Machine server via SMB. Your Mac backs up to your server automatically.
+**What:** Network Time Machine server via SMB. Your Mac backs up automatically over Wi-Fi.
 
-**When to use:**
-
-- Automatic hourly macOS backups over Wi-Fi
-- Restore individual files or full system from any backup point
-- No need for a dedicated external drive on your desk
-
-**How it works:** Samba share advertised via Bonjour/mDNS. macOS discovers it automatically in System Settings → Time Machine. Backups are incremental (only changed files).
-
-**Access:** `smb://YOUR_IP/CoreX_Backup` or auto-discovered in Time Machine preferences.
+**Access:** `smb://YOUR_IP/CoreX_Backup` or auto-discovered in System Settings → Time Machine.
 
 ---
 
-### 📊 Uptime Kuma - Status Monitoring
+### 📊 Uptime Kuma + Grafana + Prometheus - Monitoring
 
-**What:** Self-hosted UptimeRobot. Beautiful status pages and multi-protocol monitoring.
+**What:** Uptime Kuma for status pages and alerting (email, Slack, Discord, Telegram) + Grafana + Prometheus for full metrics and dashboards.
 
-**When to use:**
+**Quick start:** Import Grafana dashboard ID `1860` (Node Exporter Full).
 
-- Monitor uptime of all your services
-- Get notifications when something goes down (email, Slack, Discord, Telegram)
-- Public status page for your team or users
-- TCP, HTTP, DNS, Docker, and ping monitors
-
-**Access:** `https://status.yourdomain.com`
+**Access:** Status at `https://status.yourdomain.com` / Grafana at `https://grafana.yourdomain.com`
 
 ---
 
-### 📈 Grafana + Prometheus - Metrics & Dashboards
+### 🤖 AI Stack - Ollama + Open WebUI + Browserless
 
-**What:** Full observability stack. Prometheus collects metrics, Grafana visualizes them.
-
-**When to use:**
-
-- Monitor CPU, RAM, disk, and network usage over time
-- Per-container resource metrics (via cAdvisor)
-- Custom dashboards for any metric
-- Set up alerts for disk space, high CPU, container crashes
-
-**How it works:** Node Exporter exposes host metrics, cAdvisor exposes container metrics, Prometheus scrapes them every 30 seconds, Grafana renders dashboards.
-
-**Quick start:** Import dashboard ID `1860` (Node Exporter Full) in Grafana.
-
-**Access:** Grafana at `https://grafana.yourdomain.com` / Prometheus at `http://YOUR_IP:9090`
-
----
-
-### 🤖 Ollama - Local LLM Engine
-
-**What:** Run large language models locally. Supports Llama, Mistral, CodeLlama, Gemma, and more.
-
-**When to use:**
-
-- Private AI chat (no data sent to OpenAI/Anthropic/Google)
-- Code generation and review
-- Document analysis and summarization
-- AI-powered automation via n8n + Ollama
+**What:** Run LLMs locally with a ChatGPT-like interface + headless Chrome for AI agents. `llama3.2:3b` is pulled automatically.
 
 **Recommended models:**
 
-- `llama3.2:3b` - Fast, good for chat (3GB RAM)
-- `mistral:7b` - Balanced quality/speed (7GB RAM)
-- `codellama:7b` - Coding assistant (7GB RAM)
-- `gemma2:9b` - Strong general-purpose (9GB RAM)
+- `llama3.2:3b` — Fast, good for chat (3GB RAM)
+- `mistral:7b` — Balanced quality/speed (7GB RAM)
+- `codellama:7b` — Coding assistant (7GB RAM)
 
-**Access:** API at `http://YOUR_IP:11434`
-
----
-
-### 💬 Open WebUI - AI Chat Interface
-
-**What:** Self-hosted ChatGPT-like interface that connects to Ollama.
-
-**When to use:**
-
-- Chat with local LLMs through a polished web interface
-- Multi-model conversations (switch models mid-chat)
-- Upload documents for RAG (retrieval-augmented generation)
-- Share chat sessions with team members
-- Custom system prompts and personas
-
-**Access:** `https://ai.yourdomain.com`
+**Access:** Chat at `https://ai.yourdomain.com` / Ollama API at `http://YOUR_IP:11434`
 
 ---
 
-### 🌐 Browserless - Headless Chrome
+### 🛡 CrowdSec - Community IPS
 
-**What:** Chrome browser as an API. For AI agents, web scraping, PDF generation.
-
-**When to use:**
-
-- n8n workflows that need to interact with web pages
-- AI agents that need to browse the web (via Ollama + Browserless)
-- Generate PDFs from HTML
-- Take screenshots of web pages
-- Web scraping and data extraction
-
-**Access:** API at `http://YOUR_IP:3005`
-
----
-
-### 🛡 CrowdSec - Community Intrusion Prevention
-
-**What:** Community-powered IPS. Detects attack patterns and shares threat intelligence globally.
-
-**When to use:** Always running. Monitors Traefik logs, SSH logs, and system logs for:
-
-- Brute force attacks
-- CVE exploit attempts
-- Bot and crawler abuse
-- Port scanning
-
-**How it works:** Detects threats locally, reports to CrowdSec community, receives blocklists of known-bad IPs from the community. You block attackers _before_ they even target you.
-
-**Commands:**
+**What:** Community-powered intrusion prevention. Detects brute force, CVE exploits, and bot abuse. Shares threat intel globally — you block attackers before they target you.
 
 ```bash
 docker exec crowdsec cscli decisions list    # View blocked IPs
@@ -467,49 +315,9 @@ docker exec crowdsec cscli metrics           # View detection stats
 
 ### 🔒 Cloudflare Tunnel - Secure External Access
 
-**What:** Encrypted tunnel from Cloudflare's edge network to your server. No port forwarding required.
+**What:** Encrypted tunnel from Cloudflare's edge to your server. Zero port forwarding required. DDoS protection and WAF included.
 
-**When to use:**
-
-- Access services from outside your home (phone on cellular, travel, work)
-- Zero exposed ports on your router
-- DDoS protection and WAF included (Cloudflare free tier)
-- SSL termination at Cloudflare's edge
-
-**How it works:** The `cloudflared` container maintains a persistent outbound connection to Cloudflare. When someone visits `photos.yourdomain.com`, Cloudflare routes the request through the tunnel to `immich-server:2283` inside Docker.
-
-**Critical:** In Cloudflare Dashboard → Tunnels → Public Hostnames, use **container names** (not `localhost`). The tunnel runs inside Docker.
-
----
-
-## ⚙️ Configuration
-
-Edit the configuration block at the top of `install-corex-master.sh` before running:
-
-```bash
-SERVER_IP="192.168.1.100"               # Your server's static LAN IP
-DOMAIN="example.com"                    # Your domain (managed via Cloudflare)
-EMAIL="admin@example.com"              # For Let's Encrypt certificates
-TIMEZONE="UTC"                          # Your timezone
-SSH_PORT="2222"                         # Custom SSH port
-CLOUDFLARE_TUNNEL_TOKEN="PASTE..."      # From Cloudflare Dashboard
-TM_SIZE="400GB"                         # Time Machine partition size
-```
-
-### Getting a Cloudflare Tunnel Token
-
-1. Go to [Cloudflare Zero Trust Dashboard](https://one.dash.cloudflare.com)
-2. Navigate to **Networks → Tunnels → Create a Tunnel**
-3. Choose **Cloudflared** connector
-4. Copy the token (starts with `eyJ...`)
-5. Paste into the config
-
-### Setting a Static IP
-
-Your server needs a static LAN IP. Either:
-
-- Configure it in your router (DHCP reservation) - recommended
-- Or set it on the server in `/etc/netplan/` config
+**Critical:** In CF Dashboard → Tunnels → Public Hostnames, use **container names** (e.g., `n8n:5678`), not `localhost`.
 
 ---
 
@@ -521,9 +329,9 @@ After the script completes, follow these steps **in order**:
 
 1. Open `http://YOUR_IP:3000`
 2. Complete setup wizard
-3. Add DNS Rewrites: `*.yourdomain.com → YOUR_IP` and `yourdomain.com → YOUR_IP`
+3. Add DNS Rewrite: `*.yourdomain.com → YOUR_IP`
 4. Set your router's primary DNS to `YOUR_IP`
-5. Now all `*.yourdomain.com` URLs resolve locally
+5. Now all `*.yourdomain.com` URLs resolve locally without going through Cloudflare
 
 ### 2. Cloudflare Tunnel (External Access)
 
@@ -540,11 +348,11 @@ In [Cloudflare Dashboard](https://one.dash.cloudflare.com) → Networks → Tunn
 | `grafana.yourdomain.com`   | HTTP    | `grafana:3000`       |
 | `ai.yourdomain.com`        | HTTP    | `open-webui:8080`    |
 
-> ⚠️ Use **container names**, not `localhost`. Cloudflared runs inside Docker on `proxy-net`.
+> ⚠️ Use **container names**, not `localhost`. Cloudflared runs inside Docker on `proxy-net`. Enable **No TLS Verify** under each hostname's TLS settings.
 
 ### 3. Create Admin Accounts
 
-Open each service and create your account **immediately** - first visitor becomes admin:
+Open each service immediately — the first visitor becomes admin:
 
 - Portainer: `https://YOUR_IP:9443`
 - Nextcloud: `https://nextcloud.yourdomain.com`
@@ -557,11 +365,57 @@ Open each service and create your account **immediately** - first visitor become
 ### 4. View All Credentials
 
 ```bash
-# Quick credentials reference
-cat /root/corex-credentials.txt
+cat /root/corex-credentials.txt           # Quick reference
+cat /root/CoreX_Dashboard_Credentials.md  # Full guide with every URL and setup instruction
+```
 
-# Full dashboard with setup instructions for every service
-cat /root/CoreX_Dashboard_Credentials.md
+---
+
+## 🔧 Managing Services
+
+v2.0.0 introduces full post-install service management. No need to re-run the installer to add or fix services.
+
+### Health Check & Auto-Repair
+
+```bash
+sudo bash corex.sh doctor
+```
+
+Checks every installed service and automatically repairs any that are unhealthy — without touching data.
+
+```
+CoreX Pro — Service Health
+────────────────────────────────────────────────────
+  SERVICE          STATUS       ACTION
+  ──────────────────────────────────────────────────
+  traefik          HEALTHY
+  nextcloud        HEALTHY
+  immich           UNHEALTHY    → auto-repairing...
+  vaultwarden      HEALTHY
+  n8n              MISSING      → run: corex manage add n8n
+```
+
+### Add / Remove Services
+
+```bash
+sudo bash corex.sh manage add stalwart      # Add a service skipped during install
+sudo bash corex.sh manage add ai            # Add the full AI stack
+sudo bash corex.sh manage remove n8n        # Remove (prompts about data deletion)
+sudo bash corex.sh manage list              # List all installed + available services
+```
+
+### Update Container Images
+
+```bash
+sudo bash corex.sh manage update --all      # Update all installed services
+sudo bash corex.sh manage update nextcloud  # Update a specific service
+```
+
+### Start / Stop Without Removing
+
+```bash
+sudo bash corex.sh manage disable immich    # Stop container (data preserved)
+sudo bash corex.sh manage enable immich     # Start again
 ```
 
 ---
@@ -572,43 +426,29 @@ CoreX uses [Restic](https://restic.net/) for encrypted, deduplicated, versioned 
 
 **What's backed up:** All service data (databases, uploads, mail, photos, configs, compose files).
 
-**What's NOT backed up:** Docker images (re-pulled on restore), Time Machine data (macOS manages its own backups), the Restic repo itself.
+**What's NOT backed up:** Docker images (re-pulled on restore), the Restic repo itself.
 
 ### Commands
 
 ```bash
-# Manual backup
-sudo corex-backup.sh
-
-# View backup log
-tail -20 /var/log/corex-backup.log
-
-# List all snapshots
-sudo RESTIC_REPOSITORY=/mnt/corex-data/backups/restic-repo \
-     RESTIC_PASSWORD='YOUR_RESTIC_PASSWORD' \
-     restic snapshots
-
-# Restore (interactive - shows snapshots, asks confirmation)
-sudo corex-restore.sh
-
-# Restore specific snapshot
-sudo corex-restore.sh abc123ef
+sudo corex-backup.sh                    # Manual backup
+tail -20 /var/log/corex-backup.log      # View backup log
+sudo corex-restore.sh                   # Interactive restore (shows all snapshots)
+sudo corex-restore.sh abc123ef          # Restore specific snapshot
 ```
 
 ### Automatic Schedule
 
-Backups run daily at **3:00 AM** via cron. Retention policy: 7 daily, 4 weekly, 6 monthly snapshots.
+Backups run daily at **3:00 AM** via cron. Retention: 7 daily, 4 weekly, 6 monthly snapshots.
 
 ### Migrate to New Hardware
 
 ```bash
-# On old server: run a fresh backup
+# On old server
 sudo corex-backup.sh
-
-# Copy the restic repo to new server
 rsync -avP /mnt/corex-data/backups/restic-repo/ new-server:/mnt/corex-data/backups/restic-repo/
 
-# On new server: partition SSD, install Docker, then restore
+# On new server (after fresh CoreX install)
 sudo corex-restore.sh latest
 ```
 
@@ -651,18 +491,16 @@ cd /mnt/corex-data/docker-configs/vaultwarden && docker compose up -d
 
 ## 🔧 Troubleshooting
 
-### Service won't start
+### Service won't start / is broken
 
 ```bash
-# Check container status
+# Auto-detect and repair all unhealthy services
+sudo bash corex.sh doctor
+
+# Or inspect manually
 docker ps -a | grep SERVICE_NAME
-
-# View logs
 docker logs SERVICE_NAME --tail 50
-
-# Restart
-cd /mnt/corex-data/docker-configs/SERVICE_NAME
-docker compose restart
+sudo bash corex.sh manage repair SERVICE_NAME
 ```
 
 ### 502 Bad Gateway
@@ -671,62 +509,42 @@ Usually a Docker network issue. Verify the container is on `proxy-net`:
 
 ```bash
 docker network inspect proxy-net | grep SERVICE_NAME
-```
-
-If not listed:
-
-```bash
-cd /mnt/corex-data/docker-configs/SERVICE_NAME
-docker compose down && docker compose up -d
+# If missing:
+sudo bash corex.sh manage repair SERVICE_NAME
 ```
 
 ### Cloudflare Tunnel returns 403
 
-- Verify hostname is configured in CF Dashboard → Tunnels → Public Hostnames
 - Use **container names** in the service URL (e.g., `n8n:5678` not `localhost:5678`)
-- Enable **No TLS Verify** under each hostname's TLS settings
+- Enable **No TLS Verify** under each hostname's TLS settings in CF Dashboard
 
 ### Time Machine not connecting
 
 ```bash
-# Check SMB is listening
-ss -tlnp | grep 445
-
-# Check container logs
-docker logs timemachine --tail 20
-
-# Test from Mac
-smbutil view //timemachine@YOUR_IP
+ss -tlnp | grep 445               # Verify SMB is listening
+docker logs timemachine --tail 20  # Check container logs
 ```
 
 ### AdGuard not accessible after reboot
 
-AdGuard changes its internal port after setup (3000 → 80). Re-run the script or manually update the compose:
+AdGuard changes its internal port after the setup wizard (3000 → 80). Fix with:
 
 ```bash
-cd /mnt/corex-data/docker-configs/adguard
-# Check internal port: grep "address" in the AdGuard config
-docker compose down && docker compose up -d
+sudo bash corex.sh manage repair adguard
 ```
 
 ### Prometheus restart loop
 
 ```bash
-# Fix permissions (Prometheus runs as nobody:65534)
+# Prometheus runs as UID 65534 (nobody) — ownership must match
 sudo chown -R 65534:65534 /mnt/corex-data/service-data/prometheus
-cd /mnt/corex-data/docker-configs/monitoring
-docker compose restart prometheus
+sudo bash corex.sh manage repair monitoring
 ```
 
 ### Update all containers
 
 ```bash
-for dir in /mnt/corex-data/docker-configs/*/; do
-  if [[ -f "$dir/docker-compose.yml" ]]; then
-    echo "Updating $(basename $dir)..."
-    (cd "$dir" && docker compose pull && docker compose up -d)
-  fi
-done
+sudo bash corex.sh manage update --all
 ```
 
 ---
@@ -757,23 +575,37 @@ done
 
 ---
 
+## ⬆️ Upgrading from v1
+
+If you have a v1 install (no `state.json`), run the installer once — it detects the running Traefik container, reconstructs state from your existing containers, and exits without touching anything:
+
+```bash
+sudo bash corex.sh install
+# → Detected v1 install — migrating to v2 state tracking
+# → Run: sudo bash corex.sh manage status
+```
+
+No restarts. No data changes. Just state file creation so all v2 management commands work.
+
+---
+
 ## 🤝 Contributing
 
-Contributions are welcome! This project was born from real-world deployment and debugging - every fix in the changelog came from an actual production issue.
+Contributions are welcome! The v2 architecture makes adding services easy.
 
-**Ways to contribute:**
+**Adding a new self-hosted service:**
 
-- Report bugs (include `docker logs` output and your Ubuntu version)
-- Add support for additional services
-- Improve documentation
-- Add GPU passthrough support for Ollama
-- Create Ansible/Terraform alternatives
+1. Create `lib/services/yourservice.sh` following the module contract
+2. Export metadata vars: `SERVICE_NAME`, `SERVICE_LABEL`, `SERVICE_CATEGORY`, `SERVICE_RAM_MB`
+3. Implement 6 functions: `_dirs`, `_firewall`, `_deploy`, `_destroy`, `_status`, `_repair`
+4. Drop the file — the wizard, doctor, and manage commands discover it automatically
 
 **Before submitting a PR:**
 
 1. Test on a fresh Ubuntu 24.04 LTS Server install
-2. Run `bash -n install-corex-master.sh` to validate syntax
-3. Document any new configuration variables
+2. Run `bash -n` on all modified shell files (zero errors policy)
+3. Run `shellcheck` (zero warnings policy)
+4. Add a smoke test in `test/smoke/` for any new service module
 
 ---
 
@@ -802,33 +634,60 @@ The nuke script has 10 phases - each asks for confirmation. You can selectively 
 
 ```
 corex-pro/
-├── corex.sh                    # CLI entry point (install / nuke / migrate)
-├── install-corex-master.sh     # Main installer (1,900 lines, 7 phases)
+├── corex.sh                    # CLI entry point (all commands)
+├── install-corex-master.sh     # Thin orchestrator (~200 lines)
+├── corex-manage.sh             # Post-install service manager
 ├── nuke-corex.sh               # Uninstall/rollback (10 phases)
 ├── migrate-domain.sh           # Change domain across all services
-├── README.md                   # This file
-├── NUKE.md                     # Nuke script documentation
-└── LICENSE                     # MIT License
+├── CLAUDE.md                   # AI assistant context (architecture + gotchas)
+├── CHANGELOG.md
+├── README.md
+├── lib/
+│   ├── common.sh               # Logging, colors, utilities
+│   ├── state.sh                # /etc/corex/state.json management
+│   ├── wizard.sh               # Interactive setup wizard (whiptail + fallback)
+│   ├── preflight.sh            # Pre-flight checks, password generation
+│   ├── drive.sh                # SSD partitioning and mounting
+│   ├── security.sh             # SSH hardening, UFW, Fail2ban, sysctl
+│   ├── docker.sh               # Docker install, network creation
+│   ├── directories.sh          # Directory structure and ownership
+│   ├── backup.sh               # Restic setup, backup/restore scripts
+│   ├── summary.sh              # Credentials file + dashboard docs
+│   └── services/               # One file per service — drop a file to add one
+│       ├── traefik.sh
+│       ├── adguard.sh
+│       ├── portainer.sh
+│       ├── nextcloud.sh
+│       ├── immich.sh
+│       ├── vaultwarden.sh
+│       ├── n8n.sh
+│       ├── stalwart.sh
+│       ├── timemachine.sh
+│       ├── coolify.sh
+│       ├── crowdsec.sh
+│       ├── cloudflared.sh
+│       ├── monitoring.sh       # Uptime Kuma + Grafana + Prometheus bundle
+│       └── ai.sh               # Ollama + Open WebUI + Browserless bundle
+└── test/
+    ├── Dockerfile.test         # Ubuntu 24.04 + bats + shellcheck + jq
+    ├── run-tests.sh
+    ├── unit/                   # Pure bash unit tests (no Docker/root required)
+    └── smoke/                  # Validates generated docker-compose files
 ```
 
 ---
 
 ## 🔀 Domain Migration
 
-Need to change your domain? One command updates all 14 services:
+Need to change your domain? One command updates all services:
 
 ```bash
-# Interactive (auto-detects current domain)
-sudo bash corex.sh migrate
-
-# Direct
-sudo bash corex.sh migrate olddomain.com newdomain.com
-
-# Preview changes without applying
-sudo bash corex.sh migrate --dry-run olddomain.com newdomain.com
+sudo bash corex.sh migrate                               # Interactive
+sudo bash corex.sh migrate olddomain.com newdomain.com   # Direct
+sudo bash corex.sh migrate --dry-run old.com new.com     # Preview only
 ```
 
-The script backs up all compose files first, updates every reference, clears old TLS certs (Traefik auto-renews), restarts all services, and prints a checklist of manual steps (Cloudflare Tunnel hostnames, AdGuard DNS rewrites, mobile app URLs).
+Backs up all compose files, updates every reference, clears old TLS certs (Traefik auto-renews), restarts affected services, and prints a checklist of manual steps (Cloudflare Tunnel hostnames, AdGuard DNS rewrites, mobile app server URLs).
 
 ---
 
