@@ -22,7 +22,7 @@
 set -uo pipefail
 
 # ── Version ──
-COREX_VERSION="2.0.1"
+COREX_VERSION="2.1.0"
 
 # ── Colors ──
 RED='\033[0;31m'
@@ -182,6 +182,7 @@ show_help() {
     echo "  manage remove <service>    Remove a service (prompts about data)"
     echo "  manage update --all        Update all service images"
     echo "  manage update <service>    Update a specific service"
+    echo "  manage lan-setup           Configure LAN fast-path (faster file transfers)"
     echo ""
     echo "Nuke options:"
     echo "  nuke --all       Nuke everything (still confirms)"
@@ -259,21 +260,23 @@ show_menu() {
     if [[ "$INSTALLED" == "true" ]]; then
         echo -e "  ${GREEN}1)${NC} Doctor (health check + auto-repair)"
         echo -e "  ${CYAN}2)${NC} Manage services (add/remove/update)"
-        echo -e "  ${YELLOW}3)${NC} Update CoreX Pro"
-        echo -e "  ${CYAN}4)${NC} Change Domain"
-        echo -e "  ${RED}5)${NC} Nuke / Rollback"
-        echo -e "  ${NC}6)${NC} Help"
-        echo -e "  ${NC}7)${NC} Exit"
+        echo -e "  ${CYAN}3)${NC} LAN fast-path setup (faster local file transfers)"
+        echo -e "  ${YELLOW}4)${NC} Update CoreX Pro"
+        echo -e "  ${CYAN}5)${NC} Change Domain"
+        echo -e "  ${RED}6)${NC} Nuke / Rollback"
+        echo -e "  ${NC}7)${NC} Help"
+        echo -e "  ${NC}8)${NC} Exit"
         echo ""
-        read -r -p "  Choose [1-7]: " choice
+        read -r -p "  Choose [1-8]: " choice
         case "$choice" in
             1) do_doctor ;;
             2) ensure_repo; bash "${REPO_DIR}/corex-manage.sh" ;;
-            3) do_update ;;
-            4) do_migrate ;;
-            5) do_nuke ;;
-            6) show_help ;;
-            7) echo "Bye!"; exit 0 ;;
+            3) do_manage lan-setup ;;
+            4) do_update ;;
+            5) do_migrate ;;
+            6) do_nuke ;;
+            7) show_help ;;
+            8) echo "Bye!"; exit 0 ;;
             *) echo "Invalid choice."; exit 1 ;;
         esac
     else

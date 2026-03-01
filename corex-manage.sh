@@ -406,6 +406,140 @@ cmd_doctor() {
     cmd_repair
 }
 
+# ── lan-setup ─────────────────────────────────────────────────────────────────
+# Configures AdGuard DNS wildcard rewrite so LAN clients bypass Cloudflare
+# and connect directly to the server for faster file transfers / uploads.
+
+cmd_lan_setup() {
+    echo ""
+    echo -e "${CYAN}${BOLD}CoreX Pro — LAN Fast-Path Setup${NC}"
+    echo "──────────────────────────────────────────────────────"
+    echo ""
+    echo "  When your devices use AdGuard (on this server) as DNS, all"
+    echo "  *.${DOMAIN} lookups resolve to ${SERVER_IP} (your local IP)."
+    echo "  File uploads, photo syncs, and vault access all stay on LAN."
+    echo ""
+
+    # ── Validate prerequisites ────────────────────────────────────────────────
+    if [[ "${DOMAIN:-}" == "" || "${DOMAIN:-}" == "unknown" ]]; then
+        log_error "No domain configured. LAN fast-path requires a domain. Check: corex manage status"
+    fi
+
+    if ! command -v docker &>/dev/null; then
+        log_error "Docker not found. CoreX does not appear to be installed."
+    fi
+
+    if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^adguard$"; then
+        log_warning "AdGuard container is not running."
+        echo "  Start it with: sudo bash corex-manage.sh add adguard"
+        echo ""
+        echo "  Once running, re-run: sudo bash corex-manage.sh lan-setup"
+        return 1
+    fi
+
+    # ── Determine AdGuard admin port ──────────────────────────────────────────
+    local AG_PORT="3000"
+    local YAML_FILE="${DATA_ROOT}/adguard-conf/AdGuardHome.yaml"
+    if [[ -f "$YAML_FILE" ]]; then
+        local PORT_FROM_YAML
+        PORT_FROM_YAML=$(grep -A5 "^http:" "$YAML_FILE" \
+            | grep "address:" | grep -oP ':\K[0-9]+' | head -1)
+        [[ -n "$PORT_FROM_YAML" ]] && AG_PORT="$PORT_FROM_YAML"
+    fi
+
+    if [[ "$AG_PORT" == "3000" ]]; then
+        log_warning "AdGuard setup wizard has not been completed yet."
+        echo "  1. Open http://${SERVER_IP}:3000 and run through the wizard"
+        echo "  2. Then re-run: sudo bash corex-manage.sh lan-setup"
+        return 1
+    fi
+
+    local AG_URL="http://localhost:${AG_PORT}"
+    log_info "AdGuard admin URL: ${AG_URL}"
+
+    # ── Check if rewrite already exists ──────────────────────────────────────
+    local existing
+    existing=$(curl -s "${AG_URL}/control/rewrite/list" 2>/dev/null || true)
+
+    if echo "$existing" | grep -q "\"\\*\\.${DOMAIN}\""; then
+        log_success "DNS rewrite *.${DOMAIN} → ${SERVER_IP} already configured."
+    else
+        log_info "Adding DNS rewrite *.${DOMAIN} → ${SERVER_IP}..."
+        local http_code
+        # Try without auth first (some setups allow unauthenticated local API calls)
+        http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST "${AG_URL}/control/rewrite/add" \
+            -H "Content-Type: application/json" \
+            -d "{\"domain\": \"*.${DOMAIN}\", \"answer\": \"${SERVER_IP}\"}" \
+            2>/dev/null || echo "000")
+
+        if [[ "$http_code" == "200" ]]; then
+            log_success "DNS rewrite added."
+        elif [[ "$http_code" == "401" || "$http_code" == "403" ]]; then
+            echo ""
+            log_info "AdGuard requires credentials. Enter your AdGuard admin login:"
+            read -r -p "  Username: " AG_USER
+            read -r -s -p "  Password: " AG_PASS
+            echo ""
+            http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+                -X POST "${AG_URL}/control/rewrite/add" \
+                -H "Content-Type: application/json" \
+                -u "${AG_USER}:${AG_PASS}" \
+                -d "{\"domain\": \"*.${DOMAIN}\", \"answer\": \"${SERVER_IP}\"}" \
+                2>/dev/null || echo "000")
+            if [[ "$http_code" == "200" ]]; then
+                log_success "DNS rewrite added."
+            else
+                log_warning "API call failed (HTTP ${http_code}). Add the rewrite manually:"
+                echo "  → AdGuard UI → Filters → DNS Rewrites → Add rewrite"
+                echo "    Domain: *.${DOMAIN}"
+                echo "    Answer: ${SERVER_IP}"
+            fi
+        else
+            log_warning "Could not reach AdGuard API (HTTP ${http_code})."
+            echo "  Add the rewrite manually:"
+            echo "  → AdGuard UI → Filters → DNS Rewrites → Add rewrite"
+            echo "    Domain: *.${DOMAIN}"
+            echo "    Answer: ${SERVER_IP}"
+        fi
+    fi
+
+    # ── Print router/device DNS instructions ──────────────────────────────────
+    echo ""
+    echo -e "${BOLD}── Router Setup (Recommended — all devices get LAN fast-path) ─────────────${NC}"
+    echo ""
+    echo "  In your router's DHCP / DNS settings, set:"
+    echo -e "    Primary DNS:   ${GREEN}${SERVER_IP}${NC}"
+    echo -e "    Secondary DNS: ${YELLOW}1.1.1.1${NC}  ← fallback if server is down"
+    echo ""
+    echo "  Every device that joins your network will automatically use AdGuard"
+    echo "  and resolve *.${DOMAIN} directly to this server over LAN."
+    echo ""
+    echo -e "${BOLD}── Per-Device DNS (if you cannot change router settings) ──────────────────${NC}"
+    echo ""
+    echo "  macOS / Linux:"
+    echo "    System Settings → Network → DNS → Add ${SERVER_IP}"
+    echo ""
+    echo "  Windows:"
+    echo "    Control Panel → Network → Adapter → IPv4 Properties → DNS: ${SERVER_IP}"
+    echo ""
+    echo "  iPhone / iPad:"
+    echo "    Settings → Wi-Fi → (your network) → Configure DNS → Manual → ${SERVER_IP}"
+    echo ""
+    echo "  Android:"
+    echo "    Settings → Wi-Fi → (your network) → IP Settings → Static → DNS 1: ${SERVER_IP}"
+    echo ""
+    echo -e "${BOLD}── Verify It's Working ─────────────────────────────────────────────────────${NC}"
+    echo ""
+    echo "  From a device using AdGuard as DNS, run:"
+    echo -e "    ${CYAN}nslookup nextcloud.${DOMAIN}${NC}"
+    echo ""
+    echo "  Expected result: ${SERVER_IP}  (your local IP, not a Cloudflare IP)"
+    echo "  Then uploads to Nextcloud / Immich / Vaultwarden all run at LAN speed."
+    echo ""
+    log_success "LAN fast-path setup complete."
+}
+
 # ── help ──────────────────────────────────────────────────────────────────────
 
 cmd_help() {
@@ -427,12 +561,14 @@ Commands:
   repair [service]    Force-recreate unhealthy service(s) (no data loss)
   replace <old> <new> Remove one service, install another
   doctor              Full health check + auto-repair
+  lan-setup           Configure LAN fast-path for direct local network access
 
 Examples:
   sudo bash corex-manage.sh status
   sudo bash corex-manage.sh add stalwart
   sudo bash corex-manage.sh update --all
   sudo bash corex-manage.sh remove n8n
+  sudo bash corex-manage.sh lan-setup
 
 HELPEOF
 }
@@ -454,9 +590,10 @@ main() {
         enable)   cmd_enable "$@" ;;
         disable)  cmd_disable "$@" ;;
         update)   cmd_update "$@" ;;
-        repair)   cmd_repair "$@" ;;
-        replace)  cmd_replace "$@" ;;
-        doctor)   cmd_doctor ;;
+        repair)    cmd_repair "$@" ;;
+        replace)   cmd_replace "$@" ;;
+        doctor)    cmd_doctor ;;
+        lan-setup) cmd_lan_setup ;;
         help|--help|-h) cmd_help ;;
         *) echo "Unknown command: ${cmd}"; cmd_help; exit 1 ;;
     esac
