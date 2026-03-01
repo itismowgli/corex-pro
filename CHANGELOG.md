@@ -6,6 +6,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v2.1.0] - 2026-03-01
+
+### Added
+
+- **LAN fast-path setup** (`corex manage lan-setup`) — New command that eliminates the manual AdGuard DNS rewrite step and prints complete router/device DNS configuration instructions.
+  - Automatically detects the AdGuard admin port from `AdGuardHome.yaml`
+  - Calls AdGuard's REST API (`POST /control/rewrite/add`) to register a wildcard `*.yourdomain.com → SERVER_IP` DNS rewrite
+  - Prompts for AdGuard credentials if the API requires auth (post-wizard state)
+  - Falls back to manual instructions if the API call fails
+  - Prints step-by-step DNS setup instructions for router, macOS, Windows, iPhone, and Android
+  - Includes a verification step (`nslookup nextcloud.domain`) to confirm the fast-path is working
+- **Interactive menu option 3** — "LAN fast-path setup" added to `corex.sh` interactive menu for post-install systems
+- **Post-install guide updated** — `lib/summary.sh` now shows `lan-setup` as step 2 in "First Things To Do" (replacing the old manual AdGuard UI instruction)
+
+### How it works
+
+When devices on your LAN use AdGuard (running on the CoreX server) as their DNS server, `*.yourdomain.com` resolves to the server's local IP instead of Cloudflare. All traffic — file uploads to Nextcloud, photo syncs with Immich, Vaultwarden vault access — stays entirely on the local network at full LAN speed (~1 Gbps), bypassing the Cloudflare Tunnel entirely.
+
+External access through Cloudflare Tunnel continues to work unchanged for devices off the LAN.
+
+---
+
 ## [v2.0.1] - 2026-02-22
 
 ### Fixed
@@ -190,6 +212,7 @@ CoreX Pro uses semantic versioning: `MAJOR.MINOR.PATCH`
 - **MINOR** (v1.1, v1.2...): New features, bug fixes, new scripts
 - **PATCH** (v1.1.1, v1.1.2...): Small fixes, typos, documentation updates
 
+[v2.1.0]: https://github.com/itismowgli/corex-pro/releases/tag/v2.1.0
 [v2.0.1]: https://github.com/itismowgli/corex-pro/releases/tag/v2.0.1
 [v2.0.0]: https://github.com/itismowgli/corex-pro/releases/tag/v2.0.0
 [v1.1.0]: https://github.com/itismowgli/corex-pro/releases/tag/v1.1.0
