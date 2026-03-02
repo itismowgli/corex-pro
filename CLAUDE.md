@@ -723,4 +723,4 @@ Key functions in `lib/state.sh`:
 - **v2.0.0** (2026-02-21): Modular lib/ structure, wizard, state.json, corex-manage, corex doctor, plugin extensibility. 1,865-line monolith replaced by ~200-line orchestrator + lib/ modules.
 - **v2.0.1** (2026-02-22): Fixed `corex doctor` on v1 installs — auto-migrates state from `docker ps` when `state.json` is missing.
 - **v2.1.0** (2026-03-01): Added `corex manage lan-setup` — automates AdGuard DNS wildcard rewrite via REST API; prints router/device DNS instructions. Eliminates the manual post-install AdGuard step.
-- **v2.1.1** (2026-03-02): Fixed `lan-setup` HTTP 400 — v1 migration regex captured YAML quotes around email field, storing `yourdomain.com` with embedded quotes in state.json. Fixed at root (migration strips quotes) and defensively in `_load_config()` via `tr -d '"'`.
+- **v2.1.1** (2026-03-02): Fixed `lan-setup` HTTP 400 — v1 migration regex captured YAML quotes around email field, storing domain with embedded quotes in state.json. Fixed at root (migration strips quotes) and defensively in `_load_config()` via `tr -d '"'`.
