@@ -28,7 +28,7 @@ learning nginx, SSL, Docker networking, or Linux hardening.
 - Re-run on existing server = health-check + repair broken services only
 - No live server required for testing (Docker-in-Docker + bats)
 
-**Current version:** v1.1.0
+**Current version:** v2.1.1
 **Current services:** 14 (Traefik, AdGuard, Portainer, Nextcloud, Immich,
 Vaultwarden, Stalwart Mail, Coolify, n8n, Time Machine, Uptime Kuma,
 Grafana+Prometheus, Ollama+OpenWebUI+Browserless, CrowdSec)
@@ -720,4 +720,7 @@ Key functions in `lib/state.sh`:
 - **v0.1.0** (2026-02-09): Proof of concept
 - **v1.0.0** (2026-02-10): Initial release. Monolithic single-file installer. 14 services + Restic backups.
 - **v1.1.0** (2026-02-11): Fixed Time Machine env var (PASSWORD not TM_PASSWORD), moved TM data to shared pool, added `corex.sh` CLI, `nuke-corex.sh`, `migrate-domain.sh`, curl-pipe detection, BASH_SOURCE detection.
-- **v2.0.0** (planned): Modular lib/ structure, wizard, state.json, corex-manage, corex doctor, plugin extensibility.
+- **v2.0.0** (2026-02-21): Modular lib/ structure, wizard, state.json, corex-manage, corex doctor, plugin extensibility. 1,865-line monolith replaced by ~200-line orchestrator + lib/ modules.
+- **v2.0.1** (2026-02-22): Fixed `corex doctor` on v1 installs — auto-migrates state from `docker ps` when `state.json` is missing.
+- **v2.1.0** (2026-03-01): Added `corex manage lan-setup` — automates AdGuard DNS wildcard rewrite via REST API; prints router/device DNS instructions. Eliminates the manual post-install AdGuard step.
+- **v2.1.1** (2026-03-02): Fixed `lan-setup` HTTP 400 — v1 migration regex captured YAML quotes around email field, storing `yourdomain.com` with embedded quotes in state.json. Fixed at root (migration strips quotes) and defensively in `_load_config()` via `tr -d '"'`.
