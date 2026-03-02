@@ -6,6 +6,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v2.1.1] - 2026-03-02
+
+### Fixed
+
+- **`corex manage lan-setup` HTTP 400 on domain with embedded quotes** — The v1→v2 state migration extracted the domain from `traefik.yml`'s `email:` field using a regex that captured surrounding YAML quotes (e.g. `"admin@yourdomain.com"` → after stripping `admin@`, stored `yourdomain.com` with literal quote characters). This caused the AdGuard DNS rewrite API call to send malformed JSON (`{"domain": "*.yourdomain.com", ...}`) and receive HTTP 400.
+  - Root-cause fix in `_migrate_v1_if_needed()`: pipe through `tr -d '"'` before calling `sed 's/admin@//'` to strip any YAML quote characters during migration.
+  - Defensive fix in `_load_config()`: `DOMAIN` and `SERVER_IP` are now cleaned with `| tr -d '"'` on load, so existing installations with already-corrupt `state.json` values are fixed transparently on the next run — no manual state file editing required.
+
+---
+
 ## [v2.1.0] - 2026-03-01
 
 ### Added
@@ -212,6 +222,7 @@ CoreX Pro uses semantic versioning: `MAJOR.MINOR.PATCH`
 - **MINOR** (v1.1, v1.2...): New features, bug fixes, new scripts
 - **PATCH** (v1.1.1, v1.1.2...): Small fixes, typos, documentation updates
 
+[v2.1.1]: https://github.com/itismowgli/corex-pro/releases/tag/v2.1.1
 [v2.1.0]: https://github.com/itismowgli/corex-pro/releases/tag/v2.1.0
 [v2.0.1]: https://github.com/itismowgli/corex-pro/releases/tag/v2.0.1
 [v2.0.0]: https://github.com/itismowgli/corex-pro/releases/tag/v2.0.0

@@ -48,7 +48,7 @@ _migrate_v1_if_needed() {
                        /opt/corex-pro/docker-configs/traefik/traefik.yml; do
         if [[ -f "$traefik_yml" ]]; then
             detected_domain=$(grep -oP 'email:\s*\K\S+' "$traefik_yml" 2>/dev/null \
-                | sed 's/admin@//' | head -1) || true
+                | tr -d '"'"'" | sed 's/admin@//' | head -1) || true
             break
         fi
     done
@@ -116,8 +116,10 @@ _load_config() {
     if [[ ! -f "$COREX_STATE_FILE" ]]; then
         _migrate_v1_if_needed || log_error "CoreX does not appear to be installed. Run: sudo bash corex.sh install"
     fi
-    DOMAIN=$(state_get "domain")
-    SERVER_IP=$(state_get "server_ip")
+    # tr -d '"' strips stray quotes that v1-migration may have embedded
+    # (traefik.yml stores email: "admin@domain" — grep captures the quotes)
+    DOMAIN=$(state_get "domain" | tr -d '"')
+    SERVER_IP=$(state_get "server_ip" | tr -d '"')
     EMAIL=$(state_get "email")
     TIMEZONE=$(state_get "timezone")
     SSH_PORT=$(state_get "ssh_port")
