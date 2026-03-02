@@ -437,24 +437,29 @@ cmd_lan_setup() {
         return 1
     fi
 
-    # ── Determine AdGuard admin port ──────────────────────────────────────────
-    local AG_PORT="3000"
+    # ── Determine if AdGuard wizard is complete ───────────────────────────────
+    # After the setup wizard, AdGuard's INTERNAL container port switches from
+    # 3000 → 80. The HOST-side port is always 3000 (Docker maps 3000:INTERNAL).
+    # We read the internal port only to detect wizard completion — the API URL
+    # must always use the host-side port 3000.
+    local AG_INTERNAL_PORT="3000"
     local YAML_FILE="${DATA_ROOT}/adguard-conf/AdGuardHome.yaml"
     if [[ -f "$YAML_FILE" ]]; then
         local PORT_FROM_YAML
         PORT_FROM_YAML=$(grep -A5 "^http:" "$YAML_FILE" \
             | grep "address:" | grep -oP ':\K[0-9]+' | head -1)
-        [[ -n "$PORT_FROM_YAML" ]] && AG_PORT="$PORT_FROM_YAML"
+        [[ -n "$PORT_FROM_YAML" ]] && AG_INTERNAL_PORT="$PORT_FROM_YAML"
     fi
 
-    if [[ "$AG_PORT" == "3000" ]]; then
+    if [[ "$AG_INTERNAL_PORT" == "3000" ]]; then
         log_warning "AdGuard setup wizard has not been completed yet."
         echo "  1. Open http://${SERVER_IP}:3000 and run through the wizard"
         echo "  2. Then re-run: sudo bash corex-manage.sh lan-setup"
         return 1
     fi
 
-    local AG_URL="http://localhost:${AG_PORT}"
+    # API is always reachable at the Docker host-mapped port 3000
+    local AG_URL="http://localhost:3000"
     log_info "AdGuard admin URL: ${AG_URL}"
 
     # ── Check if rewrite already exists ──────────────────────────────────────
