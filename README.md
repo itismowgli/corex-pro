@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/CoreX_Pro-v2.0.0-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
+  <img src="https://img.shields.io/badge/CoreX_Pro-v2.1.1-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
   <img src="https://img.shields.io/badge/Ubuntu-24.04_LTS-E95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Ubuntu">
   <img src="https://img.shields.io/badge/Docker-Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker">
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
@@ -79,14 +79,15 @@ The menu auto-detects whether CoreX is installed and shows relevant options.
 ### All Commands
 
 ```bash
-sudo bash corex.sh install          # Install (interactive wizard)
-sudo bash corex.sh doctor           # Health check + auto-repair all services
-sudo bash corex.sh manage status    # Live status dashboard
-sudo bash corex.sh manage add <svc> # Add a service you skipped during install
-sudo bash corex.sh update           # Pull latest CoreX Pro version
-sudo bash corex.sh migrate          # Change domain across all services
-sudo bash corex.sh nuke             # Uninstall / rollback
-sudo bash corex.sh help             # Full command reference
+sudo bash corex.sh install              # Install (interactive wizard)
+sudo bash corex.sh doctor               # Health check + auto-repair all services
+sudo bash corex.sh manage status        # Live status dashboard
+sudo bash corex.sh manage add <svc>     # Add a service you skipped during install
+sudo bash corex.sh manage lan-setup     # Configure LAN fast-path (full-speed local transfers)
+sudo bash corex.sh update               # Pull latest CoreX Pro version
+sudo bash corex.sh migrate              # Change domain across all services
+sudo bash corex.sh nuke                 # Uninstall / rollback
+sudo bash corex.sh help                 # Full command reference
 ```
 
 After install, credentials are at `/root/corex-credentials.txt` and a full guide at `/root/CoreX_Dashboard_Credentials.md`.
@@ -196,9 +197,13 @@ The wizard, `corex doctor`, and `corex manage` automatically discover and suppor
 
 ### 🛡 AdGuard Home - DNS & Ad Blocking
 
-**What:** Network-wide DNS server that blocks ads, trackers, and malware domains. Also serves as your local DNS for routing `*.yourdomain.com` to your server's LAN IP.
+**What:** Network-wide DNS server that blocks ads, trackers, and malware domains. Also serves as your local DNS for routing `*.yourdomain.com` directly to your server's LAN IP — bypassing Cloudflare for full-speed local transfers.
 
-**Key setup:** Add DNS Rewrite: `*.yourdomain.com → YOUR_SERVER_IP`
+**LAN fast-path setup (automated):**
+```bash
+sudo bash corex.sh manage lan-setup
+```
+Automatically adds the wildcard DNS rewrite `*.yourdomain.com → SERVER_IP` via the AdGuard API and prints per-device/router DNS configuration instructions.
 
 **Access:** `http://YOUR_IP:3000`
 
@@ -327,11 +332,13 @@ After the script completes, follow these steps **in order**:
 
 ### 1. AdGuard Home (DNS) - Do This First
 
-1. Open `http://YOUR_IP:3000`
-2. Complete setup wizard
-3. Add DNS Rewrite: `*.yourdomain.com → YOUR_IP`
-4. Set your router's primary DNS to `YOUR_IP`
-5. Now all `*.yourdomain.com` URLs resolve locally without going through Cloudflare
+1. Open `http://YOUR_IP:3000` and complete the setup wizard
+2. Run the automated LAN fast-path setup — it adds the wildcard DNS rewrite and prints router/device instructions:
+   ```bash
+   sudo bash corex.sh manage lan-setup
+   ```
+3. Set your **router's primary DNS to `YOUR_IP`** (printed at the end of `lan-setup`)
+4. Now all `*.yourdomain.com` lookups from LAN devices resolve to your server — file uploads, photo syncs, and vault access all stay on the local network at full speed, bypassing Cloudflare entirely
 
 ### 2. Cloudflare Tunnel (External Access)
 
@@ -373,7 +380,7 @@ cat /root/CoreX_Dashboard_Credentials.md  # Full guide with every URL and setup 
 
 ## 🔧 Managing Services
 
-v2.0.0 introduces full post-install service management. No need to re-run the installer to add or fix services.
+v2.0.0 introduced full post-install service management. v2.1.0 added LAN fast-path automation. No need to re-run the installer to add, fix, or configure services.
 
 ### Health Check & Auto-Repair
 
@@ -417,6 +424,21 @@ sudo bash corex.sh manage update nextcloud  # Update a specific service
 sudo bash corex.sh manage disable immich    # Stop container (data preserved)
 sudo bash corex.sh manage enable immich     # Start again
 ```
+
+### ⚡ LAN Fast-Path (Full-Speed Local Transfers)
+
+When your devices use AdGuard (on the CoreX server) as their DNS, `*.yourdomain.com` resolves to the server's **local IP** instead of Cloudflare. File uploads, photo syncs, and vault access all stay entirely on the local network at full LAN speed (~1 Gbps), bypassing the Cloudflare Tunnel.
+
+```bash
+sudo bash corex.sh manage lan-setup
+```
+
+This command:
+- Automatically adds the wildcard `*.yourdomain.com → SERVER_IP` DNS rewrite in AdGuard via API
+- Prints step-by-step DNS configuration instructions for router, macOS, Windows, iPhone, and Android
+- Includes a verification command to confirm the fast-path is active
+
+**External access** through Cloudflare Tunnel continues to work unchanged for devices off the LAN.
 
 ---
 
