@@ -28,7 +28,7 @@ learning nginx, SSL, Docker networking, or Linux hardening.
 - Re-run on existing server = health-check + repair broken services only
 - No live server required for testing (Docker-in-Docker + bats)
 
-**Current version:** v2.1.1
+**Current version:** v2.2.0
 **Current services:** 14 (Traefik, AdGuard, Portainer, Nextcloud, Immich,
 Vaultwarden, Stalwart Mail, Coolify, n8n, Time Machine, Uptime Kuma,
 Grafana+Prometheus, Ollama+OpenWebUI+Browserless, CrowdSec)
@@ -724,3 +724,4 @@ Key functions in `lib/state.sh`:
 - **v2.0.1** (2026-02-22): Fixed `corex doctor` on v1 installs — auto-migrates state from `docker ps` when `state.json` is missing.
 - **v2.1.0** (2026-03-01): Added `corex manage lan-setup` — automates AdGuard DNS wildcard rewrite via REST API; prints router/device DNS instructions. Eliminates the manual post-install AdGuard step.
 - **v2.1.1** (2026-03-02): Fixed `lan-setup` HTTP 400 — v1 migration regex captured YAML quotes around email field, storing domain with embedded quotes in state.json. Fixed at root (migration strips quotes) and defensively in `_load_config()` via `tr -d '"'`.
+- **v2.2.0** (2026-03-06): Network performance tuning + security hardening. Added `corex manage network-tune` command. Kernel params expanded from 14 to 50+ (BBR, 64MB TCP buffers, TCP Fast Open, MTU probing). Time Machine rebuilt with high-performance SMB3 (multichannel, 8MB chunks, async I/O, sendfile). SSH hardened with modern ciphers only (ChaCha20/AES-GCM, curve25519 KEX). Fail2ban upgraded to 3-jail system (standard + aggressive + recidive for 30-day repeat-offender bans).

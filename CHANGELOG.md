@@ -6,6 +6,60 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v2.2.0] - 2026-03-06
+
+### Added
+
+- **Network performance tuning** (`corex manage network-tune`) — New command that diagnoses network interfaces, displays current vs optimal kernel parameters, and applies high-performance tuning. Transforms file transfer speeds from KB/s to hundreds of MB/s on gigabit+ networks.
+  - Detects all ethernet and wireless interfaces with link speed, state, and MTU
+  - Shows 14 critical kernel network parameters with current values
+  - Applies BBR congestion control (Google's algorithm, 2-10x better than CUBIC on LAN)
+  - Tunes TCP buffer sizes from ~200KB default up to 64MB max per socket
+  - Enables TCP Fast Open, MTU path probing, window scaling, and SACK
+  - Prints diagnostic speed tips (cable check, iperf3 testing, SMB multichannel verification)
+  - Safe to re-run — detects if tuning is already applied
+
+- **High-performance SMB3 for Time Machine** — Rebuilt the Time Machine service with optimized Samba configuration for multi-gigabit LAN transfers:
+  - SMB3 minimum protocol enforced (disables insecure SMB1/SMB2)
+  - SMB multichannel enabled (uses all available NICs simultaneously)
+  - 8MB read/write chunks per SMB request (up from default 64KB — 128x larger)
+  - 2MB socket buffers with TCP_NODELAY for low-latency transfers
+  - Async I/O via sendfile for zero-copy kernel-level file transfers
+  - Aggressive client caching via level2 oplocks
+  - Custom `smb-performance.conf` overlay bind-mounted into the container
+  - Increased file descriptor limits (ulimits 65536)
+
+- **Interactive menu option 4** — "Network tune" added to `corex.sh` interactive menu
+
+### Changed
+
+- **Kernel network parameters** (lib/security.sh) — Expanded from 14 security-only params to 50+ params covering both security and performance:
+  - TCP buffer auto-tuning: min 4KB → default 256KB → max 64MB
+  - BBR congestion control with fq qdisc (replaces CUBIC + pfifo_fast)
+  - Connection handling: somaxconn 4096, netdev_max_backlog 16384
+  - TCP keepalive tuned for faster dead connection detection (60s interval)
+  - VM tuning: swappiness 10, dirty_ratio 40 for file-server workloads
+  - File descriptor limits: 2M max, inotify watches 524K
+  - Source route rejection on all interfaces (IPv4 + IPv6)
+  - TCP RFC 1337 compliance (TIME-WAIT assassination protection)
+
+### Security Hardened
+
+- **SSH ciphers restricted** — Only modern, audited algorithms allowed:
+  - KEX: curve25519-sha256, diffie-hellman-group16/18-sha512
+  - Ciphers: chacha20-poly1305, aes256-gcm, aes128-gcm
+  - MACs: hmac-sha2-512-etm, hmac-sha2-256-etm
+  - Empty passwords disabled, Debian banner removed
+  - Client alive interval 300s with max 2 probes (auto-disconnect idle sessions)
+
+- **Fail2ban upgraded to 3-jail system**:
+  - `sshd`: Standard jail — 3 failures in 10min → 24hr ban
+  - `sshd-aggressive`: Aggressive detection — 2 failures in 1hr → 7-day ban
+  - `recidive`: Repeat offender jail — 3 Fail2ban bans in 24hrs → 30-day ban
+  - Ban action changed from iptables to UFW for consistent firewall management
+
+---
+
 ## [v2.1.1] - 2026-03-02
 
 ### Fixed

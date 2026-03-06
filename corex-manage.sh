@@ -411,20 +411,23 @@ cmd_doctor() {
 # ── lan-setup ─────────────────────────────────────────────────────────────────
 # Configures AdGuard DNS wildcard rewrite so LAN clients bypass Cloudflare
 # and connect directly to the server for faster file transfers / uploads.
+#
+# Also prints a /etc/hosts fallback block for users whose VPN apps (Tailscale,
+# ClearVPN, etc.) intercept DNS at the kernel level and bypass AdGuard.
 
 cmd_lan_setup() {
     echo ""
     echo -e "${CYAN}${BOLD}CoreX Pro — LAN Fast-Path Setup${NC}"
     echo "──────────────────────────────────────────────────────"
     echo ""
-    echo "  When your devices use AdGuard (on this server) as DNS, all"
-    echo "  *.${DOMAIN} lookups resolve to ${SERVER_IP} (your local IP)."
-    echo "  File uploads, photo syncs, and vault access all stay on LAN."
+    echo "  Goal: *.${DOMAIN} resolves to ${SERVER_IP} (your server's LAN IP)"
+    echo "  so uploads, photo syncs, and vault access stay on your local network"
+    echo "  instead of travelling through Cloudflare at internet speeds."
     echo ""
 
     # ── Validate prerequisites ────────────────────────────────────────────────
     if [[ "${DOMAIN:-}" == "" || "${DOMAIN:-}" == "unknown" ]]; then
-        log_error "No domain configured. LAN fast-path requires a domain. Check: corex manage status"
+        log_error "No domain configured. Check: corex manage status"
     fi
 
     if ! command -v docker &>/dev/null; then
@@ -434,16 +437,13 @@ cmd_lan_setup() {
     if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^adguard$"; then
         log_warning "AdGuard container is not running."
         echo "  Start it with: sudo bash corex-manage.sh add adguard"
-        echo ""
-        echo "  Once running, re-run: sudo bash corex-manage.sh lan-setup"
+        echo "  Then re-run:   sudo bash corex-manage.sh lan-setup"
         return 1
     fi
 
-    # ── Determine if AdGuard wizard is complete ───────────────────────────────
-    # After the setup wizard, AdGuard's INTERNAL container port switches from
-    # 3000 → 80. The HOST-side port is always 3000 (Docker maps 3000:INTERNAL).
-    # We read the internal port only to detect wizard completion — the API URL
-    # must always use the host-side port 3000.
+    # ── Detect AdGuard wizard state ───────────────────────────────────────────
+    # Internal port switches from 3000 → 80 after the setup wizard completes.
+    # HOST-side port is always 3000. We read the YAML only to detect wizard state.
     local AG_INTERNAL_PORT="3000"
     local YAML_FILE="${DATA_ROOT}/adguard-conf/AdGuardHome.yaml"
     if [[ -f "$YAML_FILE" ]]; then
@@ -455,96 +455,314 @@ cmd_lan_setup() {
 
     if [[ "$AG_INTERNAL_PORT" == "3000" ]]; then
         log_warning "AdGuard setup wizard has not been completed yet."
-        echo "  1. Open http://${SERVER_IP}:3000 and run through the wizard"
-        echo "  2. Then re-run: sudo bash corex-manage.sh lan-setup"
+        echo "  1. Open http://${SERVER_IP}:3000 in your browser"
+        echo "  2. Complete the wizard (set admin password, keep defaults otherwise)"
+        echo "  3. Then re-run: sudo bash corex-manage.sh lan-setup"
         return 1
     fi
 
-    # API is always reachable at the Docker host-mapped port 3000
+    # API is always reachable via the Docker host-mapped port 3000
     local AG_URL="http://localhost:3000"
-    log_info "AdGuard admin URL: ${AG_URL}"
+    local AG_USER="" AG_PASS=""
 
-    # ── Check if rewrite already exists ──────────────────────────────────────
-    local existing
-    existing=$(curl -s "${AG_URL}/control/rewrite/list" 2>/dev/null || true)
+    # ── Authenticate once — reuse credentials for list check AND add ──────────
+    # Probe the list endpoint first. If AdGuard needs auth, prompt once and
+    # reuse the credentials for every subsequent API call. This prevents the
+    # old behaviour of blindly attempting to add a rewrite that already exists
+    # (which created duplicate entries in AdGuard).
+    local probe_code
+    probe_code=$(curl -s -o /dev/null -w "%{http_code}" \
+        "${AG_URL}/control/rewrite/list" 2>/dev/null || echo "000")
 
-    if echo "$existing" | grep -q "\"\\*\\.${DOMAIN}\""; then
+    if [[ "$probe_code" == "401" || "$probe_code" == "403" ]]; then
+        echo ""
+        log_info "AdGuard requires credentials (set during the wizard)."
+        read -r -p "  Username: " AG_USER
+        read -r -s -p "  Password: " AG_PASS
+        echo ""
+    fi
+
+    # Wrapper so every API call gets the same auth header when needed
+    _ag_curl() {
+        if [[ -n "$AG_USER" ]]; then
+            curl -s -u "${AG_USER}:${AG_PASS}" "$@"
+        else
+            curl -s "$@"
+        fi
+    }
+
+    # ── Check / add DNS rewrite ───────────────────────────────────────────────
+    local rewrite_list
+    rewrite_list=$(_ag_curl "${AG_URL}/control/rewrite/list" 2>/dev/null || echo "[]")
+
+    if echo "$rewrite_list" | grep -q "\"\\*\\.${DOMAIN}\""; then
         log_success "DNS rewrite *.${DOMAIN} → ${SERVER_IP} already configured."
     else
         log_info "Adding DNS rewrite *.${DOMAIN} → ${SERVER_IP}..."
-        local http_code
-        # Try without auth first (some setups allow unauthenticated local API calls)
-        http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+        local add_code
+        add_code=$(_ag_curl -o /dev/null -w "%{http_code}" \
             -X POST "${AG_URL}/control/rewrite/add" \
             -H "Content-Type: application/json" \
             -d "{\"domain\": \"*.${DOMAIN}\", \"answer\": \"${SERVER_IP}\"}" \
             2>/dev/null || echo "000")
 
-        if [[ "$http_code" == "200" ]]; then
+        if [[ "$add_code" == "200" ]]; then
             log_success "DNS rewrite added."
-        elif [[ "$http_code" == "401" || "$http_code" == "403" ]]; then
-            echo ""
-            log_info "AdGuard requires credentials. Enter your AdGuard admin login:"
-            read -r -p "  Username: " AG_USER
-            read -r -s -p "  Password: " AG_PASS
-            echo ""
-            http_code=$(curl -s -o /dev/null -w "%{http_code}" \
-                -X POST "${AG_URL}/control/rewrite/add" \
-                -H "Content-Type: application/json" \
-                -u "${AG_USER}:${AG_PASS}" \
-                -d "{\"domain\": \"*.${DOMAIN}\", \"answer\": \"${SERVER_IP}\"}" \
-                2>/dev/null || echo "000")
-            if [[ "$http_code" == "200" ]]; then
-                log_success "DNS rewrite added."
-            else
-                log_warning "API call failed (HTTP ${http_code}). Add the rewrite manually:"
-                echo "  → AdGuard UI → Filters → DNS Rewrites → Add rewrite"
-                echo "    Domain: *.${DOMAIN}"
-                echo "    Answer: ${SERVER_IP}"
-            fi
         else
-            log_warning "Could not reach AdGuard API (HTTP ${http_code})."
-            echo "  Add the rewrite manually:"
-            echo "  → AdGuard UI → Filters → DNS Rewrites → Add rewrite"
+            log_warning "API call failed (HTTP ${add_code}). Add the rewrite manually:"
+            echo "    AdGuard UI → Filters → DNS Rewrites → Add rewrite"
             echo "    Domain: *.${DOMAIN}"
             echo "    Answer: ${SERVER_IP}"
         fi
     fi
 
-    # ── Print router/device DNS instructions ──────────────────────────────────
+    # ── Build /etc/hosts entries from installed services ──────────────────────
+    # Maps service module names → subdomains (matches actual Traefik router rules)
+    _lan_subdomains() {
+        case "$1" in
+            nextcloud)   echo "nextcloud" ;;
+            immich)      echo "photos" ;;
+            portainer)   echo "portainer" ;;
+            vaultwarden) echo "vault" ;;
+            n8n)         echo "n8n" ;;
+            stalwart)    echo "mail" ;;
+            coolify)     echo "coolify" ;;
+            monitoring)  echo "status grafana" ;;
+            ai)          echo "ai ollama" ;;
+            adguard)     echo "adguard" ;;
+            traefik)     echo "traefik" ;;
+            *)           echo "" ;;  # timemachine, crowdsec, cloudflared — no web subdomain
+        esac
+    }
+
+    local HOSTS_LINES=""
+    local svc
+    while IFS= read -r svc; do
+        [[ -z "$svc" ]] && continue
+        local subs
+        subs=$(_lan_subdomains "$svc")
+        for sub in $subs; do
+            HOSTS_LINES+="${SERVER_IP} ${sub}.${DOMAIN}"$'\n'
+        done
+    done < <(state_list_installed)
+
+    # ── Step 1: Router DNS ────────────────────────────────────────────────────
     echo ""
-    echo -e "${BOLD}── Router Setup (Recommended — all devices get LAN fast-path) ─────────────${NC}"
+    echo -e "${BOLD}── Step 1: Router DNS (easiest — covers all devices automatically) ─────────${NC}"
     echo ""
     echo "  In your router's DHCP / DNS settings, set:"
     echo -e "    Primary DNS:   ${GREEN}${SERVER_IP}${NC}"
-    echo -e "    Secondary DNS: ${YELLOW}1.1.1.1${NC}  ← fallback if server is down"
+    echo -e "    Secondary DNS: ${YELLOW}1.1.1.1${NC}  (fallback if server is offline)"
     echo ""
-    echo "  Every device that joins your network will automatically use AdGuard"
-    echo "  and resolve *.${DOMAIN} directly to this server over LAN."
+    echo "  Every device that joins your network will resolve"
+    echo "  *.${DOMAIN} directly to this server without any extra steps."
     echo ""
-    echo -e "${BOLD}── Per-Device DNS (if you cannot change router settings) ──────────────────${NC}"
+
+    # ── Step 2: Per-device DNS ────────────────────────────────────────────────
+    echo -e "${BOLD}── Step 2: Per-Device DNS (if you cannot change router settings) ───────────${NC}"
     echo ""
-    echo "  macOS / Linux:"
-    echo "    System Settings → Network → DNS → Add ${SERVER_IP}"
+    echo "  macOS:   System Settings → Network → Wi-Fi → Details → DNS → ${SERVER_IP}"
+    echo "  Windows: Control Panel → Network → Adapter → IPv4 → DNS: ${SERVER_IP}"
+    echo "  iPhone:  Settings → Wi-Fi → (network) → Configure DNS → Manual → ${SERVER_IP}"
+    echo "  Android: Settings → Wi-Fi → (network) → IP Settings → Static → DNS: ${SERVER_IP}"
     echo ""
-    echo "  Windows:"
-    echo "    Control Panel → Network → Adapter → IPv4 Properties → DNS: ${SERVER_IP}"
-    echo ""
-    echo "  iPhone / iPad:"
-    echo "    Settings → Wi-Fi → (your network) → Configure DNS → Manual → ${SERVER_IP}"
-    echo ""
-    echo "  Android:"
-    echo "    Settings → Wi-Fi → (your network) → IP Settings → Static → DNS 1: ${SERVER_IP}"
-    echo ""
+
+    # ── Step 3: Hosts file fallback ───────────────────────────────────────────
+    # Required when VPN apps (Tailscale, ClearVPN, etc.) install a kernel-level
+    # Network Extension that intercepts DNS before AdGuard or /etc/resolver/ rules
+    # can act on it. The /etc/hosts file is checked BEFORE any DNS query is made,
+    # so it cannot be intercepted by VPN software. Safe to add, easy to remove.
+    if [[ -n "$HOSTS_LINES" ]]; then
+        echo -e "${BOLD}── Step 3: Hosts File (required if you use Tailscale or a VPN app) ────────${NC}"
+        echo ""
+        echo "  VPN apps like Tailscale and ClearVPN install a kernel-level Network"
+        echo "  Extension that intercepts DNS before it reaches AdGuard — even after"
+        echo "  following Steps 1 and 2. The hosts file bypasses this completely."
+        echo ""
+        echo "  It is safe to add: it only affects the listed hostnames, changes"
+        echo "  nothing else on your system, and can be removed at any time."
+        echo ""
+        echo -e "  ${BOLD}macOS / Linux${NC} — paste in Terminal:"
+        echo ""
+        echo -e "${CYAN}sudo tee -a /etc/hosts << 'HOSTSEOF'"
+        echo "# CoreX Pro LAN fast-path — ${DOMAIN} (added by lan-setup)"
+        printf '%s' "$HOSTS_LINES"
+        echo "# End CoreX Pro LAN fast-path"
+        echo -e "HOSTSEOF${NC}"
+        echo ""
+        echo -e "  ${BOLD}Windows${NC} — paste in PowerShell (Run as Administrator):"
+        echo ""
+        echo -e "${CYAN}  Add-Content \$env:SystemRoot\\System32\\drivers\\etc\\hosts @'"
+        echo "# CoreX Pro LAN fast-path — ${DOMAIN}"
+        printf '%s' "$HOSTS_LINES"
+        echo "  # End CoreX Pro LAN fast-path"
+        echo -e "  '@${NC}"
+        echo ""
+        echo "  To remove later: open /etc/hosts and delete the lines between"
+        echo "  '# CoreX Pro LAN fast-path' and '# End CoreX Pro LAN fast-path'."
+        echo ""
+    fi
+
+    # ── Verify ────────────────────────────────────────────────────────────────
     echo -e "${BOLD}── Verify It's Working ─────────────────────────────────────────────────────${NC}"
     echo ""
-    echo "  From a device using AdGuard as DNS, run:"
+    echo "  After any DNS change, flush your DNS cache first:"
+    echo ""
+    echo "  macOS:   sudo dscacheutil -flushcache && sudo killall -HUP mDNSResponder"
+    echo "  Linux:   sudo systemd-resolve --flush-caches"
+    echo "  Windows: ipconfig /flushdns"
+    echo ""
+    echo "  Then verify the IP is local (not a Cloudflare IP):"
     echo -e "    ${CYAN}nslookup nextcloud.${DOMAIN}${NC}"
     echo ""
-    echo "  Expected result: ${SERVER_IP}  (your local IP, not a Cloudflare IP)"
-    echo "  Then uploads to Nextcloud / Immich / Vaultwarden all run at LAN speed."
+    echo -e "  Expected: ${GREEN}${SERVER_IP}${NC}   ← your server's LAN IP"
+    echo "  If you see 172.67.x.x or 104.21.x.x → use the Hosts File (Step 3)."
     echo ""
     log_success "LAN fast-path setup complete."
+}
+
+# ── network-tune ─────────────────────────────────────────────────────────────
+# Diagnoses current network performance settings and applies high-performance
+# kernel parameters. Shows before/after comparison. Safe to re-run.
+
+cmd_network_tune() {
+    echo ""
+    echo -e "${CYAN}${BOLD}CoreX Pro — Network Performance Tuner${NC}"
+    echo "──────────────────────────────────────────────────────"
+    echo ""
+
+    # ── Detect interfaces ────────────────────────────────────────────────────
+    log_info "Detecting network interfaces..."
+    local iface ifname link_speed operstate iface_mtu
+    for iface in /sys/class/net/e*; do
+        [[ -d "$iface" ]] || continue
+        ifname=$(basename "$iface")
+        link_speed=$(cat "${iface}/speed" 2>/dev/null || echo "unknown")
+        operstate=$(cat "${iface}/operstate" 2>/dev/null || echo "unknown")
+        iface_mtu=$(cat "${iface}/mtu" 2>/dev/null || echo "unknown")
+        printf "  %-12s speed: %-8s  state: %-6s  MTU: %s\n" \
+            "$ifname" "${link_speed}Mbps" "$operstate" "$iface_mtu"
+    done
+    for iface in /sys/class/net/w*; do
+        [[ -d "$iface" ]] || continue
+        ifname=$(basename "$iface")
+        operstate=$(cat "${iface}/operstate" 2>/dev/null || echo "unknown")
+        iface_mtu=$(cat "${iface}/mtu" 2>/dev/null || echo "unknown")
+        printf "  %-12s speed: %-8s  state: %-6s  MTU: %s\n" \
+            "$ifname" "wireless" "$operstate" "$iface_mtu"
+    done
+    echo ""
+
+    # ── Current kernel network settings ──────────────────────────────────────
+    log_info "Current kernel network parameters:"
+    echo ""
+    printf "  %-42s %s\n" "PARAMETER" "VALUE"
+    echo "  ──────────────────────────────────────────────────"
+
+    local params=(
+        "net.ipv4.tcp_congestion_control"
+        "net.core.default_qdisc"
+        "net.core.rmem_max"
+        "net.core.wmem_max"
+        "net.core.rmem_default"
+        "net.core.wmem_default"
+        "net.ipv4.tcp_window_scaling"
+        "net.ipv4.tcp_fastopen"
+        "net.ipv4.tcp_mtu_probing"
+        "net.ipv4.tcp_slow_start_after_idle"
+        "net.core.somaxconn"
+        "net.core.netdev_max_backlog"
+        "vm.swappiness"
+        "vm.dirty_ratio"
+    )
+
+    local param val
+    for param in "${params[@]}"; do
+        val=$(sysctl -n "$param" 2>/dev/null || echo "n/a")
+        printf "  %-42s %s\n" "$param" "$val"
+    done
+    echo ""
+
+    # ── Check if tuning is already applied ───────────────────────────────────
+    local current_cc current_rmem
+    current_cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "unknown")
+    current_rmem=$(sysctl -n net.core.rmem_max 2>/dev/null || echo "0")
+
+    if [[ "$current_cc" == "bbr" && "$current_rmem" -ge 67108864 ]]; then
+        log_success "Network is already tuned for high performance."
+        echo ""
+        _network_speed_tips
+        return 0
+    fi
+
+    # ── Apply tuning ─────────────────────────────────────────────────────────
+    log_info "Applying high-performance network parameters..."
+
+    # Check if BBR module is available
+    if ! modprobe tcp_bbr 2>/dev/null; then
+        log_warning "BBR kernel module not available. Using current congestion control."
+    fi
+
+    # Apply from corex sysctl config if it exists
+    if [[ -f /etc/sysctl.d/99-corex.conf ]]; then
+        sysctl --system > /dev/null 2>&1
+        log_success "Applied parameters from /etc/sysctl.d/99-corex.conf"
+    else
+        # Apply key parameters directly (for pre-v2.2 installs)
+        sysctl -w net.core.rmem_max=67108864 > /dev/null 2>&1
+        sysctl -w net.core.wmem_max=67108864 > /dev/null 2>&1
+        sysctl -w net.core.rmem_default=262144 > /dev/null 2>&1
+        sysctl -w net.core.wmem_default=262144 > /dev/null 2>&1
+        sysctl -w "net.ipv4.tcp_rmem=4096 262144 67108864" > /dev/null 2>&1
+        sysctl -w "net.ipv4.tcp_wmem=4096 262144 67108864" > /dev/null 2>&1
+        sysctl -w net.ipv4.tcp_window_scaling=1 > /dev/null 2>&1
+        sysctl -w net.ipv4.tcp_mtu_probing=1 > /dev/null 2>&1
+        sysctl -w net.ipv4.tcp_slow_start_after_idle=0 > /dev/null 2>&1
+        sysctl -w net.ipv4.tcp_fastopen=3 > /dev/null 2>&1
+        sysctl -w net.core.somaxconn=4096 > /dev/null 2>&1
+        sysctl -w net.core.netdev_max_backlog=16384 > /dev/null 2>&1
+
+        if modprobe tcp_bbr 2>/dev/null; then
+            sysctl -w net.core.default_qdisc=fq > /dev/null 2>&1
+            sysctl -w net.ipv4.tcp_congestion_control=bbr > /dev/null 2>&1
+        fi
+
+        log_success "Applied runtime network tuning."
+        log_warning "To persist across reboots, re-run the CoreX installer (sudo bash corex.sh install)"
+    fi
+
+    echo ""
+    _network_speed_tips
+}
+
+_network_speed_tips() {
+    echo -e "${BOLD}── Speed Tips ─────────────────────────────────────────────────────────────${NC}"
+    echo ""
+    echo "  1. Use ETHERNET instead of Wi-Fi for maximum speed"
+    echo "     Wi-Fi theoretical max: ~100-300 MB/s (Wi-Fi 6)"
+    echo "     Ethernet 1Gbps:        ~110 MB/s"
+    echo "     Ethernet 2.5Gbps:      ~280 MB/s"
+    echo ""
+    echo "  2. Check your cable — use Cat 5e or better for gigabit"
+    echo "     Cat 5 caps at 100Mbps. Cat 5e/6/6a supports 1-10 Gbps."
+    echo ""
+    echo "  3. Bypass your ISP router if it has a 100Mbps switch"
+    echo "     Many ISP routers have 10/100 ports, not gigabit."
+    echo "     Connect through a gigabit switch instead."
+    echo ""
+    echo "  4. Test raw network speed between two machines:"
+    echo -e "     Server: ${CYAN}iperf3 -s${NC}"
+    echo -e "     Client: ${CYAN}iperf3 -c ${SERVER_IP}${NC}"
+    echo ""
+    echo "  5. Install iperf3 if missing:"
+    echo -e "     ${CYAN}sudo apt install -y iperf3${NC}"
+    echo ""
+    echo "  6. Verify SMB3 multichannel is active (from macOS):"
+    echo -e "     ${CYAN}smbutil multichannel -a${NC}"
+    echo ""
+    echo "  7. LAN fast-path must be configured for full-speed service access:"
+    echo -e "     ${CYAN}sudo bash corex-manage.sh lan-setup${NC}"
+    echo ""
 }
 
 # ── help ──────────────────────────────────────────────────────────────────────
@@ -569,6 +787,7 @@ Commands:
   replace <old> <new> Remove one service, install another
   doctor              Full health check + auto-repair
   lan-setup           Configure LAN fast-path for direct local network access
+  network-tune        Diagnose and optimize network for high-speed file transfers
 
 Examples:
   sudo bash corex-manage.sh status
@@ -576,6 +795,7 @@ Examples:
   sudo bash corex-manage.sh update --all
   sudo bash corex-manage.sh remove n8n
   sudo bash corex-manage.sh lan-setup
+  sudo bash corex-manage.sh network-tune
 
 HELPEOF
 }
@@ -590,17 +810,18 @@ main() {
     shift || true
 
     case "$cmd" in
-        status)   cmd_status ;;
-        list)     cmd_list ;;
-        add)      cmd_add "$@" ;;
-        remove)   cmd_remove "$@" ;;
-        enable)   cmd_enable "$@" ;;
-        disable)  cmd_disable "$@" ;;
-        update)   cmd_update "$@" ;;
-        repair)    cmd_repair "$@" ;;
-        replace)   cmd_replace "$@" ;;
-        doctor)    cmd_doctor ;;
-        lan-setup) cmd_lan_setup ;;
+        status)       cmd_status ;;
+        list)         cmd_list ;;
+        add)          cmd_add "$@" ;;
+        remove)       cmd_remove "$@" ;;
+        enable)       cmd_enable "$@" ;;
+        disable)      cmd_disable "$@" ;;
+        update)       cmd_update "$@" ;;
+        repair)       cmd_repair "$@" ;;
+        replace)      cmd_replace "$@" ;;
+        doctor)       cmd_doctor ;;
+        lan-setup)    cmd_lan_setup ;;
+        network-tune) cmd_network_tune ;;
         help|--help|-h) cmd_help ;;
         *) echo "Unknown command: ${cmd}"; cmd_help; exit 1 ;;
     esac

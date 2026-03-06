@@ -22,7 +22,7 @@
 set -uo pipefail
 
 # ── Version ──
-COREX_VERSION="2.1.1"
+COREX_VERSION="2.2.0"
 
 # ── Colors ──
 RED='\033[0;31m'
@@ -63,7 +63,7 @@ download_repo() {
     REPO_DIR="/opt/corex-pro"
     if [[ -d "$REPO_DIR/.git" ]]; then
         echo -e "${CYAN}Updating existing repo...${NC}"
-        cd "$REPO_DIR" && git pull --ff-only
+        cd "$REPO_DIR" && git fetch origin && git reset --hard origin/main
     else
         rm -rf "$REPO_DIR"
         git clone https://github.com/itismowgli/corex-pro.git "$REPO_DIR"
@@ -183,6 +183,7 @@ show_help() {
     echo "  manage update --all        Update all service images"
     echo "  manage update <service>    Update a specific service"
     echo "  manage lan-setup           Configure LAN fast-path (faster file transfers)"
+    echo "  manage network-tune        Diagnose and optimize network for Gbps transfers"
     echo ""
     echo "Nuke options:"
     echo "  nuke --all       Nuke everything (still confirms)"
@@ -224,7 +225,7 @@ do_update() {
 
     LOCAL_VERSION="$COREX_VERSION"
 
-    if git pull --ff-only 2>/dev/null; then
+    if git fetch origin 2>/dev/null && git reset --hard origin/main 2>/dev/null; then
         # Re-read version from updated file
         NEW_VERSION=$(grep -oP 'COREX_VERSION="\K[^"]+' "${REPO_DIR}/corex.sh" 2>/dev/null || echo "$LOCAL_VERSION")
         if [[ "$NEW_VERSION" != "$LOCAL_VERSION" ]]; then
@@ -261,22 +262,24 @@ show_menu() {
         echo -e "  ${GREEN}1)${NC} Doctor (health check + auto-repair)"
         echo -e "  ${CYAN}2)${NC} Manage services (add/remove/update)"
         echo -e "  ${CYAN}3)${NC} LAN fast-path setup (faster local file transfers)"
-        echo -e "  ${YELLOW}4)${NC} Update CoreX Pro"
-        echo -e "  ${CYAN}5)${NC} Change Domain"
-        echo -e "  ${RED}6)${NC} Nuke / Rollback"
-        echo -e "  ${NC}7)${NC} Help"
-        echo -e "  ${NC}8)${NC} Exit"
+        echo -e "  ${CYAN}4)${NC} Network tune (optimize for Gbps file transfers)"
+        echo -e "  ${YELLOW}5)${NC} Update CoreX Pro"
+        echo -e "  ${CYAN}6)${NC} Change Domain"
+        echo -e "  ${RED}7)${NC} Nuke / Rollback"
+        echo -e "  ${NC}8)${NC} Help"
+        echo -e "  ${NC}9)${NC} Exit"
         echo ""
-        read -r -p "  Choose [1-8]: " choice
+        read -r -p "  Choose [1-9]: " choice
         case "$choice" in
             1) do_doctor ;;
             2) ensure_repo; bash "${REPO_DIR}/corex-manage.sh" ;;
             3) do_manage lan-setup ;;
-            4) do_update ;;
-            5) do_migrate ;;
-            6) do_nuke ;;
-            7) show_help ;;
-            8) echo "Bye!"; exit 0 ;;
+            4) do_manage network-tune ;;
+            5) do_update ;;
+            6) do_migrate ;;
+            7) do_nuke ;;
+            8) show_help ;;
+            9) echo "Bye!"; exit 0 ;;
             *) echo "Invalid choice."; exit 1 ;;
         esac
     else

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/CoreX_Pro-v2.1.1-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
+  <img src="https://img.shields.io/badge/CoreX_Pro-v2.2.0-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
   <img src="https://img.shields.io/badge/Ubuntu-24.04_LTS-E95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Ubuntu">
   <img src="https://img.shields.io/badge/Docker-Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker">
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
@@ -84,6 +84,7 @@ sudo bash corex.sh doctor               # Health check + auto-repair all service
 sudo bash corex.sh manage status        # Live status dashboard
 sudo bash corex.sh manage add <svc>     # Add a service you skipped during install
 sudo bash corex.sh manage lan-setup     # Configure LAN fast-path (full-speed local transfers)
+sudo bash corex.sh manage network-tune  # Optimize kernel for Gbps file transfers
 sudo bash corex.sh update               # Pull latest CoreX Pro version
 sudo bash corex.sh migrate              # Change domain across all services
 sudo bash corex.sh nuke                 # Uninstall / rollback
@@ -380,7 +381,7 @@ cat /root/CoreX_Dashboard_Credentials.md  # Full guide with every URL and setup 
 
 ## 🔧 Managing Services
 
-v2.0.0 introduced full post-install service management. v2.1.0 added LAN fast-path automation. No need to re-run the installer to add, fix, or configure services.
+v2.0.0 introduced full post-install service management. v2.1.0 added LAN fast-path automation. v2.2.0 added network performance tuning for multi-gigabit file transfers and hardened security. No need to re-run the installer to add, fix, or configure services.
 
 ### Health Check & Auto-Repair
 
@@ -440,6 +441,46 @@ This command:
 
 **External access** through Cloudflare Tunnel continues to work unchanged for devices off the LAN.
 
+### 🚀 Network Performance Tuning (Gbps File Transfers)
+
+v2.2.0 adds comprehensive network tuning that transforms file transfer speeds from KB/s to hundreds of MB/s:
+
+```bash
+sudo bash corex.sh manage network-tune
+```
+
+This command:
+- Detects all network interfaces and their link speeds
+- Shows current vs optimal kernel network parameters
+- Applies BBR congestion control (replaces CUBIC — built by Google for high-throughput)
+- Tunes TCP buffer sizes from default ~200KB up to 64MB per socket
+- Enables TCP Fast Open, MTU path probing, and window scaling
+- Prints diagnostic tips (cable type, iperf3 testing, SMB multichannel)
+
+**What changed under the hood (automatic on new installs):**
+
+| Parameter | Before (default) | After (CoreX tuned) | Impact |
+|-----------|------------------|---------------------|--------|
+| TCP congestion | CUBIC | BBR | 2-10x throughput on LAN |
+| TCP buffer max | ~200KB | 64MB | Removes bottleneck for Gbps |
+| TCP window scaling | sometimes off | always on | Enables large transfer windows |
+| TCP Fast Open | disabled | enabled | Faster connection setup |
+| Somaxconn | 128 | 4096 | More concurrent connections |
+| Swappiness | 60 | 10 | Keeps hot data in RAM |
+
+**Time Machine (SMB) improvements:**
+- SMB3 minimum protocol enforced (disables insecure SMB1/SMB2)
+- SMB multichannel enabled (uses all NICs simultaneously)
+- 8MB read/write chunks (up from default 64KB)
+- Async I/O with sendfile for zero-copy transfers
+- Aggressive client-side caching via oplocks
+
+**Existing installs** can apply tuning without reinstalling:
+```bash
+sudo bash corex.sh manage network-tune    # Apply kernel tuning
+sudo bash corex.sh manage repair timemachine  # Rebuild SMB with optimized config
+```
+
 ---
 
 ## 🔄 Backup & Restore
@@ -478,20 +519,21 @@ sudo corex-restore.sh latest
 
 ## 🔒 Security
 
-CoreX implements defense-in-depth:
+CoreX implements defense-in-depth with hardened defaults:
 
 | Layer       | Tool                         | What It Does                                       |
 | ----------- | ---------------------------- | -------------------------------------------------- |
 | Firewall    | UFW                          | Default deny incoming, explicit per-port allow     |
-| SSH         | Custom port + max 3 attempts | Moves off port 22, limits brute force              |
-| Brute Force | Fail2ban                     | 3 failures → 24hr IP ban                           |
+| SSH         | Custom port + modern ciphers | Ed25519/ChaCha20 only, root disabled, 3 max tries |
+| Brute Force | Fail2ban (3 jails)           | SSH: 24hr ban, aggressive: 7-day, recidive: 30-day|
 | IPS         | CrowdSec                     | Community threat intel, blocks known attackers     |
-| Kernel      | sysctl hardening             | Anti-spoofing, SYN flood protection, ICMP lockdown |
+| Kernel      | sysctl hardening             | Anti-spoofing, SYN flood, source route rejection   |
 | Updates     | unattended-upgrades          | Automatic security patches daily                   |
 | Containers  | no-new-privileges            | Prevents privilege escalation inside containers    |
 | DNS         | resolv.conf locked           | `chattr +i` prevents tampering                     |
 | TLS         | Let's Encrypt via Traefik    | Auto-renewed HTTPS certificates                    |
 | Tunnel      | Cloudflare                   | Zero exposed ports on router, DDoS protection      |
+| SMB         | SMB3 minimum protocol        | Disables insecure SMB1/SMB2, signing enforced      |
 
 ### Hardening After Install
 
@@ -561,6 +603,24 @@ sudo bash corex.sh manage repair adguard
 # Prometheus runs as UID 65534 (nobody) — ownership must match
 sudo chown -R 65534:65534 /mnt/corex-data/service-data/prometheus
 sudo bash corex.sh manage repair monitoring
+```
+
+### Slow file transfer speeds (KB/s or 1 MB/s)
+
+```bash
+# 1. Apply network performance tuning
+sudo bash corex.sh manage network-tune
+
+# 2. Rebuild Time Machine with optimized SMB3 config
+sudo bash corex.sh manage repair timemachine
+
+# 3. Test raw network speed (install iperf3 if needed)
+sudo apt install -y iperf3
+iperf3 -s   # Run on server
+# Then on client: iperf3 -c SERVER_IP
+
+# 4. Check cable — Cat 5e minimum for gigabit
+# Cat 5 caps at 100Mbps!
 ```
 
 ### Update all containers

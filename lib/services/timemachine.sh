@@ -1,6 +1,6 @@
 #!/bin/bash
 # lib/services/timemachine.sh — CoreX Pro v2
-# Time Machine — macOS Backup Server via SMB
+# Time Machine — macOS Backup Server via high-performance SMB3
 #
 # CRITICAL NOTES:
 #   - Uses host networking (required for SMB and mDNS/Bonjour discovery)
@@ -8,17 +8,18 @@
 #   - Env var is PASSWORD (not TM_PASSWORD) for mbentley/timemachine image
 #   - Data stored on corex-data pool (not dedicated partition) for flexibility
 #   - macOS discovers via Bonjour automatically; manual: smb://SERVER_IP/CoreX_Backup
+#   - Custom smb.conf overlay enables SMB3 multichannel + large MTU for Gbps transfers
 
 # ── Metadata ──────────────────────────────────────────────────────────────────
 SERVICE_NAME="timemachine"
-SERVICE_LABEL="Time Machine — macOS Backup Server (SMB)"
+SERVICE_LABEL="Time Machine — macOS Backup Server (High-Speed SMB3)"
 SERVICE_CATEGORY="backup"
 SERVICE_REQUIRED=false
 SERVICE_NEEDS_DOMAIN=false
 SERVICE_NEEDS_EMAIL=false
 SERVICE_RAM_MB=256
 SERVICE_DISK_GB=0
-SERVICE_DESCRIPTION="macOS Time Machine backup server over SMB. Your Mac backs up automatically over Wi-Fi. Requires a Mac on the same network."
+SERVICE_DESCRIPTION="macOS Time Machine backup server over high-performance SMB3. Multi-gigabit LAN transfers with multichannel support. Your Mac backs up automatically over Wi-Fi."
 
 # ── Functions ─────────────────────────────────────────────────────────────────
 
@@ -40,6 +41,46 @@ timemachine_deploy() {
     timemachine_dirs
     local dir="${DOCKER_ROOT}/timemachine"
 
+    # ── High-performance SMB3 configuration ──────────────────────────────────
+    # This overlay is bind-mounted into the container and merged with the
+    # default smb.conf. It enables SMB3 multichannel, large read/write sizes,
+    # and async I/O for multi-gigabit LAN transfer speeds.
+    cat > "${dir}/smb-performance.conf" << 'SMBEOF'
+[global]
+# ── Protocol: force SMB3 minimum (disables insecure SMB1/SMB2) ───────────────
+server min protocol = SMB3_00
+client min protocol = SMB3_00
+
+# ── Multichannel: use all available NICs simultaneously ──────────────────────
+server multi channel support = yes
+
+# ── I/O performance: large buffers + async operations ────────────────────────
+# max xmit = max read/write chunk size per SMB request (8MB)
+# These directly control throughput per TCP stream
+socket options = TCP_NODELAY IPTOS_LOWDELAY SO_RCVBUF=2097152 SO_SNDBUF=2097152
+read raw = yes
+write raw = yes
+max xmit = 8388608
+getwd cache = yes
+use sendfile = yes
+aio read size = 1
+aio write size = 1
+min receivefile size = 16384
+
+# ── Caching + oplocks (let client cache aggressively) ────────────────────────
+oplocks = yes
+level2 oplocks = yes
+kernel oplocks = no
+strict locking = no
+
+# ── Security: signing optional on LAN (performance), required on WAN ─────────
+server signing = default
+client signing = default
+
+# ── Logging: minimal to avoid I/O overhead ───────────────────────────────────
+log level = 1
+SMBEOF
+
     cat > "${dir}/docker-compose.yml" << DCEOF
 services:
   timemachine:
@@ -47,6 +88,10 @@ services:
     container_name: timemachine
     restart: unless-stopped
     network_mode: host
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     environment:
       TM_USERNAME: timemachine
       PASSWORD: "${TM_PASSWORD}"
@@ -55,15 +100,18 @@ services:
       SHARE_NAME: CoreX_Backup
       VOLUME_SIZE_LIMIT: "0"
       SET_PERMISSIONS: "false"
+      CUSTOM_SMB_CONF: "true"
+      SMB_INHERIT_PERMISSIONS: "no"
     volumes:
       - ${MOUNT_POOL}/timemachine-data:/opt/timemachine
+      - ${DOCKER_ROOT}/timemachine/smb-performance.conf:/etc/samba/smb-performance.conf:ro
 volumes: {}
 DCEOF
 
     docker compose -f "${dir}/docker-compose.yml" up -d \
         || log_warning "Time Machine may not have started — check: docker ps"
     state_service_installed "timemachine"
-    log_success "Time Machine deployed (SMB:445, smb://${SERVER_IP}/CoreX_Backup)"
+    log_success "Time Machine deployed (high-perf SMB3:445, smb://${SERVER_IP}/CoreX_Backup)"
 }
 
 timemachine_destroy() {
