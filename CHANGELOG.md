@@ -6,6 +6,48 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v2.3.0] - 2026-03-07
+
+### Added
+
+- **Nextcloud LAN transfer performance tuning** — Fixes KB/s transfer speeds over LAN, achieving full gigabit throughput:
+  - **PHP streaming:** `output_buffering = Off` — the #1 fix. Default 4KB buffering caused PHP to churn through tiny chunks instead of streaming files directly to Apache
+  - **OPcache + JIT:** PHP scripts precompiled with JIT (1255 mode, 128MB buffer) — faster page loads and file browser rendering
+  - **APCu local cache:** 128MB shared memory cache for Nextcloud metadata lookups — injected into `config.php` via startup hook
+  - **Redis file locking:** Automatically configured via `before-starting` entrypoint hook to prevent file corruption on parallel access
+  - **Apache binary bypass:** `mod_deflate` disabled for images, videos, archives, and ISO files — eliminates CPU-bound gzip bottleneck on large transfers
+  - **Apache timeout extension:** `mod_reqtimeout` body timeout set to unlimited (`body=0`) — multi-GB uploads no longer killed after 20 seconds
+  - **MariaDB performance:** `innodb-buffer-pool-size=256M`, `innodb-log-file-size=64M`, `O_DIRECT` flush method, relaxed commit flushing — faster file listing queries
+  - **Redis persistence:** `--save 60 1 --loglevel warning` — periodic snapshots with reduced log noise
+  - **CalDAV/CardDAV middleware:** Traefik regex redirect for `.well-known/caldav` and `.well-known/carddav` — fixes iOS/macOS calendar and contacts sync discovery
+  - **HSTS headers:** `Strict-Transport-Security` with 180-day max-age, includeSubdomains, and preload via Traefik middleware
+  - **Traefik response streaming:** `flushInterval=100ms` on Nextcloud loadbalancer — ensures Traefik forwards response chunks immediately
+
+- **Traefik transport timeout configuration** — Unlimited read/write timeouts on the `websecure` entrypoint:
+  - `readTimeout: 0s` — large file uploads no longer killed after Traefik's default 60-second timeout
+  - `writeTimeout: 0s` — large file downloads stream without time limit
+  - `idleTimeout: 300s` — 5-minute idle timeout for persistent connections
+
+### Changed
+
+- **Nextcloud docker-compose** — Three new volume mounts for performance configs:
+  - `zzz-corex-performance.ini` → `/usr/local/etc/php/conf.d/` (PHP tuning, loaded last via zzz- prefix)
+  - `corex-apache-perf.conf` → `/etc/apache2/conf-enabled/` (Apache transfer tuning)
+  - `hooks/before-starting/` → `/docker-entrypoint-hooks.d/before-starting/` (config.php injection)
+- **`nextcloud_repair()`** now regenerates performance config files before force-recreating containers — existing installations get the tuning via `corex manage repair nextcloud` without a full redeploy
+
+### How it works
+
+The default `nextcloud:stable` Docker image is optimized for compatibility, not LAN speed. PHP's `output_buffering=4096` forces every file download through a 4KB buffer-and-flush cycle. Apache's `mod_deflate` tries to gzip binary files (photos, videos), burning CPU for zero compression gain. Apache's `mod_reqtimeout` kills request bodies after 20 seconds. Traefik's default `readTimeout=60s` drops upload connections.
+
+These four bottlenecks compound: a 500MB photo upload gets gzipped (CPU-bound), buffered through 4KB PHP chunks, timeout-killed by Apache after 20s, and dropped by Traefik after 60s. The result is KB/s transfer speeds on a gigabit LAN.
+
+The fix: stream (don't buffer), skip compression on binary content, and remove all timeout ceilings. After applying, Nextcloud file transfers should saturate your LAN link.
+
+**For existing installations:** `corex manage repair nextcloud` (after updating CoreX Pro scripts).
+
+---
+
 ## [v2.2.0] - 2026-03-06
 
 ### Added
@@ -276,6 +318,8 @@ CoreX Pro uses semantic versioning: `MAJOR.MINOR.PATCH`
 - **MINOR** (v1.1, v1.2...): New features, bug fixes, new scripts
 - **PATCH** (v1.1.1, v1.1.2...): Small fixes, typos, documentation updates
 
+[v2.3.0]: https://github.com/itismowgli/corex-pro/releases/tag/v2.3.0
+[v2.2.0]: https://github.com/itismowgli/corex-pro/releases/tag/v2.2.0
 [v2.1.1]: https://github.com/itismowgli/corex-pro/releases/tag/v2.1.1
 [v2.1.0]: https://github.com/itismowgli/corex-pro/releases/tag/v2.1.0
 [v2.0.1]: https://github.com/itismowgli/corex-pro/releases/tag/v2.0.1

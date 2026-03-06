@@ -53,6 +53,11 @@ entryPoints:
           scheme: https
   websecure:
     address: ":443"
+    transport:
+      respondingTimeouts:
+        readTimeout: "0s"
+        writeTimeout: "0s"
+        idleTimeout: "300s"
 providers:
   docker:
     endpoint: "unix:///var/run/docker.sock"
