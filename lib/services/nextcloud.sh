@@ -94,10 +94,15 @@ APEOF
     # Runs on every container start; adds APCu local cache if missing.
     # The Nextcloud image auto-configures Redis via REDIS_HOST env var
     # but does NOT add APCu as local memcache — this hook fixes that.
+    #
+    # Also sets max_chunk_size to 10MB for Cloudflare compatibility.
+    # Nextcloud default is 100MB, but Cloudflare free plan rejects
+    # request bodies > 100MB, causing HTTP 413 on large uploads when
+    # accessed through the tunnel. 10MB is safe for all Cloudflare plans.
     mkdir -p "${dir}/hooks/before-starting"
     cat > "${dir}/hooks/before-starting/corex-memcache.sh" << 'HOOKEOF'
 #!/bin/bash
-# CoreX Pro — inject APCu local memory cache into Nextcloud config.php
+# CoreX Pro — inject cache config + chunk size into Nextcloud config.php
 CONFIG="/var/www/html/config/config.php"
 [ -f "$CONFIG" ] || exit 0
 
@@ -115,6 +120,12 @@ fi
 if ! grep -q "default_phone_region" "$CONFIG"; then
     sed -i "s|);|  'default_phone_region' => 'US',\n);|" "$CONFIG"
 fi
+
+# Set max_chunk_size to 10MB (10485760 bytes) for Cloudflare compatibility.
+# Default is 100MB (104857600) which exceeds Cloudflare free plan's 100MB
+# body limit, causing HTTP 413 errors on large file uploads via the tunnel.
+# 10MB chunks work on all Cloudflare plans and have minimal overhead on LAN.
+php /var/www/html/occ config:app:set files max_chunk_size --value 10485760 2>/dev/null || true
 HOOKEOF
     chmod +x "${dir}/hooks/before-starting/corex-memcache.sh"
 }

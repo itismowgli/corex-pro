@@ -409,8 +409,17 @@ cmd_doctor() {
 }
 
 # ── lan-setup ─────────────────────────────────────────────────────────────────
-# Configures AdGuard DNS wildcard rewrite so LAN clients bypass Cloudflare
-# and connect directly to the server for faster file transfers / uploads.
+# Configures AdGuard DNS wildcard rewrite + SVCB/HTTPS record blocking so LAN
+# clients bypass Cloudflare and connect directly to the server for faster file
+# transfers / uploads.
+#
+# The full LAN fast-path requires solving 5 layers of browser bypass:
+#   1. A-record rewrite (AdGuard wildcard DNS rewrite)
+#   2. SVCB/HTTPS DNS records (contain embedded Cloudflare IPs — browsers
+#      query these and connect directly, ignoring A-record rewrites)
+#   3. HTTP/3 QUIC Alt-Svc caching (browsers cache QUIC connections to CF)
+#   4. Browser built-in DNS clients (bypass system DNS resolver)
+#   5. IPv6 bypass (browsers connect via IPv6 to Cloudflare, ignoring IPv4 rewrite)
 #
 # Also prints a /etc/hosts fallback block for users whose VPN apps (Tailscale,
 # ClearVPN, etc.) intercept DNS at the kernel level and bypass AdGuard.
@@ -516,6 +525,79 @@ cmd_lan_setup() {
         fi
     fi
 
+    # ── Block SVCB/HTTPS DNS records ──────────────────────────────────────────
+    # Cloudflare publishes SVCB/HTTPS (Type 65) DNS records that contain embedded
+    # IPv4/IPv6 address hints pointing to Cloudflare edge servers, plus ECH
+    # (Encrypted Client Hello) configuration. Modern browsers (Chrome, Edge, Firefox)
+    # query these records and connect DIRECTLY to the embedded Cloudflare IPs,
+    # completely bypassing the A-record DNS rewrite above.
+    #
+    # The fix: block SVCB/HTTPS records for the domain via AdGuard user filtering
+    # rules. This forces browsers to fall back to standard A-record resolution,
+    # which hits the wildcard rewrite and returns the server's LAN IP.
+    log_info "Checking SVCB/HTTPS DNS record blocking..."
+
+    # Extract the base domain (strip any subdomain — rules apply to all of *.domain)
+    local BASE_DOMAIN="${DOMAIN}"
+
+    local current_rules
+    current_rules=$(_ag_curl "${AG_URL}/control/filtering/status" 2>/dev/null || echo "{}")
+
+    local svcb_rule="||${BASE_DOMAIN}^\$dnstype=SVCB"
+    local https_rule="||${BASE_DOMAIN}^\$dnstype=HTTPS"
+
+    if echo "$current_rules" | grep -q "dnstype=HTTPS" && \
+       echo "$current_rules" | grep -q "dnstype=SVCB"; then
+        log_success "SVCB/HTTPS DNS records already blocked for ${BASE_DOMAIN}."
+    else
+        log_info "Blocking SVCB/HTTPS DNS records for ${BASE_DOMAIN}..."
+
+        # Get existing user rules, append our new rules
+        local existing_rules
+        existing_rules=$(echo "$current_rules" | \
+            python3 -c "import sys,json; d=json.load(sys.stdin); print('\n'.join(d.get('user_rules',[])))" \
+            2>/dev/null || echo "")
+
+        # Build the new rules list (preserve existing + add ours if not already present)
+        local new_rules="${existing_rules}"
+        if ! echo "$existing_rules" | grep -qF "$svcb_rule"; then
+            new_rules="${new_rules}"$'\n'"${svcb_rule}"
+        fi
+        if ! echo "$existing_rules" | grep -qF "$https_rule"; then
+            new_rules="${new_rules}"$'\n'"${https_rule}"
+        fi
+
+        # Set rules via API (replaces all user rules)
+        local rules_json
+        rules_json=$(echo "$new_rules" | python3 -c "
+import sys, json
+lines = [l for l in sys.stdin.read().strip().split('\n') if l.strip()]
+print(json.dumps({'rules': lines}))" 2>/dev/null)
+
+        if [[ -n "$rules_json" ]]; then
+            local set_code
+            set_code=$(_ag_curl -o /dev/null -w "%{http_code}" \
+                -X POST "${AG_URL}/control/filtering/set_rules" \
+                -H "Content-Type: application/json" \
+                -d "$rules_json" \
+                2>/dev/null || echo "000")
+
+            if [[ "$set_code" == "200" ]]; then
+                log_success "SVCB/HTTPS DNS records blocked."
+            else
+                log_warning "Could not set filtering rules (HTTP ${set_code}). Add manually:"
+                echo "    AdGuard UI → Filters → Custom filtering rules → Add:"
+                echo "    ${svcb_rule}"
+                echo "    ${https_rule}"
+            fi
+        else
+            log_warning "python3 not available — add SVCB/HTTPS blocking manually:"
+            echo "    AdGuard UI → Filters → Custom filtering rules → Add:"
+            echo "    ${svcb_rule}"
+            echo "    ${https_rule}"
+        fi
+    fi
+
     # ── Build /etc/hosts entries from installed services ──────────────────────
     # Maps service module names → subdomains (matches actual Traefik router rules)
     _lan_subdomains() {
@@ -552,7 +634,11 @@ cmd_lan_setup() {
     echo ""
     echo "  In your router's DHCP / DNS settings, set:"
     echo -e "    Primary DNS:   ${GREEN}${SERVER_IP}${NC}"
-    echo -e "    Secondary DNS: ${YELLOW}1.1.1.1${NC}  (fallback if server is offline)"
+    echo ""
+    echo -e "  ${YELLOW}WARNING:${NC} Do NOT set a secondary/fallback DNS (like 1.1.1.1 or 8.8.8.8)."
+    echo "  If you do, some devices will race both DNS servers and may get"
+    echo "  Cloudflare's IP from the fallback instead of your LAN IP."
+    echo "  If AdGuard goes down, you can temporarily set 1.1.1.1 as DNS."
     echo ""
     echo "  Every device that joins your network will resolve"
     echo "  *.${DOMAIN} directly to this server without any extra steps."
@@ -561,10 +647,15 @@ cmd_lan_setup() {
     # ── Step 2: Per-device DNS ────────────────────────────────────────────────
     echo -e "${BOLD}── Step 2: Per-Device DNS (if you cannot change router settings) ───────────${NC}"
     echo ""
+    echo -e "  Set ${GREEN}${SERVER_IP}${NC} as the ONLY DNS server (no secondary):"
+    echo ""
     echo "  macOS:   System Settings → Network → Wi-Fi → Details → DNS → ${SERVER_IP}"
     echo "  Windows: Control Panel → Network → Adapter → IPv4 → DNS: ${SERVER_IP}"
     echo "  iPhone:  Settings → Wi-Fi → (network) → Configure DNS → Manual → ${SERVER_IP}"
     echo "  Android: Settings → Wi-Fi → (network) → IP Settings → Static → DNS: ${SERVER_IP}"
+    echo ""
+    echo -e "  ${YELLOW}Important:${NC} Remove any secondary DNS server. A fallback DNS like"
+    echo "  1.1.1.1 will return Cloudflare IPs and defeat the LAN fast-path."
     echo ""
 
     # ── Step 3: Hosts file fallback ───────────────────────────────────────────
@@ -603,20 +694,142 @@ cmd_lan_setup() {
         echo ""
     fi
 
+    # ── Step 4: Browser Configuration ─────────────────────────────────────────
+    # Chrome and Chromium-based browsers have two features that bypass the DNS
+    # rewrite and route traffic through Cloudflare anyway:
+    #
+    # 1. HTTP/3 QUIC Alt-Svc caching: Chrome caches QUIC connections to
+    #    Cloudflare via the Alt-Svc HTTP header. Even after DNS changes,
+    #    Chrome reuses the cached connection for up to 30 days.
+    #
+    # 2. Built-in DNS client: Chrome can bypass the system DNS resolver
+    #    entirely, querying upstream DNS directly (often Cloudflare or Google).
+    echo -e "${BOLD}── Step 4: Browser Configuration (Chrome/Edge — critical for full speed) ──${NC}"
+    echo ""
+    echo "  Chrome and Chromium-based browsers (Edge, Brave, Arc) cache QUIC"
+    echo "  connections to Cloudflare and may bypass your system DNS entirely."
+    echo "  These two settings force the browser to use the LAN path:"
+    echo ""
+    echo -e "  ${BOLD}macOS${NC} — paste in Terminal (then restart browser):"
+    echo ""
+    echo -e "  ${CYAN}# Disable QUIC/HTTP3 (prevents cached Cloudflare connections)"
+    echo "  defaults write com.google.Chrome QuicAllowed -bool false"
+    echo ""
+    echo "  # Disable Chrome built-in DNS client (use system DNS instead)"
+    echo -e "  defaults write com.google.Chrome BuiltInDnsClientEnabled -bool false${NC}"
+    echo ""
+    echo -e "  ${BOLD}Windows${NC} — paste in PowerShell (then restart browser):"
+    echo ""
+    echo -e "  ${CYAN}# Chrome policy registry keys"
+    echo '  New-Item -Path "HKLM:\SOFTWARE\Policies\Google\Chrome" -Force | Out-Null'
+    echo '  Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Google\Chrome" -Name "QuicAllowed" -Value 0 -Type DWord'
+    echo -e '  Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Google\Chrome" -Name "BuiltInDnsClientEnabled" -Value 0 -Type DWord'"${NC}"
+    echo ""
+    echo -e "  ${BOLD}Linux${NC} — create policy file (then restart browser):"
+    echo ""
+    echo -e "  ${CYAN}sudo mkdir -p /etc/opt/chrome/policies/managed"
+    echo "  echo '{\"QuicAllowed\": false, \"BuiltInDnsClientEnabled\": false}' \\"
+    echo -e "    | sudo tee /etc/opt/chrome/policies/managed/corex-lan.json${NC}"
+    echo ""
+    echo -e "  ${BOLD}Edge${NC} — replace 'Google/Chrome' with 'Microsoft/Edge' in the paths above."
+    echo -e "  ${BOLD}Firefox${NC} — not affected (does not use QUIC Alt-Svc caching by default)."
+    echo ""
+    echo "  To undo later: delete the policy keys/files and restart the browser."
+    echo ""
+
+    # ── Step 5: Disable IPv6 on LAN Devices ───────────────────────────────────
+    # If the domain uses Cloudflare, AAAA records point to Cloudflare IPv6
+    # addresses. Browsers prefer IPv6 over IPv4 when available, so even with
+    # a perfect A-record rewrite, the browser connects via IPv6 to Cloudflare
+    # instead of the LAN server. Disabling IPv6 on the LAN interface forces
+    # all connections to use IPv4, which hits the DNS rewrite.
+    echo -e "${BOLD}── Step 5: Disable IPv6 on LAN Devices (prevents Cloudflare IPv6 bypass) ──${NC}"
+    echo ""
+    echo "  If your domain uses Cloudflare, browsers may connect via IPv6 to"
+    echo "  Cloudflare edge servers — completely bypassing the IPv4 DNS rewrite."
+    echo "  This is the most common reason the fast-path doesn't work after"
+    echo "  completing Steps 1-4."
+    echo ""
+    echo -e "  ${BOLD}macOS${NC} — paste in Terminal:"
+    echo ""
+    echo -e "  ${CYAN}# List network services to find your active interface"
+    echo "  networksetup -listallhardwareports"
+    echo ""
+    echo "  # Disable IPv6 on your active interface (replace name as needed)"
+    echo "  sudo networksetup -setv6off Wi-Fi"
+    echo -e "  sudo networksetup -setv6off \"USB 10/100/1000 LAN\"  # if using USB Ethernet${NC}"
+    echo ""
+    echo -e "  ${BOLD}Windows${NC} — paste in PowerShell (as Administrator):"
+    echo ""
+    echo -e "  ${CYAN}# Disable IPv6 on all adapters"
+    echo -e "  Get-NetAdapterBinding -ComponentId ms_tcpip6 | Disable-NetAdapterBinding -ComponentId ms_tcpip6${NC}"
+    echo ""
+    echo -e "  ${BOLD}Linux${NC} — add to /etc/sysctl.conf:"
+    echo ""
+    echo -e "  ${CYAN}net.ipv6.conf.all.disable_ipv6 = 1"
+    echo -e "  net.ipv6.conf.default.disable_ipv6 = 1${NC}"
+    echo ""
+    echo "  To undo: macOS: networksetup -setv6automatic Wi-Fi"
+    echo "           Windows: Enable-NetAdapterBinding -ComponentId ms_tcpip6"
+    echo "           Linux: remove the sysctl lines and run: sysctl --system"
+    echo ""
+
+    # ── Step 6: Trust the LAN CA Certificate ──────────────────────────────────
+    # Traefik generates a self-signed CA and wildcard cert for *.DOMAIN.
+    # LAN clients need to trust this CA to avoid browser HTTPS warnings.
+    local CA_CERT="${DOCKER_ROOT}/traefik/certs/ca.crt"
+    if [[ -f "$CA_CERT" ]]; then
+        echo -e "${BOLD}── Step 6: Trust the LAN CA Certificate (removes HTTPS warnings) ─────────${NC}"
+        echo ""
+        echo "  Traefik uses a self-signed wildcard certificate for LAN HTTPS."
+        echo "  To avoid browser warnings, trust the CoreX Pro CA on your devices."
+        echo ""
+        echo "  The CA certificate is at:"
+        echo -e "    ${CYAN}${CA_CERT}${NC}"
+        echo ""
+        echo -e "  ${BOLD}macOS${NC}:"
+        echo "    1. Copy ca.crt to your Mac (scp, Nextcloud, USB, etc.)"
+        echo "    2. Double-click to open in Keychain Access"
+        echo "    3. Find 'CoreX Pro CA' in the login keychain"
+        echo "    4. Double-click → Trust → 'Always Trust'"
+        echo ""
+        echo -e "  ${BOLD}Windows${NC}:"
+        echo "    1. Copy ca.crt to your PC"
+        echo "    2. Double-click → Install Certificate → Local Machine"
+        echo "    3. Place in: Trusted Root Certification Authorities"
+        echo ""
+        echo -e "  ${BOLD}iPhone/iPad${NC}:"
+        echo "    1. Email or AirDrop ca.crt to the device"
+        echo "    2. Settings → General → VPN & Device Mgmt → Install profile"
+        echo "    3. Settings → General → About → Certificate Trust Settings → Enable"
+        echo ""
+        echo -e "  ${BOLD}Android${NC}:"
+        echo "    1. Copy ca.crt to the device"
+        echo "    2. Settings → Security → Install from storage → CA Certificate"
+        echo ""
+    fi
+
     # ── Verify ────────────────────────────────────────────────────────────────
     echo -e "${BOLD}── Verify It's Working ─────────────────────────────────────────────────────${NC}"
     echo ""
-    echo "  After any DNS change, flush your DNS cache first:"
+    echo "  After completing all steps above, flush your DNS cache:"
     echo ""
     echo "  macOS:   sudo dscacheutil -flushcache && sudo killall -HUP mDNSResponder"
     echo "  Linux:   sudo systemd-resolve --flush-caches"
     echo "  Windows: ipconfig /flushdns"
     echo ""
+    echo "  Restart your browser completely (quit + reopen, not just new tab)."
+    echo ""
     echo "  Then verify the IP is local (not a Cloudflare IP):"
     echo -e "    ${CYAN}nslookup nextcloud.${DOMAIN}${NC}"
     echo ""
     echo -e "  Expected: ${GREEN}${SERVER_IP}${NC}   ← your server's LAN IP"
-    echo "  If you see 172.67.x.x or 104.21.x.x → use the Hosts File (Step 3)."
+    echo "  If you see 172.67.x.x or 104.21.x.x → check Steps 4 and 5."
+    echo ""
+    echo "  To confirm the browser is using the LAN path, open DevTools (F12):"
+    echo "    Network tab → reload page → click the main request"
+    echo "    Look at Response Headers — there should be NO 'cf-ray' header."
+    echo "    If you see 'cf-ray', the browser is still going through Cloudflare."
     echo ""
     log_success "LAN fast-path setup complete."
 }

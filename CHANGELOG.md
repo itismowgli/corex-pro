@@ -6,6 +6,60 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v2.4.0] - 2026-03-07
+
+### Fixed
+
+- **Browser LAN bypass via SVCB/HTTPS DNS records** — Cloudflare publishes SVCB/HTTPS (Type 65) DNS records containing embedded IPv4/IPv6 address hints and ECH (Encrypted Client Hello) configuration. Chrome, Edge, and Firefox query these records and connect directly to the embedded Cloudflare IPs, completely bypassing AdGuard's A-record wildcard rewrite. `lan-setup` now blocks `||domain^$dnstype=SVCB` and `||domain^$dnstype=HTTPS` via AdGuard's filtering rules API.
+
+- **Browser LAN bypass via QUIC Alt-Svc caching** — Chrome caches HTTP/3 QUIC connections to Cloudflare via the `Alt-Svc` HTTP header. Even after DNS changes, Chrome reuses these cached connections for up to 30 days. `lan-setup` now prints Chrome/Edge policy instructions to disable QUIC (`QuicAllowed=false`) and the built-in DNS client (`BuiltInDnsClientEnabled=false`) per platform.
+
+- **Browser LAN bypass via IPv6** — When a domain uses Cloudflare, AAAA records point to Cloudflare IPv6 edge servers. Browsers prefer IPv6 over IPv4, so even with a correct A-record rewrite to the LAN IP, the browser connects via IPv6 to Cloudflare. `lan-setup` now prints IPv6 disable instructions per platform (macOS `networksetup`, Windows `Disable-NetAdapterBinding`, Linux `sysctl`).
+
+- **Nextcloud upload failures via Cloudflare Tunnel** — Default chunk size (100MB) exceeds Cloudflare free plan's 100MB body limit, causing HTTP 413 errors on large file uploads. Now set to 10MB (10485760 bytes) via `occ config:app:set files max_chunk_size` in the before-starting entrypoint hook.
+
+- **Secondary DNS defeating LAN fast-path** — `lan-setup` previously recommended `1.1.1.1` as secondary DNS. DNS race conditions meant some queries hit the fallback server, returning Cloudflare IPs instead of the LAN IP. Steps 1 and 2 now explicitly warn against setting a secondary DNS server.
+
+### Added
+
+- **Self-signed CA + wildcard certificate generation** — Traefik now auto-generates a CoreX Pro CA and `*.DOMAIN` wildcard certificate on deploy. The wildcard cert is served as Traefik's default TLS certificate via a file provider (`dynamic.yml`). LAN clients that trust the CA get valid HTTPS without Let's Encrypt, which is critical for setups where TLS-ALPN-01 challenges are blocked by NAT or ISP restrictions.
+
+- **Traefik file provider** — Added `providers.file` configuration in `traefik.yml` pointing to `dynamic.yml`. This loads the default wildcard cert store alongside the existing Docker provider and ACME resolver. Let's Encrypt certs take priority when available.
+
+- **`lan-setup` Step 4: Browser Configuration** — Platform-specific instructions for disabling Chrome/Edge QUIC caching and built-in DNS client. Covers macOS (`defaults write`), Windows (registry policies), and Linux (JSON policy files).
+
+- **`lan-setup` Step 5: Disable IPv6** — Platform-specific instructions for disabling IPv6 on the LAN interface to prevent Cloudflare IPv6 bypass. Covers macOS (`networksetup -setv6off`), Windows (`Disable-NetAdapterBinding`), and Linux (`sysctl`).
+
+- **`lan-setup` Step 6: Trust CA Certificate** — Instructions for trusting the CoreX Pro CA cert on macOS (Keychain Access), Windows (Certificate Manager), iOS (Profile Install + Trust Settings), and Android (Install from storage).
+
+- **`lan-setup` SVCB/HTTPS DNS blocking** — Automatically adds AdGuard custom filtering rules via the `set_rules` API to block SVCB and HTTPS DNS record types for the domain.
+
+- **`lan-setup` verification improvements** — Updated verify section with browser DevTools instructions (check for `cf-ray` response header), browser restart guidance, and improved troubleshooting pointers.
+
+### Changed
+
+- **`lan-setup` DNS advice** — Steps 1 and 2 now warn against setting a secondary DNS server, as DNS race conditions with fallback servers are the most common reason the LAN fast-path fails.
+- **Traefik `docker-compose.yml`** — Added volume mounts for `dynamic.yml` and `certs/` directory.
+- **Traefik `traefik_repair()`** — Now regenerates LAN certs and `dynamic.yml` if missing before force-recreating containers.
+- **Traefik `traefik_credentials()`** — Now prints the CA cert path when available.
+- **Nextcloud before-starting hook** — Now also sets `max_chunk_size` to 10MB via `occ` command.
+
+### How it works
+
+When a domain uses Cloudflare (proxy enabled), browsers have five independent paths that can bypass the AdGuard DNS rewrite and route traffic through Cloudflare instead of the LAN:
+
+1. **A-record lookup** → solved by AdGuard wildcard DNS rewrite (existing)
+2. **SVCB/HTTPS (Type 65) DNS records** → contain embedded Cloudflare IPs that browsers query directly → solved by AdGuard filtering rules
+3. **HTTP/3 QUIC Alt-Svc cache** → Chrome caches QUIC connections to CF for 30 days → solved by Chrome policy
+4. **Browser built-in DNS** → bypasses system DNS entirely → solved by Chrome policy
+5. **IPv6 AAAA records** → browsers prefer IPv6 to CF over IPv4 to LAN → solved by disabling IPv6 on LAN interface
+
+All five layers must be addressed for the LAN fast-path to work reliably. The `lan-setup` command now handles all of them: layers 1-2 are automated via AdGuard API, layers 3-5 are guided with per-platform instructions.
+
+**For existing installations:** Re-run `sudo bash corex-manage.sh lan-setup` and follow the new Steps 4-6.
+
+---
+
 ## [v2.3.0] - 2026-03-07
 
 ### Fixed
@@ -322,6 +376,7 @@ CoreX Pro uses semantic versioning: `MAJOR.MINOR.PATCH`
 - **MINOR** (v1.1, v1.2...): New features, bug fixes, new scripts
 - **PATCH** (v1.1.1, v1.1.2...): Small fixes, typos, documentation updates
 
+[v2.4.0]: https://github.com/itismowgli/corex-pro/releases/tag/v2.4.0
 [v2.3.0]: https://github.com/itismowgli/corex-pro/releases/tag/v2.3.0
 [v2.2.0]: https://github.com/itismowgli/corex-pro/releases/tag/v2.2.0
 [v2.1.1]: https://github.com/itismowgli/corex-pro/releases/tag/v2.1.1

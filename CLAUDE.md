@@ -28,7 +28,7 @@ learning nginx, SSL, Docker networking, or Linux hardening.
 - Re-run on existing server = health-check + repair broken services only
 - No live server required for testing (Docker-in-Docker + bats)
 
-**Current version:** v2.3.0
+**Current version:** v2.4.0
 **Current services:** 14 (Traefik, AdGuard, Portainer, Nextcloud, Immich,
 Vaultwarden, Stalwart Mail, Coolify, n8n, Time Machine, Uptime Kuma,
 Grafana+Prometheus, Ollama+OpenWebUI+Browserless, CrowdSec)
@@ -245,8 +245,14 @@ External SSD
         ├── docker-configs/           <- Generated docker-compose.yml files
         │   ├── traefik/
         │   │   ├── docker-compose.yml
-        │   │   ├── traefik.yml
-        │   │   └── acme.json         <- Let's Encrypt certs (chmod 600!)
+        │   │   ├── traefik.yml       <- Static config (entrypoints, providers)
+        │   │   ├── dynamic.yml       <- Dynamic config (default wildcard cert)
+        │   │   ├── acme.json         <- Let's Encrypt certs (chmod 600!)
+        │   │   └── certs/            <- Self-signed CA + wildcard cert
+        │   │       ├── ca.crt        <- CoreX Pro CA (distribute to clients)
+        │   │       ├── ca.key        <- CA private key (chmod 600!)
+        │   │       ├── wildcard.crt  <- *.DOMAIN wildcard certificate
+        │   │       └── wildcard.key  <- Wildcard private key (chmod 600!)
         │   ├── nextcloud/docker-compose.yml
         │   └── ... (one dir per service)
         ├── service-data/             <- All persistent state
@@ -499,6 +505,54 @@ systemctl daemon-reload && systemctl enable openclaw && systemctl start openclaw
 - `glm-4.7-flash` — lighter, faster
 - Avoid models >14B on Ryzen 7 with integrated GPU (too slow)
 
+### 11. LAN fast-path requires solving 5 browser bypass layers
+
+AdGuard DNS rewrite (A-record → LAN IP) is necessary but NOT sufficient.
+Modern browsers have 4 additional paths that bypass the DNS rewrite:
+
+1. **SVCB/HTTPS (Type 65) DNS records** — Cloudflare publishes these with
+   embedded IPv4/IPv6 address hints. Browsers query them and connect directly
+   to Cloudflare, ignoring A-record rewrites. Fix: AdGuard filtering rules
+   `||domain^$dnstype=SVCB` and `||domain^$dnstype=HTTPS`.
+
+2. **Chrome QUIC/HTTP3 Alt-Svc caching** — Chrome caches QUIC connections to
+   Cloudflare via the Alt-Svc HTTP header for up to 30 days. Even after DNS
+   changes, Chrome reuses cached connections. Fix: Chrome policy
+   `QuicAllowed=false`.
+
+3. **Chrome built-in DNS client** — bypasses the system DNS resolver entirely.
+   Fix: Chrome policy `BuiltInDnsClientEnabled=false`.
+
+4. **IPv6 bypass** — AAAA records point to Cloudflare IPv6 edge servers.
+   Browsers prefer IPv6, so even with correct IPv4 rewrite, they connect via
+   IPv6 to Cloudflare. Fix: disable IPv6 on the LAN interface.
+
+All 5 layers are addressed by `corex manage lan-setup` (Steps 1-6).
+
+### 12. Nextcloud max_chunk_size for Cloudflare compatibility
+
+Nextcloud desktop/web client uploads files in chunks. Default chunk size is
+100MB (104857600 bytes), but Cloudflare free plan rejects request bodies >100MB
+with HTTP 413. The before-starting hook sets it to 10MB via `occ config:app:set
+files max_chunk_size --value 10485760`. This works on all Cloudflare plans and
+has minimal overhead for LAN transfers (chunks are parallelized).
+
+### 13. Traefik self-signed CA and wildcard cert
+
+Traefik auto-generates a CoreX Pro CA + `*.DOMAIN` wildcard cert on deploy.
+The wildcard cert is served as the default TLS certificate via the file
+provider (`dynamic.yml`). LAN clients that trust the CA get valid HTTPS
+without Let's Encrypt. The CA cert is at
+`${DOCKER_ROOT}/traefik/certs/ca.crt`. Certs are regenerated if the domain
+changes (detected by checking the SAN in the existing cert).
+
+### 14. Secondary DNS servers defeat the LAN fast-path
+
+Setting a secondary DNS (like 1.1.1.1 or 8.8.8.8) alongside AdGuard causes
+DNS race conditions. Some queries hit the fallback server, which returns
+Cloudflare IPs instead of the LAN IP. The `lan-setup` command warns against
+this in Steps 1 and 2.
+
 ---
 
 ## What NOT to Do
@@ -726,3 +780,4 @@ Key functions in `lib/state.sh`:
 - **v2.1.1** (2026-03-02): Fixed `lan-setup` HTTP 400 — v1 migration regex captured YAML quotes around email field, storing domain with embedded quotes in state.json. Fixed at root (migration strips quotes) and defensively in `_load_config()` via `tr -d '"'`.
 - **v2.2.0** (2026-03-06): Network performance tuning + security hardening. Added `corex manage network-tune` command. Kernel params expanded from 14 to 50+ (BBR, 64MB TCP buffers, TCP Fast Open, MTU probing). Time Machine rebuilt with high-performance SMB3 (multichannel, 8MB chunks, async I/O, sendfile). SSH hardened with modern ciphers only (ChaCha20/AES-GCM, curve25519 KEX). Fail2ban upgraded to 3-jail system (standard + aggressive + recidive for 30-day repeat-offender bans).
 - **v2.3.0** (2026-03-07): Traefik upgraded v3.0→v3.6 (Docker Engine 29+ broke API v1.24 negotiation, v3.6 adds auto-negotiation). Nextcloud LAN transfer performance fix (KB/s → MB/s). PHP output_buffering=Off, OPcache+JIT, APCu local cache, Apache mod_deflate bypass for binary files, mod_reqtimeout unlimited body, MariaDB innodb tuning (256M buffer pool, O_DIRECT), Traefik unlimited read/write timeouts, CalDAV/CardDAV middleware, HSTS headers. Repair command regenerates perf configs.
+- **v2.4.0** (2026-03-07): LAN fast-path hardened against 5 browser bypass layers. Self-signed CA + wildcard cert auto-generated by Traefik (file provider + dynamic.yml). SVCB/HTTPS DNS record blocking via AdGuard filtering rules. `lan-setup` expanded with browser config (Chrome QUIC/DNS policies), IPv6 disable instructions, CA trust instructions per platform. Nextcloud max_chunk_size set to 10MB for Cloudflare compatibility. Secondary DNS warnings added.
