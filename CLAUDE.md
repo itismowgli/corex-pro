@@ -112,7 +112,7 @@ connection — apartment, office, hotel — without touching router settings.
 container names as the service URL, not "localhost". The cloudflared container
 is on proxy-net alongside other containers. `n8n:5678` resolves via Docker DNS.
 
-### Why Traefik v3 when Cloudflare Tunnel handles external access?
+### Why Traefik v3.6 when Cloudflare Tunnel handles external access?
 
 They are complementary:
 - Cloudflare Tunnel: encrypted path from internet to server
@@ -725,4 +725,4 @@ Key functions in `lib/state.sh`:
 - **v2.1.0** (2026-03-01): Added `corex manage lan-setup` — automates AdGuard DNS wildcard rewrite via REST API; prints router/device DNS instructions. Eliminates the manual post-install AdGuard step.
 - **v2.1.1** (2026-03-02): Fixed `lan-setup` HTTP 400 — v1 migration regex captured YAML quotes around email field, storing domain with embedded quotes in state.json. Fixed at root (migration strips quotes) and defensively in `_load_config()` via `tr -d '"'`.
 - **v2.2.0** (2026-03-06): Network performance tuning + security hardening. Added `corex manage network-tune` command. Kernel params expanded from 14 to 50+ (BBR, 64MB TCP buffers, TCP Fast Open, MTU probing). Time Machine rebuilt with high-performance SMB3 (multichannel, 8MB chunks, async I/O, sendfile). SSH hardened with modern ciphers only (ChaCha20/AES-GCM, curve25519 KEX). Fail2ban upgraded to 3-jail system (standard + aggressive + recidive for 30-day repeat-offender bans).
-- **v2.3.0** (2026-03-07): Nextcloud LAN transfer performance fix (KB/s → MB/s). PHP output_buffering=Off, OPcache+JIT, APCu local cache, Apache mod_deflate bypass for binary files, mod_reqtimeout unlimited body, MariaDB innodb tuning (256M buffer pool, O_DIRECT), Traefik unlimited read/write timeouts, CalDAV/CardDAV middleware, HSTS headers. Repair command regenerates perf configs.
+- **v2.3.0** (2026-03-07): Traefik upgraded v3.0→v3.6 (Docker Engine 29+ broke API v1.24 negotiation, v3.6 adds auto-negotiation). Nextcloud LAN transfer performance fix (KB/s → MB/s). PHP output_buffering=Off, OPcache+JIT, APCu local cache, Apache mod_deflate bypass for binary files, mod_reqtimeout unlimited body, MariaDB innodb tuning (256M buffer pool, O_DIRECT), Traefik unlimited read/write timeouts, CalDAV/CardDAV middleware, HSTS headers. Repair command regenerates perf configs.

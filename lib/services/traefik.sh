@@ -1,12 +1,15 @@
 #!/bin/bash
 # lib/services/traefik.sh — CoreX Pro v2
-# Traefik v3 — Reverse Proxy & TLS Termination
+# Traefik v3.6 — Reverse Proxy & TLS Termination
 #
 # CRITICAL NOTES:
 #   - loadbalancer.server.port = CONTAINER port, NOT host port
 #   - acme.json MUST be chmod 600 or Traefik refuses to start
 #   - Uses TLS-ALPN-01 challenge (no port 80 needed for cert issuance)
 #   - exposedByDefault=false means only labeled containers are routed
+#   - Traefik v3.6+ required for Docker Engine 29+ (API auto-negotiation)
+#     Versions before v3.6 hardcode Docker API v1.24, which is rejected
+#     by Docker Engine 29+ (minimum API raised to v1.44)
 
 # ── Metadata (auto-discovered by wizard) ──────────────────────────────────────
 SERVICE_NAME="traefik"
@@ -74,7 +77,7 @@ TEOF
     cat > "${dir}/docker-compose.yml" << DCEOF
 services:
   traefik:
-    image: traefik:v3.0
+    image: traefik:v3.6
     container_name: traefik
     restart: unless-stopped
     ports:

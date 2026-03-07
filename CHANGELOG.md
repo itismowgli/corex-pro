@@ -8,6 +8,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ## [v2.3.0] - 2026-03-07
 
+### Fixed
+
+- **Traefik Docker Engine 29+ compatibility** — Upgraded from `traefik:v3.0` to `traefik:v3.6`. Docker Engine 29 raised the minimum API version from v1.25 to v1.44, but Traefik versions prior to v3.6 hardcoded Docker API v1.24 in their Go client library. This caused Traefik's Docker provider to fail completely — zero routes discovered, no container labels read, no Let's Encrypt certificates issued. All traffic was forced through Cloudflare Tunnel instead of the LAN fast-path, resulting in KB/s transfer speeds. Traefik v3.6 includes automatic Docker API version negotiation ([traefik/traefik#12256](https://github.com/traefik/traefik/issues/12253)).
+
 ### Added
 
 - **Nextcloud LAN transfer performance tuning** — Fixes KB/s transfer speeds over LAN, achieving full gigabit throughput:
