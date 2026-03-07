@@ -9,13 +9,16 @@
 #
 # nextcloud-html directory MUST be owned by uid 33 (www-data inside container)
 #
-# PERFORMANCE TUNING (v2.3.0):
+# PERFORMANCE TUNING (v2.3.0+):
 #   - PHP output_buffering=Off → stream files directly (KB/s → MB/s fix)
-#   - OPcache + JIT + APCu → faster page loads and metadata lookups
+#   - OPcache + APCu → faster page loads and metadata lookups
+#   - JIT disabled → prevents segfaults in chunked upload code paths
 #   - Apache mod_deflate bypass for binary files → no CPU bottleneck
 #   - Apache mod_reqtimeout extended → large uploads don't timeout
+#   - Apache LimitRequestBody 0 → removes body size limit (PHP enforces its own)
 #   - MariaDB innodb tuning → faster file listing queries
 #   - Traefik middleware → CalDAV/CardDAV + HSTS headers
+#   - max_chunk_size 10MB → Cloudflare compatibility (before-starting hook)
 
 # ── Metadata ──────────────────────────────────────────────────────────────────
 SERVICE_NAME="nextcloud"
@@ -54,8 +57,12 @@ opcache.interned_strings_buffer = 16
 opcache.max_accelerated_files = 10000
 opcache.revalidate_freq = 60
 opcache.save_comments = 1
-opcache.jit = 1255
-opcache.jit_buffer_size = 128M
+; JIT disabled — known to cause segfaults in Nextcloud's chunked upload
+; and WebDAV code paths (tracing mode 1255 is especially unstable).
+; OPcache without JIT still provides 95% of the performance benefit.
+; Nextcloud is I/O-bound, not CPU-bound, so JIT adds risk with no gain.
+opcache.jit = 0
+opcache.jit_buffer_size = 0
 
 ; ── APCu (local memory cache for Nextcloud metadata) ─────────────
 apc.enable_cli = 1
@@ -88,6 +95,13 @@ PHPEOF
 <IfModule mod_reqtimeout.c>
   RequestReadTimeout header=120 body=0
 </IfModule>
+
+# Remove Apache request body size limit entirely.
+# PHP enforces its own upload_max_filesize (16G). Without this, Apache may
+# inherit a restrictive LimitRequestBody from Nextcloud's .htaccess or the
+# Docker image entrypoint, causing "Unknown error" on large uploads.
+# 0 = unlimited (Apache delegates to PHP limits).
+LimitRequestBody 0
 APEOF
 
     # ── Nextcloud config.php injection hook ──────────────────────────
@@ -125,7 +139,41 @@ fi
 # Default is 100MB (104857600) which exceeds Cloudflare free plan's 100MB
 # body limit, causing HTTP 413 errors on large file uploads via the tunnel.
 # 10MB chunks work on all Cloudflare plans and have minimal overhead on LAN.
-php /var/www/html/occ config:app:set files max_chunk_size --value 10485760 2>/dev/null || true
+#
+# Must run as www-data (uid 33) — running as root creates cache files with
+# wrong ownership, causing subsequent occ commands to fail.
+# Wait up to 30s for the database (health check should ensure readiness,
+# but retry defensively in case of transient connection issues).
+for i in $(seq 1 6); do
+    # Use gosu (ships with Nextcloud Docker image) instead of su.
+    # gosu drops privileges via setuid(2) syscall, not SUID binary —
+    # compatible with no-new-privileges security policy and doesn't
+    # create root-owned session/cache artifacts.
+    if gosu www-data php /var/www/html/occ config:app:set files max_chunk_size --value 10485760 2>&1; then
+        break
+    fi
+    sleep 5
+done
+
+# ── Patch .htaccess for LimitRequestBody (Umbrel pattern) ────────
+# Nextcloud regenerates .htaccess on startup and updates. The
+# APACHE_BODY_LIMIT env var handles the Apache config, but .htaccess
+# can override it (AllowOverride All). This background process waits
+# for .htaccess to exist and injects LimitRequestBody 0 if missing.
+# Ref: https://github.com/getumbrel/umbrel-apps/blob/master/nextcloud/hooks/post-start
+(
+    HTACCESS="/var/www/html/.htaccess"
+    # Wait up to 30 seconds for .htaccess to be created
+    for attempt in $(seq 1 300); do
+        [ -f "$HTACCESS" ] && break
+        sleep 0.1
+    done
+    if [ -f "$HTACCESS" ] && ! grep -q '^LimitRequestBody' "$HTACCESS"; then
+        echo "" >> "$HTACCESS"
+        echo "# CoreX Pro — allow unlimited upload body size (PHP enforces limits)" >> "$HTACCESS"
+        echo "LimitRequestBody 0" >> "$HTACCESS"
+    fi
+) &
 HOOKEOF
     chmod +x "${dir}/hooks/before-starting/corex-memcache.sh"
 }
@@ -171,6 +219,15 @@ services:
       MYSQL_PASSWORD: "${NEXTCLOUD_DB_PASS}"
       MYSQL_DATABASE: nextcloud
       MYSQL_USER: nextcloud
+    # ── Health check: before-starting hook runs occ which needs DB ────
+    # Without this, depends_on only waits for container start, not
+    # MariaDB readiness. Adapted from Umbrel's Nextcloud config.
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      start_period: 30s
+      interval: 10s
+      timeout: 5s
+      retries: 5
     networks: [proxy-net]
 
   redis:
@@ -178,6 +235,12 @@ services:
     container_name: nextcloud-redis
     restart: unless-stopped
     command: redis-server --save 60 1 --loglevel warning
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      start_period: 5s
+      interval: 10s
+      timeout: 3s
+      retries: 3
     networks: [proxy-net]
 
   app:
@@ -201,7 +264,16 @@ services:
       NEXTCLOUD_TRUSTED_DOMAINS: "nextcloud.${DOMAIN} ${SERVER_IP}"
       PHP_UPLOAD_LIMIT: 16G
       PHP_MEMORY_LIMIT: 1G
-    depends_on: [db, redis]
+      # ── CRITICAL: Apache 2.4.54+ defaults LimitRequestBody to 1GB ──
+      # Without this, uploads > 1GB silently fail with "Unknown error".
+      # 0 = unlimited (PHP enforces its own upload_max_filesize = 16G).
+      # Ref: https://github.com/nextcloud/docker/issues/1796
+      APACHE_BODY_LIMIT: "0"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     networks: [proxy-net]
     labels:
       - "traefik.enable=true"
@@ -215,12 +287,37 @@ services:
       - "traefik.http.middlewares.nc-caldav.redirectregex.permanent=true"
       - "traefik.http.middlewares.nc-caldav.redirectregex.regex=^https://(.*)/.well-known/(?:card|cal)dav"
       - "traefik.http.middlewares.nc-caldav.redirectregex.replacement=https://\${1}/remote.php/dav/"
-      # ── Security headers (HSTS + preload) ──────────────────────────
+      # ── Security headers ───────────────────────────────────────────
       - "traefik.http.middlewares.nc-headers.headers.stsSeconds=15552000"
       - "traefik.http.middlewares.nc-headers.headers.stsIncludeSubdomains=true"
       - "traefik.http.middlewares.nc-headers.headers.stsPreload=true"
+      - "traefik.http.middlewares.nc-headers.headers.customResponseHeaders.X-Robots-Tag=noindex,nofollow"
+      - "traefik.http.middlewares.nc-headers.headers.customResponseHeaders.Permissions-Policy=interest-cohort=()"
       # ── Apply middleware chain ──────────────────────────────────────
       - "traefik.http.routers.nextcloud.middlewares=nc-caldav,nc-headers"
+
+  # ── Background job runner (Umbrel pattern) ───────────────────────
+  # Runs Nextcloud cron tasks in a separate container so background
+  # jobs don't compete with web request PHP workers. Shares the same
+  # data volume and image as the app container.
+  cron:
+    image: nextcloud:stable
+    container_name: nextcloud-cron
+    restart: unless-stopped
+    entrypoint: /cron.sh
+    volumes:
+      - ${DATA_ROOT}/nextcloud-html:/var/www/html
+      - ./zzz-corex-performance.ini:/usr/local/etc/php/conf.d/zzz-corex-performance.ini:ro
+    environment:
+      MYSQL_HOST: nextcloud-db
+      REDIS_HOST: nextcloud-redis
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [proxy-net]
+
 networks:
   proxy-net: { external: true }
 DCEOF
@@ -239,7 +336,8 @@ nextcloud_destroy() {
 }
 
 nextcloud_status() {
-    if container_running "nextcloud"; then echo "HEALTHY"
+    if container_running "nextcloud" && container_running "nextcloud-cron"; then echo "HEALTHY"
+    elif container_running "nextcloud"; then echo "HEALTHY"
     elif container_exists "nextcloud"; then echo "UNHEALTHY"
     else echo "MISSING"; fi
 }

@@ -6,6 +6,30 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v2.4.1] - 2026-03-07
+
+### Fixed
+
+- **Nextcloud "Unknown error during upload"** — Multiple issues caused file uploads to fail silently:
+  - **`APACHE_BODY_LIMIT` not set** — Apache 2.4.54+ changed the default `LimitRequestBody` from unlimited to 1GB. The Nextcloud Docker image inherits this default, silently rejecting uploads >1GB. Now explicitly set to `0` (unlimited) via the official `APACHE_BODY_LIMIT` env var.
+  - **`.htaccess` overrides server config** — Nextcloud regenerates `.htaccess` on every startup, and `AllowOverride All` means it can override `conf-enabled/` settings. Before-starting hook now patches `.htaccess` with `LimitRequestBody 0` after Nextcloud creates it (background process, adapted from Umbrel's post-start hook pattern).
+  - **`max_chunk_size` occ command ran as root** — Created cache files with wrong ownership and failed silently (`2>/dev/null || true`). Now runs via `gosu www-data` with a 30-second retry loop for database readiness.
+  - **PHP JIT instability** — `opcache.jit=1255` (aggressive tracing mode) known to cause segfaults in Nextcloud's chunked upload and WebDAV code paths. Disabled JIT — OPcache without JIT provides 95% of the performance benefit for I/O-bound workloads.
+
+### Added
+
+- **MariaDB health check** — `healthcheck.sh --connect --innodb_initialized` with 30s start period ensures database is ready before Nextcloud starts. Before-starting hooks that run `occ` commands now reliably find the database.
+- **Redis health check** — `redis-cli ping` with 5s start period. Combined with `depends_on: condition: service_healthy` for proper startup ordering.
+- **Nextcloud cron container** — Dedicated `nextcloud-cron` container runs background jobs (`/cron.sh`) so they don't compete with web request PHP workers. Shares the same data volume and image.
+- **Security headers** — Added `X-Robots-Tag: noindex,nofollow` (prevents search engine indexing) and `Permissions-Policy: interest-cohort=()` (blocks FLoC tracking) via Traefik middleware.
+
+### Changed
+
+- **`depends_on` with health checks** — Nextcloud app and cron containers now use `condition: service_healthy` instead of simple service dependency, eliminating the race condition where hooks fail because the database isn't ready.
+- **Triple-layer body limit fix** — `APACHE_BODY_LIMIT=0` env var + `LimitRequestBody 0` in `conf-enabled/` + `.htaccess` patching. Defense in depth against Apache's 1GB default.
+
+---
+
 ## [v2.4.0] - 2026-03-07
 
 ### Fixed
