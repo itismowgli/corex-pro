@@ -6,6 +6,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v2.4.2] - 2026-03-07
+
+### Fixed
+
+- **Nextcloud "No connection to anti virus" blocking all uploads** — The `files_antivirus` app was installed with no ClamAV backend, causing every upload to fail. Added ClamAV daemon container (`clamav/clamav:stable`) to the Nextcloud compose stack with persistent signature storage, auto-updates via freshclam, and health checks. Before-starting hook now auto-installs and configures `files_antivirus` to use the daemon at `nextcloud-clamav:3310`.
+
+- **Large video files unplayable on mobile data** — 5GB+ videos failed to stream through Cloudflare tunnel on mobile because missing `Accept-Ranges` and `X-Accel-Buffering` headers prevented progressive download / byte-range requests. VLC and Nextcloud iOS app received incomplete files. Added Apache `mod_headers` rules that explicitly set `Accept-Ranges: bytes`, `X-Accel-Buffering: no`, and `Cache-Control: no-transform` for all file download paths (`/remote.php/dav/files/`). Added `mod_xsendfile` support so Apache handles Range requests natively instead of through PHP.
+
+### Added
+
+- **ClamAV antivirus container** — `nextcloud-clamav` runs ClamAV daemon mode with signature persistence at `${DATA_ROOT}/clamav/`. Signatures auto-update every 6 hours via built-in freshclam. Health check with 120s start period (signature loading). Nextcloud waits for ClamAV health before starting (`depends_on: condition: service_healthy`).
+
+- **Antivirus auto-configuration** — Before-starting hook installs + configures `files_antivirus` app: daemon mode, `nextcloud-clamav:3310`, infected files deleted, `av_stream_max_length` set to 512MB (files larger than this bypass scanning — not blocked, just skipped, preventing timeouts on huge files).
+
+- **Apache streaming headers** — `Accept-Ranges: bytes` (explicit byte-range support), `X-Accel-Buffering: no` (disable proxy buffering), `Cache-Control: no-transform` (prevent Cloudflare from modifying responses) on all WebDAV file paths. Enables video players to seek/stream progressively instead of downloading entire files.
+
+### Changed
+
+- **Service RAM estimate** — Increased from 2048MB to 3072MB to account for ClamAV daemon (~1GB for signature database).
+
+---
+
 ## [v2.4.1] - 2026-03-07
 
 ### Fixed

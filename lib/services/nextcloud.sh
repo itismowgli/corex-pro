@@ -19,6 +19,8 @@
 #   - MariaDB innodb tuning → faster file listing queries
 #   - Traefik middleware → CalDAV/CardDAV + HSTS headers
 #   - max_chunk_size 10MB → Cloudflare compatibility (before-starting hook)
+#   - ClamAV antivirus daemon → scans uploads without blocking on failure
+#   - Apache streaming headers → proper Range support for video playback
 
 # ── Metadata ──────────────────────────────────────────────────────────────────
 SERVICE_NAME="nextcloud"
@@ -27,7 +29,7 @@ SERVICE_CATEGORY="storage"
 SERVICE_REQUIRED=false
 SERVICE_NEEDS_DOMAIN=true
 SERVICE_NEEDS_EMAIL=false
-SERVICE_RAM_MB=2048
+SERVICE_RAM_MB=3072
 SERVICE_DISK_GB=10
 SERVICE_DESCRIPTION="Sync files, calendar, and contacts across all your devices. Unlimited storage on your own hardware. Replaces Google Drive, iCloud, Dropbox."
 
@@ -102,6 +104,29 @@ PHPEOF
 # Docker image entrypoint, causing "Unknown error" on large uploads.
 # 0 = unlimited (Apache delegates to PHP limits).
 LimitRequestBody 0
+
+# ── Video / large file streaming optimization ──────────────────────
+# Ensures mobile clients and video players can stream files progressively
+# via HTTP Range requests instead of downloading the entire file first.
+<IfModule mod_headers.c>
+  # Explicitly advertise byte-range support. Nextcloud serves files through
+  # PHP (not static Apache serving), so this ensures the header survives
+  # the Traefik → Apache → PHP chain for all file download responses.
+  Header set Accept-Ranges "bytes" "expr=%{REQUEST_URI} =~ m#/remote\.php/dav/files/#"
+
+  # Tell proxies (Cloudflare, Traefik) not to buffer or transform file
+  # responses. Without this, proxies may buffer multi-GB responses in
+  # memory, breaking streaming and causing timeouts on mobile data.
+  Header set X-Accel-Buffering "no" "expr=%{REQUEST_URI} =~ m#/remote\.php/dav/files/#"
+  Header set Cache-Control "no-transform" "expr=%{REQUEST_URI} =~ m#/remote\.php/dav/files/#"
+</IfModule>
+
+# Enable mod_xsendfile if available — lets PHP delegate file serving to
+# Apache, which handles Range requests natively and more efficiently.
+<IfModule mod_xsendfile.c>
+  XSendFile On
+  XSendFilePath /var/www/html/data
+</IfModule>
 APEOF
 
     # ── Nextcloud config.php injection hook ──────────────────────────
@@ -174,6 +199,23 @@ done
         echo "LimitRequestBody 0" >> "$HTACCESS"
     fi
 ) &
+
+# ── Configure ClamAV antivirus integration ───────────────────────
+# Install + configure files_antivirus app to use our ClamAV daemon.
+# Without this, the app blocks ALL uploads with "No connection to
+# anti virus" because it has no scanner backend.
+#
+# Key design: av_stream_max_length limits which files get scanned.
+# Files larger than 512MB bypass scanning entirely (not blocked, just
+# skipped). This prevents ClamAV timeouts on huge files while still
+# protecting against malware in typical uploads.
+gosu www-data php occ app:install files_antivirus 2>/dev/null || true
+gosu www-data php occ app:enable files_antivirus 2>/dev/null || true
+gosu www-data php occ config:app:set files_antivirus av_mode --value daemon 2>/dev/null || true
+gosu www-data php occ config:app:set files_antivirus av_host --value nextcloud-clamav 2>/dev/null || true
+gosu www-data php occ config:app:set files_antivirus av_port --value 3310 2>/dev/null || true
+gosu www-data php occ config:app:set files_antivirus av_stream_max_length --value 536870912 2>/dev/null || true
+gosu www-data php occ config:app:set files_antivirus av_infected_action --value delete 2>/dev/null || true
 HOOKEOF
     chmod +x "${dir}/hooks/before-starting/corex-memcache.sh"
 }
@@ -184,9 +226,12 @@ nextcloud_dirs() {
     mkdir -p "${DOCKER_ROOT}/nextcloud"
     mkdir -p "${DOCKER_ROOT}/nextcloud/hooks/before-starting"
     mkdir -p "${DATA_ROOT}/nextcloud-html" "${DATA_ROOT}/nextcloud-db"
+    mkdir -p "${DATA_ROOT}/clamav"
     # www-data inside the Nextcloud container runs as uid 33
     chown -R 33:33 "${DATA_ROOT}/nextcloud-html"
     chown -R 1000:1000 "${DATA_ROOT}/nextcloud-db"
+    # ClamAV runs as clamav (uid 100) inside the container
+    chown -R 100:101 "${DATA_ROOT}/clamav"
 }
 
 nextcloud_firewall() {
@@ -243,6 +288,25 @@ services:
       retries: 3
     networks: [proxy-net]
 
+  # ── ClamAV antivirus daemon ──────────────────────────────────────
+  # Scans uploaded files for malware via the files_antivirus NC app.
+  # Signature DB persists in clamav/ volume (~300MB). Freshclam updates
+  # signatures automatically every 6 hours. Uses ~1GB RAM once loaded.
+  # start_period is 120s because initial signature load takes 1-2 min.
+  clamav:
+    image: clamav/clamav:stable
+    container_name: nextcloud-clamav
+    restart: unless-stopped
+    volumes:
+      - ${DATA_ROOT}/clamav:/var/lib/clamav
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/clamdcheck.sh"]
+      start_period: 120s
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks: [proxy-net]
+
   app:
     image: nextcloud:stable
     container_name: nextcloud
@@ -273,6 +337,8 @@ services:
       db:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      clamav:
         condition: service_healthy
     networks: [proxy-net]
     labels:
@@ -336,7 +402,7 @@ nextcloud_destroy() {
 }
 
 nextcloud_status() {
-    if container_running "nextcloud" && container_running "nextcloud-cron"; then echo "HEALTHY"
+    if container_running "nextcloud" && container_running "nextcloud-clamav"; then echo "HEALTHY"
     elif container_running "nextcloud"; then echo "HEALTHY"
     elif container_exists "nextcloud"; then echo "UNHEALTHY"
     else echo "MISSING"; fi
@@ -354,4 +420,5 @@ nextcloud_credentials() {
     echo "Nextcloud: https://nextcloud.${DOMAIN} (create admin on first visit)"
     echo "  DB user: nextcloud / pass: ${NEXTCLOUD_DB_PASS}"
     echo "  MySQL root: ${MYSQL_ROOT_PASS}"
+    echo "  ClamAV: running on nextcloud-clamav:3310 (auto-updates signatures)"
 }
