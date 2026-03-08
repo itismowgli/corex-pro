@@ -426,7 +426,7 @@ services:
       # ── CalDAV/CardDAV service discovery (iOS/macOS calendar sync) ─
       - "traefik.http.middlewares.nc-caldav.redirectregex.permanent=true"
       - "traefik.http.middlewares.nc-caldav.redirectregex.regex=^https://(.*)/.well-known/(?:card|cal)dav"
-      - "traefik.http.middlewares.nc-caldav.redirectregex.replacement=https://\${1}/remote.php/dav/"
+      - "traefik.http.middlewares.nc-caldav.redirectregex.replacement=https://\$\$1/remote.php/dav/"
       # ── Security headers ───────────────────────────────────────────
       - "traefik.http.middlewares.nc-headers.headers.stsSeconds=15552000"
       - "traefik.http.middlewares.nc-headers.headers.stsIncludeSubdomains=true"
