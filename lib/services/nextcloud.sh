@@ -19,6 +19,7 @@
 #   - MariaDB innodb tuning → faster file listing queries
 #   - Traefik middleware → CalDAV/CardDAV + HSTS headers
 #   - max_chunk_size 10MB → Cloudflare compatibility (before-starting hook)
+#   - Apache streaming headers → byte-range + proxy bypass for file transfers
 
 # ── Metadata ──────────────────────────────────────────────────────────────────
 SERVICE_NAME="nextcloud"
@@ -102,6 +103,20 @@ PHPEOF
 # Docker image entrypoint, causing "Unknown error" on large uploads.
 # 0 = unlimited (Apache delegates to PHP limits).
 LimitRequestBody 0
+
+# ── File transfer streaming optimization ───────────────────────────
+# Ensures chunked uploads get fast acknowledgments and proxies don't
+# buffer or transform file responses. Applies to all WebDAV file paths.
+<IfModule mod_headers.c>
+  # Advertise byte-range support for progressive downloads/streaming
+  Header set Accept-Ranges "bytes" "expr=%{REQUEST_URI} =~ m#/remote\.php/dav/files/#"
+
+  # Tell proxies (Cloudflare, Traefik) not to buffer file responses.
+  # Without this, proxies may buffer multi-GB responses in memory and
+  # add latency to chunked upload acknowledgments.
+  Header set X-Accel-Buffering "no" "expr=%{REQUEST_URI} =~ m#/remote\.php/dav/files/#"
+  Header set Cache-Control "no-transform" "expr=%{REQUEST_URI} =~ m#/remote\.php/dav/files/#"
+</IfModule>
 APEOF
 
     # ── Nextcloud config.php injection hook ──────────────────────────
@@ -193,9 +208,10 @@ nextcloud_firewall() {
     : # Traefik handles all HTTP/HTTPS; no extra ports needed
 }
 
-nextcloud_deploy() {
-    nextcloud_dirs
-    _nextcloud_write_perf_configs
+# Writes the docker-compose.yml for Nextcloud and satellite containers.
+# Called by both nextcloud_deploy() and nextcloud_repair() so compose
+# changes (added/removed containers) take effect on repair.
+_nextcloud_write_compose() {
     local dir="${DOCKER_ROOT}/nextcloud"
 
     cat > "${dir}/docker-compose.yml" << DCEOF
@@ -321,7 +337,14 @@ services:
 networks:
   proxy-net: { external: true }
 DCEOF
+}
 
+nextcloud_deploy() {
+    nextcloud_dirs
+    _nextcloud_write_perf_configs
+    _nextcloud_write_compose
+
+    local dir="${DOCKER_ROOT}/nextcloud"
     docker compose -f "${dir}/docker-compose.yml" up -d \
         || log_warning "Nextcloud may not have started — check: docker ps"
     state_service_installed "nextcloud"
@@ -345,9 +368,9 @@ nextcloud_status() {
 nextcloud_repair() {
     nextcloud_dirs
     _nextcloud_write_perf_configs
+    _nextcloud_write_compose
     local dir="${DOCKER_ROOT}/nextcloud"
-    [[ -f "${dir}/docker-compose.yml" ]] && \
-        docker compose -f "${dir}/docker-compose.yml" up -d --force-recreate
+    docker compose -f "${dir}/docker-compose.yml" up -d --force-recreate --remove-orphans
 }
 
 nextcloud_credentials() {
