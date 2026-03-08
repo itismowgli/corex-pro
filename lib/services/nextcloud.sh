@@ -284,9 +284,10 @@ nextcloud_firewall() {
     : # Traefik handles all HTTP/HTTPS; no extra ports needed
 }
 
-nextcloud_deploy() {
-    nextcloud_dirs
-    _nextcloud_write_perf_configs
+# Writes the docker-compose.yml for Nextcloud and all satellite containers.
+# Called by both nextcloud_deploy() and nextcloud_repair() so new containers
+# (like go-vod) get added on repair without a full redeploy.
+_nextcloud_write_compose() {
     local dir="${DOCKER_ROOT}/nextcloud"
 
     cat > "${dir}/docker-compose.yml" << DCEOF
@@ -464,7 +465,14 @@ services:
 networks:
   proxy-net: { external: true }
 DCEOF
+}
 
+nextcloud_deploy() {
+    nextcloud_dirs
+    _nextcloud_write_perf_configs
+    _nextcloud_write_compose
+
+    local dir="${DOCKER_ROOT}/nextcloud"
     docker compose -f "${dir}/docker-compose.yml" up -d \
         || log_warning "Nextcloud may not have started — check: docker ps"
     state_service_installed "nextcloud"
@@ -488,9 +496,9 @@ nextcloud_status() {
 nextcloud_repair() {
     nextcloud_dirs
     _nextcloud_write_perf_configs
+    _nextcloud_write_compose
     local dir="${DOCKER_ROOT}/nextcloud"
-    [[ -f "${dir}/docker-compose.yml" ]] && \
-        docker compose -f "${dir}/docker-compose.yml" up -d --force-recreate
+    docker compose -f "${dir}/docker-compose.yml" up -d --force-recreate
 }
 
 nextcloud_credentials() {
