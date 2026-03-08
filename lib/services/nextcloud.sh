@@ -19,11 +19,6 @@
 #   - MariaDB innodb tuning → faster file listing queries
 #   - Traefik middleware → CalDAV/CardDAV + HSTS headers
 #   - max_chunk_size 10MB → Cloudflare compatibility (before-starting hook)
-#   - ClamAV antivirus daemon → scans uploads without blocking on failure
-#   - Apache streaming headers → proper Range support for video playback
-#   - Memories + go-vod → HLS adaptive video streaming (Google Drive-like)
-#   - ffmpeg → video thumbnails + preview generation
-#   - preview_generator app → pre-generates thumbnails for browsing
 
 # ── Metadata ──────────────────────────────────────────────────────────────────
 SERVICE_NAME="nextcloud"
@@ -32,7 +27,7 @@ SERVICE_CATEGORY="storage"
 SERVICE_REQUIRED=false
 SERVICE_NEEDS_DOMAIN=true
 SERVICE_NEEDS_EMAIL=false
-SERVICE_RAM_MB=3584
+SERVICE_RAM_MB=2048
 SERVICE_DISK_GB=10
 SERVICE_DESCRIPTION="Sync files, calendar, and contacts across all your devices. Unlimited storage on your own hardware. Replaces Google Drive, iCloud, Dropbox."
 
@@ -107,29 +102,6 @@ PHPEOF
 # Docker image entrypoint, causing "Unknown error" on large uploads.
 # 0 = unlimited (Apache delegates to PHP limits).
 LimitRequestBody 0
-
-# ── Video / large file streaming optimization ──────────────────────
-# Ensures mobile clients and video players can stream files progressively
-# via HTTP Range requests instead of downloading the entire file first.
-<IfModule mod_headers.c>
-  # Explicitly advertise byte-range support. Nextcloud serves files through
-  # PHP (not static Apache serving), so this ensures the header survives
-  # the Traefik → Apache → PHP chain for all file download responses.
-  Header set Accept-Ranges "bytes" "expr=%{REQUEST_URI} =~ m#/remote\.php/dav/files/#"
-
-  # Tell proxies (Cloudflare, Traefik) not to buffer or transform file
-  # responses. Without this, proxies may buffer multi-GB responses in
-  # memory, breaking streaming and causing timeouts on mobile data.
-  Header set X-Accel-Buffering "no" "expr=%{REQUEST_URI} =~ m#/remote\.php/dav/files/#"
-  Header set Cache-Control "no-transform" "expr=%{REQUEST_URI} =~ m#/remote\.php/dav/files/#"
-</IfModule>
-
-# Enable mod_xsendfile if available — lets PHP delegate file serving to
-# Apache, which handles Range requests natively and more efficiently.
-<IfModule mod_xsendfile.c>
-  XSendFile On
-  XSendFilePath /var/www/html/data
-</IfModule>
 APEOF
 
     # ── Nextcloud config.php injection hook ──────────────────────────
@@ -144,16 +116,7 @@ APEOF
     mkdir -p "${dir}/hooks/before-starting"
     cat > "${dir}/hooks/before-starting/corex-memcache.sh" << 'HOOKEOF'
 #!/bin/bash
-# CoreX Pro — inject cache config, chunk size, Memories + ffmpeg into Nextcloud
-
-# ── Install ffmpeg for video previews + Memories transcoding ─────
-# Runs as root (before gosu www-data). command -v check = fast path on
-# normal restarts (writable layer persists). Only re-installs after
-# --force-recreate or container rebuild (~30-60s one-time cost).
-if ! command -v ffmpeg &>/dev/null; then
-    apt-get update -qq && apt-get install -y --no-install-recommends ffmpeg >/dev/null 2>&1
-fi
-
+# CoreX Pro — inject cache config + chunk size into Nextcloud config.php
 CONFIG="/var/www/html/config/config.php"
 [ -f "$CONFIG" ] || exit 0
 
@@ -211,57 +174,6 @@ done
         echo "LimitRequestBody 0" >> "$HTACCESS"
     fi
 ) &
-
-# ── Configure ClamAV antivirus integration ───────────────────────
-# Install + configure files_antivirus app to use our ClamAV daemon.
-# Without this, the app blocks ALL uploads with "No connection to
-# anti virus" because it has no scanner backend.
-#
-# Key design: av_stream_max_length limits which files get scanned.
-# Files larger than 512MB bypass scanning entirely (not blocked, just
-# skipped). This prevents ClamAV timeouts on huge files while still
-# protecting against malware in typical uploads.
-gosu www-data php occ app:install files_antivirus 2>/dev/null || true
-gosu www-data php occ app:enable files_antivirus 2>/dev/null || true
-gosu www-data php occ config:app:set files_antivirus av_mode --value daemon 2>/dev/null || true
-gosu www-data php occ config:app:set files_antivirus av_host --value nextcloud-clamav 2>/dev/null || true
-gosu www-data php occ config:app:set files_antivirus av_port --value 3310 2>/dev/null || true
-gosu www-data php occ config:app:set files_antivirus av_stream_max_length --value 536870912 2>/dev/null || true
-gosu www-data php occ config:app:set files_antivirus av_infected_action --value delete 2>/dev/null || true
-
-# ── Install Memories for Google Drive-like video streaming ────────
-# Memories provides a timeline view + built-in HLS video player.
-# go-vod transcodes videos on-demand into HLS adaptive bitrate
-# streams — downloading small chunks at quality matching connection
-# speed. This is how Google Drive/Photos streams video.
-gosu www-data php occ app:install memories 2>/dev/null || true
-gosu www-data php occ app:enable memories 2>/dev/null || true
-
-# Install preview generator for video thumbnails
-gosu www-data php occ app:install previewgenerator 2>/dev/null || true
-gosu www-data php occ app:enable previewgenerator 2>/dev/null || true
-
-# Point Memories at our go-vod transcoding container
-gosu www-data php occ config:app:set memories vod_disable --value no 2>/dev/null || true
-
-# Tell Nextcloud where ffmpeg lives (needed for previews + Memories)
-gosu www-data php occ config:system:set preview_ffmpeg_path --value /usr/bin/ffmpeg 2>/dev/null || true
-
-# ── Enable video preview providers (requires ffmpeg) ─────────────
-# Without these, video files show generic icons. With them + ffmpeg,
-# Nextcloud generates actual frame thumbnails for video browsing.
-gosu www-data php occ config:system:set enabledPreviewProviders 0 --value 'OC\Preview\PNG' 2>/dev/null || true
-gosu www-data php occ config:system:set enabledPreviewProviders 1 --value 'OC\Preview\JPEG' 2>/dev/null || true
-gosu www-data php occ config:system:set enabledPreviewProviders 2 --value 'OC\Preview\GIF' 2>/dev/null || true
-gosu www-data php occ config:system:set enabledPreviewProviders 3 --value 'OC\Preview\BMP' 2>/dev/null || true
-gosu www-data php occ config:system:set enabledPreviewProviders 4 --value 'OC\Preview\Movie' 2>/dev/null || true
-gosu www-data php occ config:system:set enabledPreviewProviders 5 --value 'OC\Preview\MP4' 2>/dev/null || true
-gosu www-data php occ config:system:set enabledPreviewProviders 6 --value 'OC\Preview\MKV' 2>/dev/null || true
-gosu www-data php occ config:system:set enabledPreviewProviders 7 --value 'OC\Preview\AVI' 2>/dev/null || true
-gosu www-data php occ config:system:set enabledPreviewProviders 8 --value 'OC\Preview\MOV' 2>/dev/null || true
-gosu www-data php occ config:system:set enabledPreviewProviders 9 --value 'OC\Preview\HEIC' 2>/dev/null || true
-gosu www-data php occ config:system:set enabledPreviewProviders 10 --value 'OC\Preview\WEBP' 2>/dev/null || true
-gosu www-data php occ config:system:set enable_previews --value true --type boolean 2>/dev/null || true
 HOOKEOF
     chmod +x "${dir}/hooks/before-starting/corex-memcache.sh"
 }
@@ -272,22 +184,18 @@ nextcloud_dirs() {
     mkdir -p "${DOCKER_ROOT}/nextcloud"
     mkdir -p "${DOCKER_ROOT}/nextcloud/hooks/before-starting"
     mkdir -p "${DATA_ROOT}/nextcloud-html" "${DATA_ROOT}/nextcloud-db"
-    mkdir -p "${DATA_ROOT}/clamav"
     # www-data inside the Nextcloud container runs as uid 33
     chown -R 33:33 "${DATA_ROOT}/nextcloud-html"
     chown -R 1000:1000 "${DATA_ROOT}/nextcloud-db"
-    # ClamAV runs as clamav (uid 100) inside the container
-    chown -R 100:101 "${DATA_ROOT}/clamav"
 }
 
 nextcloud_firewall() {
     : # Traefik handles all HTTP/HTTPS; no extra ports needed
 }
 
-# Writes the docker-compose.yml for Nextcloud and all satellite containers.
-# Called by both nextcloud_deploy() and nextcloud_repair() so new containers
-# (like go-vod) get added on repair without a full redeploy.
-_nextcloud_write_compose() {
+nextcloud_deploy() {
+    nextcloud_dirs
+    _nextcloud_write_perf_configs
     local dir="${DOCKER_ROOT}/nextcloud"
 
     cat > "${dir}/docker-compose.yml" << DCEOF
@@ -335,52 +243,6 @@ services:
       retries: 3
     networks: [proxy-net]
 
-  # ── ClamAV antivirus daemon ──────────────────────────────────────
-  # Scans uploaded files for malware via the files_antivirus NC app.
-  # Signature DB persists in clamav/ volume (~300MB). Freshclam updates
-  # signatures automatically every 6 hours. Uses ~1GB RAM once loaded.
-  # start_period is 120s because initial signature load takes 1-2 min.
-  clamav:
-    image: clamav/clamav:stable
-    container_name: nextcloud-clamav
-    restart: unless-stopped
-    volumes:
-      - ${DATA_ROOT}/clamav:/var/lib/clamav
-    healthcheck:
-      test: ["CMD", "/usr/local/bin/clamdcheck.sh"]
-      start_period: 120s
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    networks: [proxy-net]
-
-  # ── go-vod video transcoder (HLS streaming) ─────────────────────
-  # On-demand transcoding server for Memories app. Converts videos
-  # to HLS adaptive bitrate streams — videos download as small chunks
-  # at resolutions matching connection speed (Google Drive behavior).
-  # Needs read access to Nextcloud data to transcode video files.
-  # CPU-intensive during active transcoding; idle otherwise (~15MB).
-  go-vod:
-    image: radialapps/go-vod:latest
-    container_name: nextcloud-go-vod
-    restart: unless-stopped
-    volumes:
-      - ${DATA_ROOT}/nextcloud-html:/var/www/html:ro
-    environment:
-      NEXTCLOUD_HOST: "http://nextcloud"
-      NEXTCLOUD_ALLOW_INSECURE: "1"
-    depends_on:
-      app:
-        condition: service_started
-    # ── Hardware acceleration (uncomment for Intel/AMD iGPU) ───────
-    # Mount the DRI device to enable VA-API hardware transcoding.
-    # Provides 4-5x speedup over CPU-only. Requires Intel 7th-gen+
-    # or AMD with VA-API support. After uncommenting, also uncomment
-    # the corresponding line in the app container for ffmpeg previews.
-    # devices:
-    #   - /dev/dri:/dev/dri
-    networks: [proxy-net]
-
   app:
     image: nextcloud:stable
     container_name: nextcloud
@@ -412,8 +274,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      clamav:
-        condition: service_healthy
     networks: [proxy-net]
     labels:
       - "traefik.enable=true"
@@ -440,15 +300,11 @@ services:
   # Runs Nextcloud cron tasks in a separate container so background
   # jobs don't compete with web request PHP workers. Shares the same
   # data volume and image as the app container.
-  # Custom entrypoint installs ffmpeg (for preview generation tasks)
-  # then exec's the original /cron.sh — same fast-path check as the
-  # app container's before-starting hook.
   cron:
     image: nextcloud:stable
     container_name: nextcloud-cron
     restart: unless-stopped
-    entrypoint: /bin/bash
-    command: ["-c", "command -v ffmpeg >/dev/null 2>&1 || { apt-get update -qq && apt-get install -y --no-install-recommends ffmpeg >/dev/null 2>&1; }; exec /cron.sh"]
+    entrypoint: /cron.sh
     volumes:
       - ${DATA_ROOT}/nextcloud-html:/var/www/html
       - ./zzz-corex-performance.ini:/usr/local/etc/php/conf.d/zzz-corex-performance.ini:ro
@@ -465,14 +321,7 @@ services:
 networks:
   proxy-net: { external: true }
 DCEOF
-}
 
-nextcloud_deploy() {
-    nextcloud_dirs
-    _nextcloud_write_perf_configs
-    _nextcloud_write_compose
-
-    local dir="${DOCKER_ROOT}/nextcloud"
     docker compose -f "${dir}/docker-compose.yml" up -d \
         || log_warning "Nextcloud may not have started — check: docker ps"
     state_service_installed "nextcloud"
@@ -487,7 +336,7 @@ nextcloud_destroy() {
 }
 
 nextcloud_status() {
-    if container_running "nextcloud" && container_running "nextcloud-go-vod"; then echo "HEALTHY"
+    if container_running "nextcloud" && container_running "nextcloud-cron"; then echo "HEALTHY"
     elif container_running "nextcloud"; then echo "HEALTHY"
     elif container_exists "nextcloud"; then echo "UNHEALTHY"
     else echo "MISSING"; fi
@@ -496,17 +345,13 @@ nextcloud_status() {
 nextcloud_repair() {
     nextcloud_dirs
     _nextcloud_write_perf_configs
-    _nextcloud_write_compose
     local dir="${DOCKER_ROOT}/nextcloud"
-    docker compose -f "${dir}/docker-compose.yml" up -d --force-recreate
+    [[ -f "${dir}/docker-compose.yml" ]] && \
+        docker compose -f "${dir}/docker-compose.yml" up -d --force-recreate
 }
 
 nextcloud_credentials() {
     echo "Nextcloud: https://nextcloud.${DOMAIN} (create admin on first visit)"
     echo "  DB user: nextcloud / pass: ${NEXTCLOUD_DB_PASS}"
     echo "  MySQL root: ${MYSQL_ROOT_PASS}"
-    echo "  ClamAV: running on nextcloud-clamav:3310 (auto-updates signatures)"
-    echo "  Video streaming: https://nextcloud.${DOMAIN}/apps/memories (HLS adaptive)"
-    echo "  go-vod transcoder: nextcloud-go-vod:47788 (on-demand HLS)"
-    echo "  Tip: For best mobile video, open Memories in phone browser (not native app)"
 }

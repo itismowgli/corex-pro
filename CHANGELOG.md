@@ -6,51 +6,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
-## [v2.4.3] - 2026-03-08
-
-### Added
-
-- **HLS adaptive video streaming (Google Drive-like)** — Added `go-vod` transcoding container (`radialapps/go-vod:latest`) that converts videos on-demand to HLS adaptive bitrate streams. Videos download as small chunks at resolutions matching connection speed — exactly how Google Drive and Google Photos stream video. No more downloading entire 5GB files before playback.
-
-- **Memories app** — Automatically installed Nextcloud Memories app (`pulsejet/memories`), providing a Google Photos-like timeline with built-in HLS video player. Configured to use the go-vod transcoding container for on-demand video streaming.
-
-- **ffmpeg for video previews** — Before-starting hook installs ffmpeg on container startup (with fast-path `command -v` check for restarts). Enables actual video frame thumbnails instead of generic file icons. Cron container also gets ffmpeg for background preview generation.
-
-- **Preview generator app** — Auto-installs `previewgenerator` Nextcloud app for video thumbnail pre-generation. Combined with video preview providers (Movie, MP4, MKV, AVI, MOV, HEIC, WEBP) enabled via `occ config:system:set`.
-
-- **Hardware acceleration support** — Docker-compose includes commented-out `/dev/dri:/dev/dri` device mapping for VA-API hardware transcoding on Intel/AMD systems (4-5x speedup over CPU-only).
-
-### Changed
-
-- **Service RAM estimate** — Increased from 3072MB to 3584MB to account for go-vod transcoding overhead (~200-500MB during active transcoding).
-
-- **Cron container entrypoint** — Changed from `entrypoint: /cron.sh` to a custom bash command that installs ffmpeg before exec'ing `/cron.sh`, enabling background preview generation tasks.
-
-### Note
-
-The native Nextcloud iOS/Android app downloads full files before playback — this is an app-level limitation that no server-side change can fix. For Google Drive-like streaming on mobile, use the Memories web app in the phone's browser at `https://nextcloud.DOMAIN/apps/memories`.
-
----
-
-## [v2.4.2] - 2026-03-07
+## [v2.4.2] - 2026-03-08
 
 ### Fixed
 
-- **Nextcloud "No connection to anti virus" blocking all uploads** — The `files_antivirus` app was installed with no ClamAV backend, causing every upload to fail. Added ClamAV daemon container (`clamav/clamav:stable`) to the Nextcloud compose stack with persistent signature storage, auto-updates via freshclam, and health checks. Before-starting hook now auto-installs and configures `files_antivirus` to use the daemon at `nextcloud-clamav:3310`.
+- **CalDAV/CardDAV redirect broken by docker-compose variable interpolation** — The CalDAV redirect regex replacement `https://$1/remote.php/dav/` used `\${1}` in the heredoc, which docker-compose interprets as a variable reference (producing empty string). Fixed by using `$$1` (docker-compose escape for literal `$`).
 
-- **Large video files unplayable on mobile data** — 5GB+ videos failed to stream through Cloudflare tunnel on mobile because missing `Accept-Ranges` and `X-Accel-Buffering` headers prevented progressive download / byte-range requests. VLC and Nextcloud iOS app received incomplete files. Added Apache `mod_headers` rules that explicitly set `Accept-Ranges: bytes`, `X-Accel-Buffering: no`, and `Cache-Control: no-transform` for all file download paths (`/remote.php/dav/files/`). Added `mod_xsendfile` support so Apache handles Range requests natively instead of through PHP.
+### Reverted
 
-### Added
-
-- **ClamAV antivirus container** — `nextcloud-clamav` runs ClamAV daemon mode with signature persistence at `${DATA_ROOT}/clamav/`. Signatures auto-update every 6 hours via built-in freshclam. Health check with 120s start period (signature loading). Nextcloud waits for ClamAV health before starting (`depends_on: condition: service_healthy`).
-
-- **Antivirus auto-configuration** — Before-starting hook installs + configures `files_antivirus` app: daemon mode, `nextcloud-clamav:3310`, infected files deleted, `av_stream_max_length` set to 512MB (files larger than this bypass scanning — not blocked, just skipped, preventing timeouts on huge files).
-
-- **Apache streaming headers** — `Accept-Ranges: bytes` (explicit byte-range support), `X-Accel-Buffering: no` (disable proxy buffering), `Cache-Control: no-transform` (prevent Cloudflare from modifying responses) on all WebDAV file paths. Enables video players to seek/stream progressively instead of downloading entire files.
-
-### Changed
-
-- **Service RAM estimate** — Increased from 2048MB to 3072MB to account for ClamAV daemon (~1GB for signature database).
+- **ClamAV antivirus, Memories, go-vod, ffmpeg, preview providers** — Removed all changes from v2.4.2 and v2.4.3. The Memories app + go-vod HLS transcoding broke .mov file viewing in Nextcloud. ClamAV as a hard dependency (`depends_on: service_healthy`) also risked blocking Nextcloud startup. Reverted Nextcloud to the stable v2.4.0 configuration.
 
 ---
 
