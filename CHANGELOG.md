@@ -6,6 +6,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v2.4.3] - 2026-03-08
+
+### Added
+
+- **HLS adaptive video streaming (Google Drive-like)** — Added `go-vod` transcoding container (`radialapps/go-vod:latest`) that converts videos on-demand to HLS adaptive bitrate streams. Videos download as small chunks at resolutions matching connection speed — exactly how Google Drive and Google Photos stream video. No more downloading entire 5GB files before playback.
+
+- **Memories app** — Automatically installed Nextcloud Memories app (`pulsejet/memories`), providing a Google Photos-like timeline with built-in HLS video player. Configured to use the go-vod transcoding container for on-demand video streaming.
+
+- **ffmpeg for video previews** — Before-starting hook installs ffmpeg on container startup (with fast-path `command -v` check for restarts). Enables actual video frame thumbnails instead of generic file icons. Cron container also gets ffmpeg for background preview generation.
+
+- **Preview generator app** — Auto-installs `previewgenerator` Nextcloud app for video thumbnail pre-generation. Combined with video preview providers (Movie, MP4, MKV, AVI, MOV, HEIC, WEBP) enabled via `occ config:system:set`.
+
+- **Hardware acceleration support** — Docker-compose includes commented-out `/dev/dri:/dev/dri` device mapping for VA-API hardware transcoding on Intel/AMD systems (4-5x speedup over CPU-only).
+
+### Changed
+
+- **Service RAM estimate** — Increased from 3072MB to 3584MB to account for go-vod transcoding overhead (~200-500MB during active transcoding).
+
+- **Cron container entrypoint** — Changed from `entrypoint: /cron.sh` to a custom bash command that installs ffmpeg before exec'ing `/cron.sh`, enabling background preview generation tasks.
+
+### Note
+
+The native Nextcloud iOS/Android app downloads full files before playback — this is an app-level limitation that no server-side change can fix. For Google Drive-like streaming on mobile, use the Memories web app in the phone's browser at `https://nextcloud.DOMAIN/apps/memories`.
+
+---
+
 ## [v2.4.2] - 2026-03-07
 
 ### Fixed
