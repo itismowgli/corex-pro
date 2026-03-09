@@ -199,12 +199,14 @@ done
 gosu www-data php occ app:install memories 2>/dev/null || true
 gosu www-data php occ app:enable memories 2>/dev/null || true
 
-# Enable transcoding and point Memories at the external go-vod container.
-# Without vod_connect, Memories tries its internal transcoder (needs ffmpeg
-# inside the NC container). With it, transcoding is delegated to the
-# dedicated go-vod container which ships its own ffmpeg.
-gosu www-data php occ config:app:set memories vod_disable --value no 2>/dev/null || true
-gosu www-data php occ config:app:set memories vod_connect --value "nextcloud-go-vod:47788" 2>/dev/null || true
+# Configure transcoding via system config (config.php), NOT app config.
+# Memories reads vod settings from config:system, not config:app.
+# memories.vod.external=true tells Memories to use the external go-vod
+# container and serve the /static/go-vod binary endpoint for it.
+# memories.vod.connect tells Memories where the go-vod container listens.
+gosu www-data php occ config:system:set memories.vod.disable --value false --type bool 2>/dev/null || true
+gosu www-data php occ config:system:set memories.vod.external --value true --type bool 2>/dev/null || true
+gosu www-data php occ config:system:set memories.vod.connect --value "nextcloud-go-vod:47788" 2>/dev/null || true
 HOOKEOF
     chmod +x "${dir}/hooks/before-starting/corex-memcache.sh"
 }
