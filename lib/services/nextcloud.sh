@@ -20,6 +20,7 @@
 #   - Traefik middleware → CalDAV/CardDAV + HSTS headers
 #   - max_chunk_size 10MB → Cloudflare compatibility (before-starting hook)
 #   - Apache streaming headers → byte-range + proxy bypass for file transfers
+#   - Memories + go-vod → HEVC video transcoding for browser playback
 
 # ── Metadata ──────────────────────────────────────────────────────────────────
 SERVICE_NAME="nextcloud"
@@ -28,7 +29,7 @@ SERVICE_CATEGORY="storage"
 SERVICE_REQUIRED=false
 SERVICE_NEEDS_DOMAIN=true
 SERVICE_NEEDS_EMAIL=false
-SERVICE_RAM_MB=2048
+SERVICE_RAM_MB=2560
 SERVICE_DISK_GB=10
 SERVICE_DESCRIPTION="Sync files, calendar, and contacts across all your devices. Unlimited storage on your own hardware. Replaces Google Drive, iCloud, Dropbox."
 
@@ -189,6 +190,21 @@ done
         echo "LimitRequestBody 0" >> "$HTACCESS"
     fi
 ) &
+
+# ── Install Memories for HEVC video streaming (HLS transcoding) ──
+# iPhone .mov files use HEVC (H.265) which Chrome/Firefox cannot play
+# natively — only Safari supports it. Memories + go-vod transcodes
+# videos on-demand to H.264 HLS adaptive bitrate streams, making them
+# playable in all browsers. Falls back to original stream on failure.
+gosu www-data php occ app:install memories 2>/dev/null || true
+gosu www-data php occ app:enable memories 2>/dev/null || true
+
+# Enable transcoding and point Memories at the external go-vod container.
+# Without vod_connect, Memories tries its internal transcoder (needs ffmpeg
+# inside the NC container). With it, transcoding is delegated to the
+# dedicated go-vod container which ships its own ffmpeg.
+gosu www-data php occ config:app:set memories vod_disable --value no 2>/dev/null || true
+gosu www-data php occ config:app:set memories vod_connect --value "nextcloud-go-vod:47788" 2>/dev/null || true
 HOOKEOF
     chmod +x "${dir}/hooks/before-starting/corex-memcache.sh"
 }
@@ -257,6 +273,28 @@ services:
       interval: 10s
       timeout: 3s
       retries: 3
+    networks: [proxy-net]
+
+  # ── go-vod video transcoder (HLS adaptive streaming) ─────────────
+  # On-demand transcoding for Memories app. Converts HEVC .mov files
+  # (iPhone recordings) to H.264 HLS — the only way to play them in
+  # Chrome/Firefox (browsers don't support HEVC natively, only Safari).
+  # go-vod has its own ffmpeg — no need to install it in Nextcloud.
+  # CPU-intensive during active transcoding; idle otherwise (~15MB).
+  # If transcoding fails, Memories falls back to the original stream.
+  go-vod:
+    image: radialapps/go-vod:latest
+    container_name: nextcloud-go-vod
+    restart: unless-stopped
+    init: true
+    volumes:
+      - ${DATA_ROOT}/nextcloud-html:/var/www/html:ro
+    environment:
+      NEXTCLOUD_HOST: "http://nextcloud"
+      NEXTCLOUD_ALLOW_INSECURE: "1"
+    depends_on:
+      app:
+        condition: service_started
     networks: [proxy-net]
 
   app:
@@ -377,4 +415,6 @@ nextcloud_credentials() {
     echo "Nextcloud: https://nextcloud.${DOMAIN} (create admin on first visit)"
     echo "  DB user: nextcloud / pass: ${NEXTCLOUD_DB_PASS}"
     echo "  MySQL root: ${MYSQL_ROOT_PASS}"
+    echo "  Video streaming: Memories app + go-vod (HEVC → H.264 HLS transcoding)"
+    echo "    iPhone .mov files play in all browsers via on-demand transcoding"
 }

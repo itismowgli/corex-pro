@@ -6,15 +6,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
-## [v2.4.2] - 2026-03-08
+## [v2.4.2] - 2026-03-09
+
+### Added
+
+- **HEVC video streaming via Memories + go-vod** — iPhone `.mov` files (HEVC/H.265) cannot play in Chrome or Firefox natively. Added the Memories app + external go-vod container for on-demand HLS transcoding to H.264, enabling cross-browser playback. Falls back to the original video stream if transcoding fails.
 
 ### Fixed
 
 - **CalDAV/CardDAV redirect broken by docker-compose variable interpolation** — The CalDAV redirect regex replacement `https://$1/remote.php/dav/` used `\${1}` in the heredoc, which docker-compose interprets as a variable reference (producing empty string). Fixed by using `$$1` (docker-compose escape for literal `$`).
+- **Missing `vod_connect` config** — Previous Memories implementation tried the internal transcoder (requiring ffmpeg inside Nextcloud container) instead of the external go-vod container. Now explicitly sets `vod_connect` to `nextcloud-go-vod:47788`.
+- **Upload speed regression after ClamAV revert** — Extracted `_nextcloud_write_compose()` helper so `nextcloud_repair()` regenerates docker-compose.yml (previously repair only force-recreated from stale compose). Added `--remove-orphans` to clean up removed containers.
 
-### Reverted
+### Removed
 
-- **ClamAV antivirus, Memories, go-vod, ffmpeg, preview providers** — Removed all changes from v2.4.2 and v2.4.3. The Memories app + go-vod HLS transcoding broke .mov file viewing in Nextcloud. ClamAV as a hard dependency (`depends_on: service_healthy`) also risked blocking Nextcloud startup. Reverted Nextcloud to the stable v2.4.0 configuration.
+- **ClamAV antivirus** — Removed. Hard `depends_on: service_healthy` risked blocking Nextcloud startup if ClamAV was slow. Antivirus scanning is not needed for a single-user homelab.
+- **`enabledPreviewProviders` override** — Removed. Replacing the entire default provider list broke preview generation for common file types.
+- **ffmpeg install in before-starting hook** — Removed. go-vod has its own built-in ffmpeg; installing it in the Nextcloud container added 30-60s startup delay for no benefit.
+
+### Changed
+
+- **RAM estimate increased** — Nextcloud service RAM estimate raised from 2048 MB to 2560 MB to account for go-vod transcoding overhead (~200-500 MB during active transcode).
 
 ---
 
