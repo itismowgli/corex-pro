@@ -20,7 +20,7 @@
 #   - Traefik middleware → CalDAV/CardDAV + HSTS headers
 #   - max_chunk_size 10MB → Cloudflare compatibility (before-starting hook)
 #   - Apache streaming headers → byte-range + proxy bypass for file transfers
-#   - Memories + go-vod → HEVC video transcoding for browser playback
+#   - Memories → HEVC video transcoding (internal go-vod + ffmpeg)
 
 # ── Metadata ──────────────────────────────────────────────────────────────────
 SERVICE_NAME="nextcloud"
@@ -29,7 +29,7 @@ SERVICE_CATEGORY="storage"
 SERVICE_REQUIRED=false
 SERVICE_NEEDS_DOMAIN=true
 SERVICE_NEEDS_EMAIL=false
-SERVICE_RAM_MB=2560
+SERVICE_RAM_MB=2048
 SERVICE_DISK_GB=10
 SERVICE_DESCRIPTION="Sync files, calendar, and contacts across all your devices. Unlimited storage on your own hardware. Replaces Google Drive, iCloud, Dropbox."
 
@@ -191,22 +191,30 @@ done
     fi
 ) &
 
+# ── Install ffmpeg for Memories video transcoding ──
+# Memories v7+ ships its own go-vod binary (bin-ext/go-vod-amd64) and
+# runs it internally — no external container needed. But go-vod calls
+# ffmpeg as a subprocess, so ffmpeg must be in the container.
+# Check first to skip on container restarts (only slow on recreate).
+if ! command -v ffmpeg &>/dev/null; then
+    apt-get update -qq >/dev/null 2>&1
+    apt-get install -y -qq --no-install-recommends ffmpeg >/dev/null 2>&1
+fi
+
 # ── Install Memories for HEVC video streaming (HLS transcoding) ──
 # iPhone .mov files use HEVC (H.265) which Chrome/Firefox cannot play
-# natively — only Safari supports it. Memories + go-vod transcodes
-# videos on-demand to H.264 HLS adaptive bitrate streams, making them
-# playable in all browsers. Falls back to original stream on failure.
+# natively — only Safari supports it. Memories v7 ships go-vod internally
+# and transcodes on-demand to H.264 HLS adaptive bitrate streams.
+# Falls back to the original stream if transcoding fails.
 gosu www-data php occ app:install memories 2>/dev/null || true
 gosu www-data php occ app:enable memories 2>/dev/null || true
 
 # Configure transcoding via system config (config.php), NOT app config.
 # Memories reads vod settings from config:system, not config:app.
-# memories.vod.external=true tells Memories to use the external go-vod
-# container and serve the /static/go-vod binary endpoint for it.
-# memories.vod.connect tells Memories where the go-vod container listens.
+# vod.external=false (default) = Memories runs its own go-vod from bin-ext/.
+# No vod.connect needed — internal mode uses 127.0.0.1:47788 by default.
 gosu www-data php occ config:system:set memories.vod.disable --value false --type bool 2>/dev/null || true
-gosu www-data php occ config:system:set memories.vod.external --value true --type bool 2>/dev/null || true
-gosu www-data php occ config:system:set memories.vod.connect --value "nextcloud-go-vod:47788" 2>/dev/null || true
+gosu www-data php occ config:system:set memories.vod.external --value false --type bool 2>/dev/null || true
 HOOKEOF
     chmod +x "${dir}/hooks/before-starting/corex-memcache.sh"
 }
@@ -275,28 +283,6 @@ services:
       interval: 10s
       timeout: 3s
       retries: 3
-    networks: [proxy-net]
-
-  # ── go-vod video transcoder (HLS adaptive streaming) ─────────────
-  # On-demand transcoding for Memories app. Converts HEVC .mov files
-  # (iPhone recordings) to H.264 HLS — the only way to play them in
-  # Chrome/Firefox (browsers don't support HEVC natively, only Safari).
-  # go-vod has its own ffmpeg — no need to install it in Nextcloud.
-  # CPU-intensive during active transcoding; idle otherwise (~15MB).
-  # If transcoding fails, Memories falls back to the original stream.
-  go-vod:
-    image: radialapps/go-vod:latest
-    container_name: nextcloud-go-vod
-    restart: unless-stopped
-    init: true
-    volumes:
-      - ${DATA_ROOT}/nextcloud-html:/var/www/html:ro
-    environment:
-      NEXTCLOUD_HOST: "http://nextcloud"
-      NEXTCLOUD_ALLOW_INSECURE: "1"
-    depends_on:
-      app:
-        condition: service_started
     networks: [proxy-net]
 
   app:
@@ -417,6 +403,6 @@ nextcloud_credentials() {
     echo "Nextcloud: https://nextcloud.${DOMAIN} (create admin on first visit)"
     echo "  DB user: nextcloud / pass: ${NEXTCLOUD_DB_PASS}"
     echo "  MySQL root: ${MYSQL_ROOT_PASS}"
-    echo "  Video streaming: Memories app + go-vod (HEVC → H.264 HLS transcoding)"
-    echo "    iPhone .mov files play in all browsers via on-demand transcoding"
+    echo "  Video streaming: Memories app (internal go-vod + ffmpeg transcoding)"
+    echo "    iPhone .mov (HEVC) files play in all browsers via on-demand HLS transcoding"
 }
