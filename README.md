@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/CoreX_Pro-v2.2.0-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
+  <img src="https://img.shields.io/badge/CoreX_Pro-v2.4.2-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
   <img src="https://img.shields.io/badge/Ubuntu-24.04_LTS-E95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Ubuntu">
   <img src="https://img.shields.io/badge/Docker-Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker">
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
@@ -222,6 +222,8 @@ Automatically adds the wildcard DNS rewrite `*.yourdomain.com → SERVER_IP` via
 
 **What:** Self-hosted Google Drive / Dropbox. File sync, calendar, contacts, notes, video calls, kanban boards.
 
+**Video streaming:** iPhone `.mov` files (HEVC/H.265) play in all browsers via the Memories app, which transcodes on-demand to H.264 HLS. No additional setup needed — enabled automatically.
+
 **Apps to install after setup:** Calendar, Contacts, Notes, Talk, Deck, Bookmarks
 
 **Access:** `https://nextcloud.yourdomain.com`
@@ -381,7 +383,7 @@ cat /root/CoreX_Dashboard_Credentials.md  # Full guide with every URL and setup 
 
 ## 🔧 Managing Services
 
-v2.0.0 introduced full post-install service management. v2.1.0 added LAN fast-path automation. v2.2.0 added network performance tuning for multi-gigabit file transfers and hardened security. No need to re-run the installer to add, fix, or configure services.
+v2.0.0 introduced full post-install service management. v2.1.0 added LAN fast-path automation. v2.2.0 added network performance tuning for multi-gigabit file transfers and hardened security. v2.4.0 added self-signed CA + wildcard certs for LAN HTTPS. v2.4.2 added HEVC video streaming via Memories. No need to re-run the installer to add, fix, or configure services.
 
 ### Health Check & Auto-Repair
 
@@ -603,6 +605,26 @@ sudo bash corex.sh manage repair adguard
 # Prometheus runs as UID 65534 (nobody) — ownership must match
 sudo chown -R 65534:65534 /mnt/corex-data/service-data/prometheus
 sudo bash corex.sh manage repair monitoring
+```
+
+### iPhone .mov videos won't play (black screen)
+
+iPhone `.mov` files use HEVC (H.265) which Chrome and Firefox cannot play natively. CoreX auto-installs the Memories app which transcodes to H.264 on-demand. If videos still show a black screen:
+
+```bash
+# Check that ffmpeg is available in the Nextcloud container
+docker exec nextcloud ffmpeg -version | head -1
+
+# If missing, install it manually
+docker exec nextcloud bash -c "apt-get update -qq && apt-get install -y -qq --no-install-recommends ffmpeg"
+
+# Verify Memories transcoding config
+docker exec -u www-data nextcloud php occ config:system:get memories.vod.disable   # should be empty or "false"
+docker exec -u www-data nextcloud php occ config:system:get memories.vod.external  # should be empty or "false"
+
+# If config is wrong, set it manually
+docker exec -u www-data nextcloud php occ config:system:set memories.vod.disable --value false --type bool
+docker exec -u www-data nextcloud php occ config:system:set memories.vod.external --value false --type bool
 ```
 
 ### Slow file transfer speeds (KB/s or 1 MB/s)

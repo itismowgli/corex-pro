@@ -10,23 +10,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ### Added
 
-- **HEVC video streaming via Memories + go-vod** — iPhone `.mov` files (HEVC/H.265) cannot play in Chrome or Firefox natively. Added the Memories app + external go-vod container for on-demand HLS transcoding to H.264, enabling cross-browser playback. Falls back to the original video stream if transcoding fails.
+- **HEVC video streaming via Memories** — iPhone `.mov` files (HEVC/H.265) cannot play in Chrome or Firefox natively. Added the Memories app with internal go-vod transcoding (Memories v7+ ships its own `go-vod-amd64` binary in `bin-ext/`). Transcodes on-demand to H.264 HLS adaptive bitrate streams for cross-browser playback. Falls back to the original stream if transcoding fails. ffmpeg is auto-installed in the Nextcloud container (skipped on restarts, only runs on recreate).
 
 ### Fixed
 
 - **CalDAV/CardDAV redirect broken by docker-compose variable interpolation** — The CalDAV redirect regex replacement `https://$1/remote.php/dav/` used `\${1}` in the heredoc, which docker-compose interprets as a variable reference (producing empty string). Fixed by using `$$1` (docker-compose escape for literal `$`).
-- **Missing `vod_connect` config** — Previous Memories implementation tried the internal transcoder (requiring ffmpeg inside Nextcloud container) instead of the external go-vod container. Now explicitly sets `vod_connect` to `nextcloud-go-vod:47788`.
-- **Upload speed regression after ClamAV revert** — Extracted `_nextcloud_write_compose()` helper so `nextcloud_repair()` regenerates docker-compose.yml (previously repair only force-recreated from stale compose). Added `--remove-orphans` to clean up removed containers.
+- **Memories config layer mismatch** — Memories reads transcoding settings from `config.php` via `config:system:set`, not from the database via `config:app:set`. Settings are now written to the correct config layer with proper `--type bool` for boolean values.
+- **Upload speed regression after revert** — Extracted `_nextcloud_write_compose()` helper so `nextcloud_repair()` regenerates docker-compose.yml (previously repair only force-recreated from stale compose). Added `--remove-orphans` to clean up removed containers.
 
 ### Removed
 
-- **ClamAV antivirus** — Removed. Hard `depends_on: service_healthy` risked blocking Nextcloud startup if ClamAV was slow. Antivirus scanning is not needed for a single-user homelab.
+- **ClamAV antivirus** — Removed. Hard `depends_on: service_healthy` risked blocking Nextcloud startup if ClamAV was slow. Not needed for a single-user homelab.
+- **External go-vod container** — Removed. The `radialapps/go-vod:latest` container tried to download its binary from a Memories endpoint (`/static/go-vod`) that no longer exists in Memories v7+. Memories now handles transcoding internally.
 - **`enabledPreviewProviders` override** — Removed. Replacing the entire default provider list broke preview generation for common file types.
-- **ffmpeg install in before-starting hook** — Removed. go-vod has its own built-in ffmpeg; installing it in the Nextcloud container added 30-60s startup delay for no benefit.
-
-### Changed
-
-- **RAM estimate increased** — Nextcloud service RAM estimate raised from 2048 MB to 2560 MB to account for go-vod transcoding overhead (~200-500 MB during active transcode).
 
 ---
 
