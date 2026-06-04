@@ -34,6 +34,8 @@ state_init() {
             domain: "",
             server_ip: "",
             email: "",
+            ssh_port: "22",
+            timezone: "UTC",
             cloudflare_tunnel_configured: false,
             services: {}
         }' > "$COREX_STATE_FILE"

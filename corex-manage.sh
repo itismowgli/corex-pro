@@ -124,6 +124,22 @@ _load_config() {
     TIMEZONE=$(state_get "timezone")
     SSH_PORT=$(state_get "ssh_port")
     CLOUDFLARE_TUNNEL_TOKEN=$(state_get "cloudflare_tunnel_token")
+
+    # Resolve SSH_PORT: state.json may be missing it on v1 migrated installs.
+    # Fall back to the actual running sshd configuration so repair operations
+    # (Fail2ban, UFW) never write "null" as the port value.
+    if [[ "$SSH_PORT" == "null" || -z "$SSH_PORT" ]]; then
+        SSH_PORT=$(sshd -T 2>/dev/null | awk '/^port /{print $2; exit}')
+        SSH_PORT="${SSH_PORT:-22}"
+        # Persist the detected value so future calls don't need detection
+        state_set "ssh_port" "$SSH_PORT" 2>/dev/null || true
+    fi
+
+    # Similarly default TIMEZONE when missing from older state files
+    if [[ "$TIMEZONE" == "null" || -z "$TIMEZONE" ]]; then
+        TIMEZONE=$(cat /etc/timezone 2>/dev/null || timedatectl show -p Timezone --value 2>/dev/null || echo "UTC")
+        state_set "timezone" "$TIMEZONE" 2>/dev/null || true
+    fi
     MOUNT_POOL="${MOUNT_POOL:-/mnt/corex-data}"
     DOCKER_ROOT="${DOCKER_ROOT:-${MOUNT_POOL}/docker-configs}"
     DATA_ROOT="${DATA_ROOT:-${MOUNT_POOL}/service-data}"

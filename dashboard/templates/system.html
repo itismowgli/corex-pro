@@ -50,6 +50,57 @@
 
   </div>
 
+  <!-- SSH connection — most important info for non-technical users -->
+  <div class="mt-4 bg-yellow-950/40 border border-yellow-800/50 rounded-lg p-4">
+    <p class="text-yellow-300 font-semibold text-sm mb-2">SSH Access</p>
+    {{$port := index .Sys "ssh_port"}}
+    {{if and $port (ne $port "22")}}
+    <p class="text-xs text-yellow-200 mb-2 font-medium">
+      ⚠ SSH port is <span class="font-mono bg-yellow-900/50 px-1 rounded">{{$port}}</span> — port 22 is blocked.
+    </p>
+    {{end}}
+    <code class="block text-xs font-mono text-green-400 bg-gray-950 rounded px-3 py-2">
+      ssh YOUR_USERNAME@{{index .Sys "server_ip"}} -p {{$port}}
+    </code>
+    <p class="text-xs text-gray-500 mt-2">
+      Portainer SSH environment: use port <span class="font-mono">{{$port}}</span>, not 22.
+    </p>
+  </div>
+
+  <!-- Direct service ports (bypass Traefik — useful before DNS is set up) -->
+  <div class="mt-4 bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+    <div class="px-4 py-3 border-b border-gray-800">
+      <p class="text-sm font-semibold text-gray-300">Direct Access Ports</p>
+      <p class="text-xs text-gray-500 mt-0.5">Use these with your server IP before domain DNS is configured.</p>
+    </div>
+    <table class="w-full text-xs">
+      <tbody class="divide-y divide-gray-800">
+        {{$ip := index .Sys "server_ip"}}
+        <tr class="hover:bg-gray-800/50"><td class="px-4 py-2 text-gray-400">Portainer</td>
+          <td class="px-4 py-2"><a href="https://{{$ip}}:9443" target="_blank" class="text-blue-400 hover:underline font-mono">https://{{$ip}}:9443</a></td>
+          <td class="px-4 py-2 text-gray-500">Docker UI (HTTPS)</td></tr>
+        <tr class="hover:bg-gray-800/50"><td class="px-4 py-2 text-gray-400">AdGuard</td>
+          <td class="px-4 py-2"><a href="http://{{$ip}}:3000" target="_blank" class="text-blue-400 hover:underline font-mono">http://{{$ip}}:3000</a></td>
+          <td class="px-4 py-2 text-gray-500">Setup wizard only</td></tr>
+        <tr class="hover:bg-gray-800/50"><td class="px-4 py-2 text-gray-400">Grafana</td>
+          <td class="px-4 py-2"><a href="http://{{$ip}}:3002" target="_blank" class="text-blue-400 hover:underline font-mono">http://{{$ip}}:3002</a></td>
+          <td class="px-4 py-2 text-gray-500">Metrics</td></tr>
+        <tr class="hover:bg-gray-800/50"><td class="px-4 py-2 text-gray-400">Immich</td>
+          <td class="px-4 py-2"><a href="http://{{$ip}}:2283" target="_blank" class="text-blue-400 hover:underline font-mono">http://{{$ip}}:2283</a></td>
+          <td class="px-4 py-2 text-gray-500">Photos (LAN)</td></tr>
+        <tr class="hover:bg-gray-800/50"><td class="px-4 py-2 text-gray-400">n8n</td>
+          <td class="px-4 py-2"><a href="http://{{$ip}}:5678" target="_blank" class="text-blue-400 hover:underline font-mono">http://{{$ip}}:5678</a></td>
+          <td class="px-4 py-2 text-gray-500">Workflows</td></tr>
+        <tr class="hover:bg-gray-800/50"><td class="px-4 py-2 text-gray-400">Open WebUI</td>
+          <td class="px-4 py-2"><a href="http://{{$ip}}:3003" target="_blank" class="text-blue-400 hover:underline font-mono">http://{{$ip}}:3003</a></td>
+          <td class="px-4 py-2 text-gray-500">AI chat (LAN only)</td></tr>
+        <tr class="hover:bg-gray-800/50"><td class="px-4 py-2 text-gray-400">Traefik API</td>
+          <td class="px-4 py-2 font-mono text-gray-500">127.0.0.1:8080</td>
+          <td class="px-4 py-2 text-gray-500">Localhost only — SSH tunnel to access</td></tr>
+      </tbody>
+    </table>
+  </div>
+
   <!-- Quick references -->
   <div class="mt-4 bg-gray-900 border border-gray-800 rounded-lg p-5">
     <h3 class="text-sm font-semibold text-gray-300 mb-3 uppercase tracking-wide">Useful Commands</h3>

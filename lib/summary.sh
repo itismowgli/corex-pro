@@ -65,10 +65,29 @@ CREDEOF
 | **Time Machine** | \`smb://${SERVER_IP}/CoreX_Backup\` | \`timemachine\` | \`${TM_PASSWORD}\` |
 | **Restic Backup** | *(CLI only)* | — | \`${RESTIC_PASSWORD}\` |
 | **AdGuard Home** | \`http://${SERVER_IP}:3000\` | *(create during setup)* | *(you choose)* |
-| **Traefik Dashboard** | \`http://${SERVER_IP}:8080\` | *(no auth)* | *(no auth)* |
+| **Traefik Dashboard** | *(localhost only — SSH tunnel required)* | — | — |
 
 > ⚠️ **"Create on first visit"** means the first person to open the URL becomes admin.
 > Complete setup for Portainer, Nextcloud, Immich, n8n, and Uptime Kuma **immediately** after install.
+
+---
+
+## SSH Access
+
+> **⚠️ SSH port has been changed from 22 to \`${SSH_PORT}\` for security.**
+
+\`\`\`bash
+# Connect to your server
+ssh YOUR_USERNAME@${SERVER_IP} -p ${SSH_PORT}
+
+# If you use ~/.ssh/config, add:
+# Host corex
+#     HostName ${SERVER_IP}
+#     Port ${SSH_PORT}
+#     User YOUR_USERNAME
+\`\`\`
+
+**Portainer SSH environment** (if adding via SSH): use port \`${SSH_PORT}\`, not 22.
 
 ---
 
@@ -76,9 +95,9 @@ CREDEOF
 
 | Service | URL |
 |---------|-----|
-| Traefik Dashboard | \`http://${SERVER_IP}:8080\` |
-| AdGuard Home | \`http://${SERVER_IP}:3000\` |
+| AdGuard Home | \`http://${SERVER_IP}:3000\` *(setup wizard only)* |
 | Portainer | \`https://${SERVER_IP}:9443\` |
+| Traefik Dashboard | localhost only — \`ssh -L 8080:127.0.0.1:8080 user@${SERVER_IP} -p ${SSH_PORT}\` |
 | Nextcloud | \`https://nextcloud.${DOMAIN}\` |
 | Photos (Immich) | \`https://photos.${DOMAIN}\` |
 | Passwords (Vault) | \`https://vault.${DOMAIN}\` |
@@ -174,6 +193,16 @@ DOCSEOF
     echo -e "  ${YELLOW}${BOLD}READ THE FULL GUIDE:${NC}  cat $DOCS_FILE"
     echo -e "  ${YELLOW}${BOLD}VIEW PASSWORDS:${NC}       cat $CRED_FILE"
     echo ""
+    # Prominently warn about SSH port change — most common cause of lockout
+    if [[ "${SSH_PORT}" != "22" ]]; then
+        echo -e "  ${RED}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "  ${RED}${BOLD}  ⚠  SSH PORT CHANGED — SAVE THIS BEFORE CLOSING THIS WINDOW  ${NC}"
+        echo -e "  ${RED}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo ""
+        echo -e "  ${YELLOW}  New SSH command:  ssh YOUR_USERNAME@${SERVER_IP} -p ${SSH_PORT}${NC}"
+        echo -e "  ${YELLOW}  Port 22 is now BLOCKED. You MUST use port ${SSH_PORT}.${NC}"
+        echo ""
+    fi
     echo -e "  ${YELLOW}${BOLD}FIRST THINGS TO DO:${NC}"
     echo "    1. AdGuard: http://${SERVER_IP}:3000 → complete setup wizard"
     echo "    2. LAN fast-path: sudo bash corex.sh manage lan-setup"

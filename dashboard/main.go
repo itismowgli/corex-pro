@@ -24,6 +24,8 @@ type CoreXState struct {
 	Version  string                  `json:"version"`
 	Domain   string                  `json:"domain"`
 	ServerIP string                  `json:"server_ip"`
+	SSHPort  string                  `json:"ssh_port"`
+	Timezone string                  `json:"timezone"`
 	Services map[string]ServiceEntry `json:"services"`
 }
 
@@ -234,6 +236,15 @@ func getSysInfo(state CoreXState) map[string]string {
 		"domain":        state.Domain,
 		"server_ip":     state.ServerIP,
 		"corex_version": state.Version,
+		"ssh_port":      state.SSHPort,
+	}
+	if info["ssh_port"] == "" || info["ssh_port"] == "null" {
+		// Detect from running sshd when state is missing the field
+		if p, err := runCmd("bash", "-c", "sshd -T 2>/dev/null | awk '/^port /{print $2;exit}'"); err == nil && p != "" {
+			info["ssh_port"] = p
+		} else {
+			info["ssh_port"] = "22"
+		}
 	}
 	hostname, _ := os.Hostname()
 	info["hostname"] = hostname
