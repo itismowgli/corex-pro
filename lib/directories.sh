@@ -9,29 +9,50 @@ source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 phase4_directories() {
     log_step "═══ PHASE 4: Directory Structure ═══"
 
-    # Core compose directories (always created)
+    # SELECTED_SERVICES array is set by wizard.sh before this phase runs.
+    # Only create directories for selected + always-required services to avoid
+    # cluttering the filesystem with dirs for uninstalled services.
+    local selected=("${SELECTED_SERVICES[@]:-traefik adguard portainer}")
+
+    _svc_selected() {
+        local svc="$1"
+        local s
+        for s in "${selected[@]}"; do [[ "$s" == "$svc" ]] && return 0; done
+        return 1
+    }
+
+    # ── Core (always created) ─────────────────────────────────────────────────
     mkdir -p "${DOCKER_ROOT}"/{traefik,portainer,adguard,cloudflared}
-
-    # All service compose directories (created for selected services)
-    mkdir -p "${DOCKER_ROOT}"/{nextcloud,stalwart,immich,vaultwarden,n8n,ai,monitoring,timemachine,coolify,crowdsec}
-
-    # Core persistent data directories
     mkdir -p "${DATA_ROOT}"/{portainer,adguard-work,adguard-conf}
 
-    # All service data directories
-    mkdir -p "${DATA_ROOT}"/{nextcloud-db,nextcloud-html,immich-db,immich-upload,stalwart-data,vaultwarden,n8n,ollama,open-webui,browserless,uptime-kuma,grafana,prometheus,crowdsec-db,crowdsec-config}
+    # ── Selected services ─────────────────────────────────────────────────────
+    _svc_selected "nextcloud"   && mkdir -p "${DATA_ROOT}"/{nextcloud-db,nextcloud-html} \
+        "${DOCKER_ROOT}/nextcloud/hooks/before-starting"
+    _svc_selected "immich"      && mkdir -p "${DATA_ROOT}"/{immich-db,immich-upload} \
+        "${DOCKER_ROOT}/immich"
+    _svc_selected "stalwart"    && mkdir -p "${DATA_ROOT}/stalwart-data" "${DOCKER_ROOT}/stalwart"
+    _svc_selected "vaultwarden" && mkdir -p "${DATA_ROOT}/vaultwarden" "${DOCKER_ROOT}/vaultwarden"
+    _svc_selected "n8n"         && mkdir -p "${DATA_ROOT}/n8n" "${DOCKER_ROOT}/n8n"
+    _svc_selected "ai"          && mkdir -p "${DATA_ROOT}"/{ollama,open-webui,browserless} \
+        "${DOCKER_ROOT}/ai"
+    _svc_selected "monitoring"  && mkdir -p "${DATA_ROOT}"/{uptime-kuma,grafana,prometheus} \
+        "${DOCKER_ROOT}/monitoring"
+    _svc_selected "timemachine" && mkdir -p "${MOUNT_POOL}/timemachine-data" "${DOCKER_ROOT}/timemachine"
+    _svc_selected "coolify"     && mkdir -p "${DOCKER_ROOT}/coolify"
+    _svc_selected "crowdsec"    && mkdir -p "${DATA_ROOT}"/{crowdsec-db,crowdsec-config} \
+        "${DOCKER_ROOT}/crowdsec"
+    _svc_selected "dashboard"   && mkdir -p "${DOCKER_ROOT}/dashboard"
 
-    # Backup directory
+    # ── Backup directory (always) ─────────────────────────────────────────────
     mkdir -p "${BACKUP_ROOT}"
 
-    # Time Machine data on shared pool
-    mkdir -p "${MOUNT_POOL}/timemachine-data"
+    # ── Ownership ─────────────────────────────────────────────────────────────
+    chown -R 1000:1000 "${DOCKER_ROOT}" "${DATA_ROOT}"
+    [[ -d "${MOUNT_POOL}/timemachine-data" ]] && \
+        chown -R 1000:1000 "${MOUNT_POOL}/timemachine-data"
+    [[ -d "${DATA_ROOT}/nextcloud-html" ]]  && chown -R 33:33 "${DATA_ROOT}/nextcloud-html"
+    [[ -d "${DATA_ROOT}/grafana" ]]         && chown -R 472:472 "${DATA_ROOT}/grafana"
+    [[ -d "${DATA_ROOT}/prometheus" ]]      && chown -R 65534:65534 "${DATA_ROOT}/prometheus"
 
-    # Fix ownership
-    chown -R 1000:1000 "${DOCKER_ROOT}" "${DATA_ROOT}" "${MOUNT_POOL}/timemachine-data"
-    chown -R 33:33 "${DATA_ROOT}/nextcloud-html"      # www-data inside Nextcloud container
-    chown -R 472:472 "${DATA_ROOT}/grafana"            # grafana user in container
-    chown -R 65534:65534 "${DATA_ROOT}/prometheus"     # nobody:nogroup in container
-
-    log_success "Directory structure created on SSD."
+    log_success "Directory structure created on SSD (selected services only)."
 }

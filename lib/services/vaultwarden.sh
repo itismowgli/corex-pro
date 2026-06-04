@@ -45,10 +45,17 @@ services:
     environment:
       DOMAIN: "https://vault.${DOMAIN}"
       ADMIN_TOKEN: "${VAULTWARDEN_ADMIN_TOKEN}"
-      SIGNUPS_ALLOWED: "true"
+      SIGNUPS_ALLOWED: "false"
       LOG_LEVEL: warn
     networks: [proxy-net]
     security_opt: ["no-new-privileges:true"]
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.5"
+        reservations:
+          memory: 64m
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.vw.rule=Host(\`vault.${DOMAIN}\`)"
@@ -85,7 +92,9 @@ vaultwarden_repair() {
 }
 
 vaultwarden_credentials() {
-    echo "Vaultwarden: https://vault.${DOMAIN} (register on first visit)"
+    echo "Vaultwarden: https://vault.${DOMAIN}"
     echo "  Admin panel: https://vault.${DOMAIN}/admin"
     echo "  Admin token: ${VAULTWARDEN_ADMIN_TOKEN}"
+    echo "  Signups: DISABLED by default. To enable: set SIGNUPS_ALLOWED=true in compose"
+    echo "  Create accounts via: admin panel → Users → Invite"
 }

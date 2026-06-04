@@ -52,6 +52,13 @@ services:
     command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
     networks: [proxy-net]
     security_opt: ["no-new-privileges:true"]
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+          cpus: "0.25"
+        reservations:
+          memory: 32m
 networks:
   proxy-net: { external: true }
 DCEOF

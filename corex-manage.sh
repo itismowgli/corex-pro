@@ -132,21 +132,24 @@ _load_config() {
     export DOMAIN SERVER_IP EMAIL TIMEZONE SSH_PORT CLOUDFLARE_TUNNEL_TOKEN
     export MOUNT_POOL DOCKER_ROOT DATA_ROOT BACKUP_ROOT CRED_FILE
 
-    # Load passwords from credential file
+    # Load passwords from credential file.
+    # Uses sed 's/^[^:]*: //' to capture everything after the first ': ',
+    # which handles passwords that contain spaces (awk would truncate them).
     if [[ -f "$CRED_FILE" ]]; then
-        MYSQL_ROOT_PASS=$(grep "MySQL Root:" "$CRED_FILE" | awk '{print $3}')
-        NEXTCLOUD_DB_PASS=$(grep "Nextcloud DB:" "$CRED_FILE" | awk '{print $3}')
-        N8N_ENCRYPTION_KEY=$(grep "n8n Encryption:" "$CRED_FILE" | awk '{print $3}')
-        TM_PASSWORD=$(grep "Time Machine:" "$CRED_FILE" | awk '{print $3}')
-        VAULTWARDEN_ADMIN_TOKEN=$(grep "Vaultwarden:" "$CRED_FILE" | awk '{print $2}')
-        GRAFANA_ADMIN_PASS=$(grep "Grafana Admin:" "$CRED_FILE" | awk '{print $3}')
-        RESTIC_PASSWORD=$(grep "Restic Backup:" "$CRED_FILE" | awk '{print $3}')
-        IMMICH_DB_PASS=$(grep "Immich DB:" "$CRED_FILE" | awk '{print $3}')
-        WEBUI_SECRET_KEY=$(grep "AI WebUI Secret:" "$CRED_FILE" | awk '{print $4}')
-        STALWART_ADMIN_PASS=$(grep "Stalwart Admin:" "$CRED_FILE" | awk '{print $4}')
+        MYSQL_ROOT_PASS=$(grep "MySQL Root:" "$CRED_FILE" | sed 's/^[^:]*: //')
+        NEXTCLOUD_DB_PASS=$(grep "Nextcloud DB:" "$CRED_FILE" | sed 's/^[^:]*: //')
+        N8N_ENCRYPTION_KEY=$(grep "n8n Encryption:" "$CRED_FILE" | sed 's/^[^:]*: //')
+        TM_PASSWORD=$(grep "Time Machine:" "$CRED_FILE" | sed 's/^[^:]*: //')
+        VAULTWARDEN_ADMIN_TOKEN=$(grep "Vaultwarden:" "$CRED_FILE" | sed 's/^[^:]*: //')
+        GRAFANA_ADMIN_PASS=$(grep "Grafana Admin:" "$CRED_FILE" | sed 's/^[^:]*: //')
+        RESTIC_PASSWORD=$(grep "Restic Backup:" "$CRED_FILE" | sed 's/^[^:]*: //')
+        IMMICH_DB_PASS=$(grep "Immich DB:" "$CRED_FILE" | sed 's/^[^:]*: //')
+        WEBUI_SECRET_KEY=$(grep "AI WebUI Secret:" "$CRED_FILE" | sed 's/^[^:]*: //')
+        STALWART_ADMIN_PASS=$(grep "Stalwart Admin:" "$CRED_FILE" | sed 's/^[^:]*: //')
+        BROWSERLESS_TOKEN=$(grep "Browserless Token:" "$CRED_FILE" | sed 's/^[^:]*: //')
         export MYSQL_ROOT_PASS NEXTCLOUD_DB_PASS N8N_ENCRYPTION_KEY TM_PASSWORD
         export VAULTWARDEN_ADMIN_TOKEN GRAFANA_ADMIN_PASS RESTIC_PASSWORD
-        export IMMICH_DB_PASS WEBUI_SECRET_KEY STALWART_ADMIN_PASS
+        export IMMICH_DB_PASS WEBUI_SECRET_KEY STALWART_ADMIN_PASS BROWSERLESS_TOKEN
     fi
 }
 
@@ -294,7 +297,9 @@ cmd_remove() {
 
     if [[ "$del_data" == "y" || "$del_data" == "Y" ]]; then
         log_warning "Deleting data directories for ${svc}..."
-        rm -rf "${DATA_ROOT:?}/${svc}"* 2>/dev/null || true
+        # Exact path only — no glob to prevent accidental deletion of related services
+        # (e.g. removing 'nextcloud' must NOT delete 'nextcloud-db' or 'nextcloud-redis')
+        rm -rf "${DATA_ROOT:?}/${svc}" 2>/dev/null || true
         rm -rf "${DOCKER_ROOT:?}/${svc}" 2>/dev/null || true
         log_success "Data deleted."
     fi
@@ -348,10 +353,114 @@ _update_single() {
         log_warning "No compose file for ${svc} — skipping"
         return 0
     fi
+    # Digest check: skip pull+restart if image is already at latest
+    local image
+    image=$(docker compose -f "${dir}/docker-compose.yml" config --images 2>/dev/null | head -1)
+    if [[ -n "$image" ]]; then
+        local local_digest remote_digest
+        local_digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$image" 2>/dev/null || true)
+        remote_digest=$(docker manifest inspect "$image" 2>/dev/null | \
+            grep -oP '"digest":\s*"\K[^"]+' | head -1 || true)
+        if [[ -n "$local_digest" && -n "$remote_digest" && \
+              "$local_digest" == *"$remote_digest"* ]]; then
+            log_info "${svc}: already at latest — skipping pull"
+            return 0
+        fi
+    fi
     log_info "Updating ${svc}..."
     docker compose -f "${dir}/docker-compose.yml" pull
     docker compose -f "${dir}/docker-compose.yml" up -d
     log_success "${svc} updated."
+}
+
+# ── storage ───────────────────────────────────────────────────────────────────
+
+cmd_storage() {
+    echo ""
+    echo -e "${CYAN}${BOLD}CoreX Storage Report${NC}"
+    echo "─────────────────────────────────────────────────────────"
+    echo ""
+
+    # OS disk
+    local os_total os_used os_pct
+    os_total=$(df -BG / | awk 'NR==2{print $2}')
+    os_used=$(df -BG / | awk 'NR==2{print $3}')
+    os_pct=$(df / | awk 'NR==2{print $5}')
+    echo -e "  ${BOLD}OS Disk (/):${NC} ${os_used} used / ${os_total} (${os_pct})"
+
+    if [[ -d /var/lib/docker ]]; then
+        local docker_size
+        docker_size=$(du -sh /var/lib/docker 2>/dev/null | awk '{print $1}')
+        echo "    /var/lib/docker: ${docker_size} (images + build cache + logs)"
+    fi
+    echo ""
+
+    # External SSD
+    if [[ -d "${MOUNT_POOL}" ]]; then
+        local ssd_total ssd_used ssd_pct
+        ssd_total=$(df -BG "${MOUNT_POOL}" | awk 'NR==2{print $2}')
+        ssd_used=$(df -BG "${MOUNT_POOL}" | awk 'NR==2{print $3}')
+        ssd_pct=$(df "${MOUNT_POOL}" | awk 'NR==2{print $5}')
+        echo -e "  ${BOLD}External SSD (${MOUNT_POOL}):${NC} ${ssd_used} used / ${ssd_total} (${ssd_pct})"
+        echo ""
+        echo -e "  ${BOLD}Service Data:${NC}"
+        if [[ -d "${DATA_ROOT}" ]]; then
+            local dir name size
+            while IFS= read -r dir; do
+                name=$(basename "$dir")
+                size=$(du -sh "$dir" 2>/dev/null | awk '{print $1}')
+                printf "    %-30s %s\n" "$name" "$size"
+            done < <(find "${DATA_ROOT}" -mindepth 1 -maxdepth 1 -type d | sort)
+        fi
+        echo ""
+    fi
+
+    # Docker system usage
+    echo -e "  ${BOLD}Docker Usage:${NC}"
+    docker system df 2>/dev/null || echo "  (docker not available)"
+    echo ""
+    echo -e "  Run ${CYAN}corex manage cleanup --dry-run${NC} to preview freeable space."
+}
+
+# ── cleanup ───────────────────────────────────────────────────────────────────
+
+cmd_cleanup() {
+    local dry_run=false
+    [[ "${1:-}" == "--dry-run" ]] && dry_run=true
+
+    echo ""
+    if [[ "$dry_run" == "true" ]]; then
+        echo -e "${CYAN}${BOLD}CoreX Cleanup — DRY RUN (no changes)${NC}"
+    else
+        echo -e "${CYAN}${BOLD}CoreX Cleanup${NC}"
+    fi
+    echo "─────────────────────────────────────────────────────────"
+    echo ""
+
+    # Stale images unused 7+ days
+    local stale_images
+    stale_images=$(docker image ls --filter "dangling=false" \
+        --format "{{.Repository}}:{{.Tag}}" 2>/dev/null | wc -l)
+    echo -e "  ${BOLD}Stale Docker images (unused 7+ days):${NC}"
+    docker image ls --filter "until=168h" --format "  {{.Repository}}:{{.Tag}} ({{.Size}})" \
+        2>/dev/null || true
+    echo ""
+
+    echo -e "  ${BOLD}Build cache (3+ days old):${NC}"
+    docker builder prune --filter "until=72h" --keep-storage 0 \
+        $([ "$dry_run" == "true" ] && echo "--dry-run" || echo "--force") 2>/dev/null \
+        | grep -v "^$" | sed 's/^/  /' || true
+    echo ""
+
+    if [[ "$dry_run" == "false" ]]; then
+        echo -e "  ${BOLD}Removing stale images...${NC}"
+        docker image prune --filter "until=168h" --force 2>/dev/null || true
+        echo -e "  ${BOLD}Cleaning old CoreX temp files...${NC}"
+        find /tmp -name "corex-*" -mtime +1 -delete 2>/dev/null || true
+        log_success "Cleanup complete."
+    else
+        echo "  [DRY RUN] Run without --dry-run to apply cleanup."
+    fi
 }
 
 # ── repair (doctor) ───────────────────────────────────────────────────────────
@@ -999,6 +1108,8 @@ Commands:
   repair [service]    Force-recreate unhealthy service(s) (no data loss)
   replace <old> <new> Remove one service, install another
   doctor              Full health check + auto-repair
+  storage             Show disk usage breakdown (OS disk, SSD, per-service)
+  cleanup [--dry-run] Remove stale Docker images and build cache safely
   lan-setup           Configure LAN fast-path for direct local network access
   network-tune        Diagnose and optimize network for high-speed file transfers
 
@@ -1033,6 +1144,8 @@ main() {
         repair)       cmd_repair "$@" ;;
         replace)      cmd_replace "$@" ;;
         doctor)       cmd_doctor ;;
+        storage)      cmd_storage ;;
+        cleanup)      cmd_cleanup "$@" ;;
         lan-setup)    cmd_lan_setup ;;
         network-tune) cmd_network_tune ;;
         help|--help|-h) cmd_help ;;

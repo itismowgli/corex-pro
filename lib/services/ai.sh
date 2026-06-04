@@ -39,6 +39,14 @@ ai_deploy() {
     ai_dirs
     local dir="${DOCKER_ROOT}/ai"
 
+    # Generate a separate Browserless token if not already set.
+    # Sharing WEBUI_SECRET_KEY with Browserless means compromise of one
+    # grants access to both. A separate token limits the blast radius.
+    if [[ -z "${BROWSERLESS_TOKEN:-}" ]]; then
+        BROWSERLESS_TOKEN=$(openssl rand -base64 32 | tr -d '/+=' | head -c 32)
+        export BROWSERLESS_TOKEN
+    fi
+
     cat > "${dir}/docker-compose.yml" << DCEOF
 services:
   ollama:
@@ -50,6 +58,13 @@ services:
       - ${DATA_ROOT}/ollama:/root/.ollama
     networks: [ai-net, proxy-net]
     security_opt: ["no-new-privileges:true"]
+    deploy:
+      resources:
+        limits:
+          memory: 8g
+          cpus: "4.0"
+        reservations:
+          memory: 1g
     # Uncomment for NVIDIA GPU support:
     # deploy:
     #   resources:
@@ -71,6 +86,13 @@ services:
       WEBUI_SECRET_KEY: "${WEBUI_SECRET_KEY}"
     depends_on: [ollama]
     networks: [ai-net, proxy-net]
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "1.0"
+        reservations:
+          memory: 128m
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.ai.rule=Host(\`ai.${DOMAIN}\`)"
@@ -84,10 +106,17 @@ services:
     restart: unless-stopped
     ports: ["3005:3000"]
     environment:
-      TOKEN: "${WEBUI_SECRET_KEY}"
+      TOKEN: "${BROWSERLESS_TOKEN}"
       MAX_CONCURRENT_SESSIONS: "5"
     networks: [ai-net]
     security_opt: ["no-new-privileges:true"]
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "1.0"
+        reservations:
+          memory: 128m
 
 networks:
   ai-net: { external: true }
@@ -130,4 +159,5 @@ ai_credentials() {
     echo "  Ollama API: http://${SERVER_IP}:11434"
     echo "  Browserless: http://${SERVER_IP}:3005"
     echo "  WebUI Secret: ${WEBUI_SECRET_KEY}"
+    echo "  Browserless Token: ${BROWSERLESS_TOKEN:-set separately}"
 }

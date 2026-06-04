@@ -122,7 +122,7 @@ traefik_dirs() {
 traefik_firewall() {
     ufw allow 80/tcp   comment 'HTTP (Traefik redirects to HTTPS)' 2>/dev/null || true
     ufw allow 443/tcp  comment 'HTTPS (Traefik TLS termination)'   2>/dev/null || true
-    ufw allow 8080/tcp comment 'Traefik Dashboard'                 2>/dev/null || true
+    # Port 8080 (Traefik dashboard) is bound to localhost only — no UFW rule needed
 }
 
 traefik_deploy() {
@@ -138,9 +138,13 @@ traefik_deploy() {
     # ── Static config: entrypoints, providers, certificate resolvers ───
     cat > "${dir}/traefik.yml" << TEOF
 api:
-  insecure: true
   dashboard: true
+  # insecure mode binds to the 'traefik' entrypoint (127.0.0.1:8080)
+  # Docker publishes 127.0.0.1:8080 → localhost only; no external access
+  insecure: true
 entryPoints:
+  traefik:
+    address: "127.0.0.1:8080"
   web:
     address: ":80"
     http:
@@ -193,7 +197,7 @@ services:
     ports:
       - "80:80"
       - "443:443"
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./traefik.yml:/traefik.yml:ro
@@ -202,6 +206,13 @@ services:
       - ./certs:/certs:ro
     networks: [proxy-net]
     security_opt: ["no-new-privileges:true"]
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.5"
+        reservations:
+          memory: 64m
 networks:
   proxy-net: { external: true }
 DCEOF
@@ -249,7 +260,8 @@ DYEOF
 }
 
 traefik_credentials() {
-    echo "Traefik Dashboard: http://${SERVER_IP}:8080 (no auth)"
+    echo "Traefik Dashboard: http://127.0.0.1:8080 (localhost only — SSH tunnel to access remotely)"
+    echo "  SSH tunnel: ssh -L 8080:localhost:8080 user@${SERVER_IP} then open http://localhost:8080"
     if [[ -f "${DOCKER_ROOT}/traefik/certs/ca.crt" ]]; then
         echo "LAN CA cert: ${DOCKER_ROOT}/traefik/certs/ca.crt (trust on client devices for HTTPS)"
     fi

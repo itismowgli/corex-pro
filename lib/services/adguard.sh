@@ -73,6 +73,13 @@ services:
       - ${DATA_ROOT}/adguard-work:/opt/adguardhome/work
       - ${DATA_ROOT}/adguard-conf:/opt/adguardhome/conf
     networks: [proxy-net]
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.5"
+        reservations:
+          memory: 64m
 networks:
   proxy-net: { external: true }
 DCEOF

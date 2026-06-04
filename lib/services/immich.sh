@@ -50,8 +50,19 @@ services:
       DB_USERNAME: postgres
       DB_DATABASE_NAME: immich
       REDIS_HOSTNAME: immich-redis
-    depends_on: [immich-db, immich-redis]
+    depends_on:
+      immich-db:
+        condition: service_healthy
+      immich-redis:
+        condition: service_started
     networks: [proxy-net]
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: "1.0"
+        reservations:
+          memory: 256m
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.immich.rule=Host(\`photos.${DOMAIN}\`)"
@@ -65,12 +76,26 @@ services:
     restart: unless-stopped
     volumes: ["model-cache:/cache"]
     networks: [proxy-net]
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: "1.0"
+        reservations:
+          memory: 256m
 
   immich-redis:
     image: redis:alpine
     container_name: immich-redis
     restart: unless-stopped
     networks: [proxy-net]
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+          cpus: "0.25"
+        reservations:
+          memory: 32m
 
   immich-db:
     image: tensorchord/pgvecto-rs:pg14-v0.2.0
@@ -84,6 +109,19 @@ services:
     volumes:
       - ${DATA_ROOT}/immich-db:/var/lib/postgresql/data
     networks: [proxy-net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      start_period: 30s
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "1.0"
+        reservations:
+          memory: 128m
 
 volumes:
   model-cache:

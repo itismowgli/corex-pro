@@ -23,9 +23,11 @@ log_error()   { echo -e "${RED}[FAIL]${NC} $1" >&2; exit 1; }
 
 # ── Utilities ─────────────────────────────────────────────────────────────────
 
-# Generate a 24-char random password (alphanumeric, no special chars).
+# Generate a 32-char random password (alphanumeric, no special chars).
 # Safe to use in YAML values and shell variables without quoting concerns.
-generate_pass() { openssl rand -base64 24 | tr -d '/+=' | head -c 24; }
+# Uses 32 input bytes so that after stripping /+= we still get 32 chars.
+# (Old approach used 24 bytes; stripping chars reduced entropy below 24.)
+generate_pass() { openssl rand -base64 32 | tr -d '/+=' | head -c 32; }
 
 # Verify the script is running as root; exit with error if not.
 check_root() {

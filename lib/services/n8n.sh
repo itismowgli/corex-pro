@@ -51,6 +51,13 @@ services:
     volumes:
       - ${DATA_ROOT}/n8n:/home/node/.n8n
     networks: [proxy-net]
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "0.5"
+        reservations:
+          memory: 128m
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.n8n.rule=Host(\`n8n.${DOMAIN}\`)"

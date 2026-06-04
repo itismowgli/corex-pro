@@ -277,6 +277,30 @@ You can add it later with: corex-manage add cloudflared" \
         "2222")
     export SSH_PORT
 
+    # ── Docker storage location ───────────────────────────────────────────────
+    # By default Docker stores image layers on the OS disk (/var/lib/docker).
+    # Moving them to the external SSD keeps the OS disk for OS-only use.
+    DOCKER_ON_SSD="false"
+    if _has_whiptail; then
+        if whiptail --title "Docker Storage" \
+            --yesno "Move Docker image layers to external SSD?
+(/mnt/corex-data/docker-engine)
+
+YES — OS disk stays lean; Docker images + containers live on SSD (recommended)
+NO  — Docker stays on OS disk (simpler, fine if OS disk is large enough)" \
+            14 70; then
+            DOCKER_ON_SSD="true"
+        fi
+    else
+        echo -e "\n${CYAN}Docker Storage Location${NC}" >&2
+        echo "Move Docker image layers to external SSD? (/mnt/corex-data/docker-engine)" >&2
+        echo "YES = OS disk stays lean (recommended) | NO = Docker stays on OS disk" >&2
+        local docker_ssd_choice
+        read -r -p "Move to SSD? (y/N): " docker_ssd_choice
+        [[ "$docker_ssd_choice" == "y" || "$docker_ssd_choice" == "Y" ]] && DOCKER_ON_SSD="true"
+    fi
+    export DOCKER_ON_SSD
+
     # ── Profile or custom selection ───────────────────────────────────────────
     local profile_choice
     profile_choice=$(_menu "Service Selection" "Choose a preset or customize:" \
@@ -296,15 +320,18 @@ You can add it later with: corex-manage add cloudflared" \
         local services_dir="${script_dir}/services"
 
         local checklist_items=()
-        local f svc label desc required default_state
+        local f svc_info svc label required ram default_state
         for f in "${services_dir}"/*.sh; do
             [[ -f "$f" ]] || continue
-            # Read metadata
-            eval "$(bash -c "source '$f' 2>/dev/null; \
-                echo \"svc=\\\"\$SERVICE_NAME\\\"\"; \
-                echo \"label=\\\"\$SERVICE_LABEL\\\"\"; \
-                echo \"required=\\\"\$SERVICE_REQUIRED\\\"\"; \
-                echo \"ram=\\\"\$SERVICE_RAM_MB\\\"\"")"
+            # Read metadata safely — no eval; use printf+IFS to avoid injection
+            svc_info=$(bash -c "
+                source '$f' 2>/dev/null
+                printf '%s\t%s\t%s\t%s\n' \
+                    \"\${SERVICE_NAME:-}\" \"\${SERVICE_LABEL:-}\" \
+                    \"\${SERVICE_REQUIRED:-false}\" \"\${SERVICE_RAM_MB:-0}\"
+            " 2>/dev/null)
+            IFS=$'\t' read -r svc label required ram <<< "$svc_info"
+            [[ -z "$svc" ]] && continue
             [[ "$required" == "true" ]] && default_state="ON" || default_state="OFF"
             checklist_items+=("$svc" "$label (RAM: ${ram}MB)" "$default_state")
         done

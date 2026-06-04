@@ -37,68 +37,116 @@ phase6_backup() {
     fi
 
     # ── Backup script ────────────────────────────────────────────────────────
-    cat > /usr/local/bin/corex-backup.sh << BKEOF
+    # Uses single-quoted heredoc ('BKEOF') to prevent variable expansion.
+    # Passwords are read at runtime from credentials file (not embedded).
+    # This prevents plaintext secrets appearing in world-readable scripts.
+    cat > /usr/local/bin/corex-backup.sh << 'BKEOF'
 #!/bin/bash
 # CoreX Pro — Daily Backup Script
 # Runs automatically at 3AM via cron. Can also be run manually.
+BACKUP_ROOT="/mnt/corex-data/backups"
+DATA_ROOT="/mnt/corex-data/service-data"
+DOCKER_ROOT="/mnt/corex-data/docker-configs"
+CRED_FILE="/root/corex-credentials.txt"
 export RESTIC_REPOSITORY="${BACKUP_ROOT}/restic-repo"
-export RESTIC_PASSWORD="${RESTIC_PASSWORD}"
+# Read password at runtime — never embedded in the script file
+export RESTIC_PASSWORD
+RESTIC_PASSWORD=$(grep "Restic Backup:" "$CRED_FILE" 2>/dev/null | sed 's/^[^:]*: //')
+if [[ -z "$RESTIC_PASSWORD" ]]; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') — ERROR: Could not read Restic password from ${CRED_FILE}" >> "$LOG"
+    exit 1
+fi
 LOG="/var/log/corex-backup.log"
 
-echo "\$(date '+%Y-%m-%d %H:%M:%S') — Backup starting..." >> "\$LOG"
+echo "$(date '+%Y-%m-%d %H:%M:%S') — Backup starting..." >> "$LOG"
 
 restic backup "${DATA_ROOT}" "${DOCKER_ROOT}" \
     --tag corex \
     --exclude="*.tmp" \
     --exclude="*.log" \
     --exclude="*/cache/*" \
-    >> "\$LOG" 2>&1
+    >> "$LOG" 2>&1
 
 restic forget \
     --keep-daily 7 \
     --keep-weekly 4 \
     --keep-monthly 6 \
     --prune \
-    >> "\$LOG" 2>&1
+    >> "$LOG" 2>&1
 
-echo "\$(date '+%Y-%m-%d %H:%M:%S') — Backup complete." >> "\$LOG"
+# ── Integrity verification (spot-check 5% of data) ───────────────────────
+echo "$(date '+%Y-%m-%d %H:%M:%S') — Running integrity check..." >> "$LOG"
+if restic check --read-data-subset=5% >> "$LOG" 2>&1; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') — Integrity check PASSED." >> "$LOG"
+else
+    echo "$(date '+%Y-%m-%d %H:%M:%S') — INTEGRITY CHECK FAILED! Repository may be corrupted." >> "$LOG"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') — Run manually: restic check --read-data" >> "$LOG"
+fi
+
+restic stats --mode raw-data >> "$LOG" 2>&1
+
+echo "$(date '+%Y-%m-%d %H:%M:%S') — Backup complete." >> "$LOG"
 BKEOF
     chmod +x /usr/local/bin/corex-backup.sh
 
     # ── Restore script ───────────────────────────────────────────────────────
-    cat > /usr/local/bin/corex-restore.sh << RSEOF
+    cat > /usr/local/bin/corex-restore.sh << 'RSEOF'
 #!/bin/bash
 # CoreX Pro — Restore Script
-# Usage: sudo corex-restore.sh [snapshot-id]
+# Usage: sudo corex-restore.sh [--list | --dry-run | snapshot-id]
+BACKUP_ROOT="/mnt/corex-data/backups"
+DOCKER_ROOT="/mnt/corex-data/docker-configs"
+CRED_FILE="/root/corex-credentials.txt"
 export RESTIC_REPOSITORY="${BACKUP_ROOT}/restic-repo"
-export RESTIC_PASSWORD="${RESTIC_PASSWORD}"
+export RESTIC_PASSWORD
+RESTIC_PASSWORD=$(grep "Restic Backup:" "$CRED_FILE" 2>/dev/null | sed 's/^[^:]*: //')
 
 echo ""
 echo "=== CoreX Restore ==="
 echo ""
+
+# --list: show snapshots without stopping services
+if [[ "${1:-}" == "--list" ]]; then
+    echo "Available snapshots:"
+    restic snapshots
+    exit 0
+fi
+
 echo "Available snapshots:"
 restic snapshots
 echo ""
 
-SNAP="\${1:-latest}"
-echo "Selected: \$SNAP"
+SNAP="${1:-latest}"
+DRY_RUN=false
+[[ "$SNAP" == "--dry-run" ]] && { DRY_RUN=true; SNAP="latest"; }
+
+echo "Selected: $SNAP"
+if [[ "$DRY_RUN" == "true" ]]; then
+    echo ""
+    echo "[DRY RUN] Files that would be restored:"
+    restic restore "$SNAP" --target / --dry-run 2>/dev/null | head -50
+    echo ""
+    echo "[DRY RUN] No changes made. Remove --dry-run to restore for real."
+    exit 0
+fi
+
 read -r -p "Restore? This OVERWRITES current data. (y/N): " CONFIRM
-if [[ "\$CONFIRM" != "y" && "\$CONFIRM" != "Y" ]]; then
+if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then
     echo "Aborted."
     exit 0
 fi
 
 echo "Stopping all Docker containers..."
-docker stop \$(docker ps -aq) 2>/dev/null || true
+docker stop $(docker ps -aq) 2>/dev/null || true
 
 echo "Restoring files..."
-restic restore "\$SNAP" --target /
+restic restore "$SNAP" --target /
 
 echo "Restarting all services..."
 for dir in ${DOCKER_ROOT}/*/; do
-    if [[ -f "\$dir/docker-compose.yml" ]]; then
-        echo "  Starting \$(basename "\$dir")..."
-        (cd "\$dir" && docker compose up -d 2>/dev/null) || true
+    if [[ -f "$dir/docker-compose.yml" ]]; then
+        echo "  Starting $(basename "$dir")..."
+        (cd "$dir" && docker compose up -d 2>/dev/null) || true
     fi
 done
 

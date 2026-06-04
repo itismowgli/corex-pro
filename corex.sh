@@ -22,7 +22,7 @@
 set -uo pipefail
 
 # ── Version ──
-COREX_VERSION="2.4.0"
+COREX_VERSION="2.5.0"
 
 # ── Colors ──
 RED='\033[0;31m'
@@ -31,6 +31,12 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
+
+# ── Logging ──
+log_info()    { echo -e "${CYAN}[INFO]${NC} $1"; }
+log_success() { echo -e "${GREEN}[  OK]${NC} $1"; }
+log_warning() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+log_error()   { echo -e "${RED}[FAIL]${NC} $1" >&2; exit 1; }
 
 # ── Root check ──
 if [[ $EUID -ne 0 ]]; then
@@ -63,7 +69,7 @@ download_repo() {
     REPO_DIR="/opt/corex-pro"
     if [[ -d "$REPO_DIR/.git" ]]; then
         echo -e "${CYAN}Updating existing repo...${NC}"
-        cd "$REPO_DIR" && git fetch origin && git reset --hard origin/main
+        cd "$REPO_DIR" && git fetch origin && git pull --ff-only origin main
     else
         rm -rf "$REPO_DIR"
         git clone https://github.com/itismowgli/corex-pro.git "$REPO_DIR"
@@ -182,6 +188,8 @@ show_help() {
     echo "  manage remove <service>    Remove a service (prompts about data)"
     echo "  manage update --all        Update all service images"
     echo "  manage update <service>    Update a specific service"
+    echo "  manage storage             Show disk usage breakdown (OS, SSD, per-service)"
+    echo "  manage cleanup [--dry-run] Remove stale Docker images and build cache"
     echo "  manage lan-setup           Configure LAN fast-path (faster file transfers)"
     echo "  manage network-tune        Diagnose and optimize network for Gbps transfers"
     echo ""
@@ -225,18 +233,62 @@ do_update() {
 
     LOCAL_VERSION="$COREX_VERSION"
 
-    if git fetch origin 2>/dev/null && git reset --hard origin/main 2>/dev/null; then
-        # Re-read version from updated file
-        NEW_VERSION=$(grep -oP 'COREX_VERSION="\K[^"]+' "${REPO_DIR}/corex.sh" 2>/dev/null || echo "$LOCAL_VERSION")
-        if [[ "$NEW_VERSION" != "$LOCAL_VERSION" ]]; then
-            echo -e "${GREEN}Updated: v${LOCAL_VERSION} → v${NEW_VERSION}${NC}"
-            echo ""
-            echo "View changes: cat ${REPO_DIR}/CHANGELOG.md"
+    # Check for uncommitted local changes before touching anything
+    if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
+        log_warning "Local changes detected in ${REPO_DIR}."
+        log_warning "Update would overwrite them. Use --force to proceed anyway."
+        local force_flag="${1:-}"
+        if [[ "$force_flag" != "--force" ]]; then
+            echo "Aborted. Run: corex update --force"
+            return 1
+        fi
+    fi
+
+    # Fetch remote without applying changes
+    if ! git fetch origin 2>/dev/null; then
+        log_warning "Could not reach GitHub. Check your internet connection."
+        return 1
+    fi
+
+    REMOTE_VERSION=$(git show origin/main:corex.sh 2>/dev/null \
+        | grep -oP 'COREX_VERSION="\K[^"]+' | head -1 || echo "$LOCAL_VERSION")
+
+    if [[ "$REMOTE_VERSION" == "$LOCAL_VERSION" ]]; then
+        echo -e "${GREEN}Already up to date (v${COREX_VERSION}).${NC}"
+        return 0
+    fi
+
+    echo ""
+    echo -e "  Pending update: ${YELLOW}v${LOCAL_VERSION}${NC} → ${GREEN}v${REMOTE_VERSION}${NC}"
+    echo ""
+
+    # Show abbreviated changelog if available
+    local changelog
+    changelog=$(git show origin/main:CHANGELOG.md 2>/dev/null \
+        | grep -A5 "## \[${REMOTE_VERSION}\]" | head -8 || true)
+    if [[ -n "$changelog" ]]; then
+        echo -e "${BOLD}Changelog:${NC}"
+        echo "$changelog"
+        echo ""
+    fi
+
+    local confirm
+    read -r -p "Update CoreX Pro v${LOCAL_VERSION} → v${REMOTE_VERSION}? [y/N]: " confirm
+    [[ "$confirm" != "y" && "$confirm" != "Y" ]] && { echo "Aborted."; return 0; }
+
+    # Apply update (fast-forward only — won't destroy diverged history)
+    if git pull --ff-only origin main 2>/dev/null; then
+        # Validate the downloaded scripts before celebrating
+        if bash -n "${REPO_DIR}/install-corex-master.sh" 2>/dev/null \
+            && bash -n "${REPO_DIR}/corex.sh" 2>/dev/null; then
+            echo -e "${GREEN}Updated to v${REMOTE_VERSION}. Scripts validated OK.${NC}"
+            echo "Run 'corex doctor' to verify all services are healthy."
         else
-            echo -e "${GREEN}Already up to date (v${COREX_VERSION}).${NC}"
+            log_warning "Script syntax validation failed after update. Check manually."
         fi
     else
-        log_warning "Could not update. Check your internet connection or git status."
+        log_warning "git pull --ff-only failed. Your branch may have diverged."
+        log_warning "To force update: cd ${REPO_DIR} && git reset --hard origin/main"
     fi
 }
 

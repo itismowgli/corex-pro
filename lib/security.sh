@@ -86,11 +86,28 @@ F2BEOF
     systemctl enable --now fail2ban 2>/dev/null || true
     log_success "Fail2ban active (3 fails → 24hr ban, repeat offenders → 30-day ban)"
 
-    # ── Auto Security Updates ─────────────────────────────────────────────────
-    cat > /etc/apt/apt.conf.d/20auto-upgrades << AUEOF
+    # ── Unattended Security Updates (security-only, no auto-reboot) ──────────
+    log_info "Configuring unattended security updates..."
+    cat > /etc/apt/apt.conf.d/20auto-upgrades << 'AUEOF'
 APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::AutocleanInterval "7";
 AUEOF
+
+    cat > /etc/apt/apt.conf.d/50unattended-upgrades << 'UUEOF'
+// CoreX Pro — Unattended Upgrades (security patches only, no automatic reboots)
+Unattended-Upgrade::Allowed-Origins {
+    "${distro_id}:${distro_codename}-security";
+    "${distro_id}ESMApps:${distro_codename}-apps-security";
+    "${distro_id}ESM:${distro_codename}-infra-security";
+};
+// Do NOT automatically reboot — server stays up, admin reboots deliberately
+Unattended-Upgrade::Automatic-Reboot "false";
+Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+Unattended-Upgrade::Remove-Unused-Dependencies "true";
+Unattended-Upgrade::Mail "";
+UUEOF
+    log_success "Unattended security upgrades configured (security-only, no auto-reboot)"
 
     # ── Kernel Hardening + Network Performance ─────────────────────────────────
     log_info "Applying kernel security and network performance parameters..."
@@ -179,7 +196,7 @@ SYEOF
     ufw allow 80/tcp            comment 'HTTP (Traefik redirects to HTTPS)'
     ufw allow 443/tcp           comment 'HTTPS (Traefik TLS termination)'
     ufw allow 53                comment 'DNS (AdGuard Home, TCP+UDP)'
-    ufw allow 8080/tcp          comment 'Traefik Dashboard'
+    # Traefik dashboard (8080) is bound to 127.0.0.1 — no external rule needed
     ufw allow 3000/tcp          comment 'AdGuard Home Setup UI'
     ufw allow 9443/tcp          comment 'Portainer (HTTPS UI)'
     ufw allow 5678/tcp          comment 'n8n Workflow Automation'

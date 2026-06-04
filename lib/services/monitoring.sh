@@ -44,6 +44,9 @@ monitoring_deploy() {
 global:
   scrape_interval: 30s
 
+rule_files:
+  - /etc/prometheus/alerts.yml
+
 scrape_configs:
   - job_name: node
     static_configs:
@@ -52,6 +55,27 @@ scrape_configs:
     static_configs:
       - targets: ["cadvisor:8080"]
 PEOF
+
+    # Prometheus disk space alerts
+    cat > "${dir}/alerts.yml" << 'ALEOF'
+groups:
+  - name: disk_alerts
+    rules:
+      - alert: SSDNearlyFull
+        expr: >
+          (node_filesystem_avail_bytes{mountpoint="/mnt/corex-data"} /
+           node_filesystem_size_bytes{mountpoint="/mnt/corex-data"}) < 0.15
+        for: 5m
+        annotations:
+          summary: "SSD < 15% free — run: corex manage cleanup"
+      - alert: OSDiskNearlyFull
+        expr: >
+          (node_filesystem_avail_bytes{mountpoint="/"} /
+           node_filesystem_size_bytes{mountpoint="/"}) < 0.10
+        for: 5m
+        annotations:
+          summary: "OS disk < 10% free — check /var/lib/docker and container logs"
+ALEOF
 
     cat > "${dir}/docker-compose.yml" << DCEOF
 services:
@@ -64,6 +88,13 @@ services:
       - ${DATA_ROOT}/uptime-kuma:/app/data
     networks: [proxy-net, monitoring-net]
     security_opt: ["no-new-privileges:true"]
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.5"
+        reservations:
+          memory: 64m
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.uptime.rule=Host(\`status.${DOMAIN}\`)"
@@ -78,9 +109,20 @@ services:
     ports: ["9090:9090"]
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alerts.yml:/etc/prometheus/alerts.yml:ro
       - ${DATA_ROOT}/prometheus:/prometheus
-    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=30d"]
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-lifecycle"
     networks: [monitoring-net]
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "0.5"
+        reservations:
+          memory: 128m
 
   grafana:
     image: grafana/grafana:latest
@@ -93,6 +135,13 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASS}"
       GF_SERVER_ROOT_URL: "https://grafana.${DOMAIN}"
     networks: [proxy-net, monitoring-net]
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "0.5"
+        reservations:
+          memory: 128m
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.grafana.rule=Host(\`grafana.${DOMAIN}\`)"
@@ -111,6 +160,13 @@ services:
       - /:/rootfs:ro
     command: ["--path.procfs=/host/proc", "--path.sysfs=/host/sys", "--path.rootfs=/rootfs"]
     networks: [monitoring-net]
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+          cpus: "0.25"
+        reservations:
+          memory: 32m
 
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:latest
@@ -122,6 +178,13 @@ services:
       - /sys:/sys:ro
       - /var/lib/docker:/var/lib/docker:ro
     networks: [monitoring-net]
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.25"
+        reservations:
+          memory: 64m
 
 networks:
   proxy-net: { external: true }

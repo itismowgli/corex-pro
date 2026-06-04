@@ -39,6 +39,14 @@ stalwart_deploy() {
     stalwart_dirs
     local dir="${DOCKER_ROOT}/stalwart"
 
+    # Generate admin password before starting the container.
+    # Avoids log-scraping for credentials (docker logs readable by docker group).
+    # STALWART_ADMIN_PASS is set externally by the installer; fallback generates here.
+    if [[ -z "${STALWART_ADMIN_PASS:-}" ]]; then
+        STALWART_ADMIN_PASS=$(openssl rand -base64 32 | tr -d '/+=' | head -c 32)
+    fi
+    export STALWART_ADMIN_PASS
+
     cat > "${dir}/docker-compose.yml" << DCEOF
 services:
   stalwart:
@@ -56,7 +64,20 @@ services:
       - "4190:4190"
     volumes:
       - ${DATA_ROOT}/stalwart-data:/opt/stalwart-mail
+    environment:
+      # Bootstrap admin credentials on first run.
+      # Stalwart v0.7+ reads these env vars to set the initial admin password.
+      # If your version doesn't support this, retrieve via: docker logs stalwart | grep password
+      STALWART_ADMIN_USER: "admin"
+      STALWART_ADMIN_SECRET: "${STALWART_ADMIN_PASS}"
     networks: [proxy-net]
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "1.0"
+        reservations:
+          memory: 128m
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.mail.rule=Host(\`mail.${DOMAIN}\`)"
@@ -70,31 +91,10 @@ DCEOF
     docker compose -f "${dir}/docker-compose.yml" up -d \
         || log_warning "Stalwart may not have started — check: docker ps"
 
-    # Stalwart generates its own admin password on first run
-    log_info "Waiting for Stalwart to generate admin credentials..."
-    local STALWART_ADMIN_PASS=""
-    local i
-    for i in {1..10}; do
-        STALWART_ADMIN_PASS=$(docker logs stalwart 2>&1 | grep -oP "password '\K[^']+")
-        if [[ -n "$STALWART_ADMIN_PASS" ]]; then
-            break
-        fi
-        sleep 2
-    done
-
-    if [[ -n "$STALWART_ADMIN_PASS" ]]; then
-        log_success "Stalwart Mail deployed — admin: 'admin' / '${STALWART_ADMIN_PASS}'"
-    else
-        log_warning "Stalwart deployed but could not capture admin password."
-        log_warning "Run: docker logs stalwart | grep password"
-        STALWART_ADMIN_PASS="(check: docker logs stalwart | grep password)"
-    fi
-
-    # Export so summary can use it
-    export STALWART_ADMIN_PASS
-
     state_service_installed "stalwart"
     log_success "Stalwart Mail deployed (SMTP:25/587, IMAP:993, mail.${DOMAIN})"
+    log_info "Admin credentials saved to credentials file. If login fails, check:"
+    log_info "  docker logs stalwart | grep -i password"
 }
 
 stalwart_destroy() {
@@ -119,5 +119,5 @@ stalwart_repair() {
 stalwart_credentials() {
     echo "Stalwart Mail: https://mail.${DOMAIN}"
     echo "  Admin user: admin"
-    echo "  Admin pass: run 'docker logs stalwart | grep password'"
+    echo "  Admin pass: ${STALWART_ADMIN_PASS:-run: docker logs stalwart | grep password}"
 }

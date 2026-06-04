@@ -42,7 +42,7 @@ services:
     container_name: crowdsec
     restart: unless-stopped
     environment:
-      COLLECTIONS: "crowdsecurity/linux crowdsecurity/traefik crowdsecurity/http-cve crowdsecurity/sshd"
+      COLLECTIONS: "crowdsecurity/linux crowdsecurity/traefik crowdsecurity/http-cve crowdsecurity/sshd crowdsecurity/nextcloud"
       TZ: "${TIMEZONE}"
     volumes:
       - ${DATA_ROOT}/crowdsec-db:/var/lib/crowdsec/data
@@ -50,6 +50,13 @@ services:
       - /var/log:/var/log:ro
     networks: [proxy-net]
     security_opt: ["no-new-privileges:true"]
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.5"
+        reservations:
+          memory: 64m
 networks:
   proxy-net: { external: true }
 DCEOF

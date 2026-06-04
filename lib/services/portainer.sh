@@ -47,6 +47,13 @@ services:
       - ${DATA_ROOT}/portainer:/data
     networks: [proxy-net]
     security_opt: ["no-new-privileges:true"]
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.5"
+        reservations:
+          memory: 64m
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.portainer.rule=Host(\`portainer.${DOMAIN}\`)"

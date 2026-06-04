@@ -10,7 +10,7 @@
 
 # Allow tests to override the state file path via env var
 COREX_STATE_FILE="${COREX_STATE_FILE:-/etc/corex/state.json}"
-_COREX_VERSION="2.0.0"
+_COREX_VERSION="2.4.2"
 
 # ── state_init ────────────────────────────────────────────────────────────────
 # Create a fresh state.json with default structure.
@@ -60,6 +60,7 @@ state_set() {
     local value="$2"
     local tmp
     tmp="$(mktemp)"
+    trap 'rm -f "$tmp"' RETURN
     jq --arg k "$key" --arg v "$value" '.[$k] = $v' "$COREX_STATE_FILE" > "$tmp" \
         && mv "$tmp" "$COREX_STATE_FILE"
 }
@@ -73,6 +74,7 @@ state_service_installed() {
     local svc="$1"
     local tmp
     tmp="$(mktemp)"
+    trap 'rm -f "$tmp"' RETURN
     jq --arg svc "$svc" \
         --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         '.services[$svc] = { installed: true, enabled: true, installed_at: $ts }' \
@@ -87,6 +89,7 @@ state_service_removed() {
     local svc="$1"
     local tmp
     tmp="$(mktemp)"
+    trap 'rm -f "$tmp"' RETURN
     jq --arg svc "$svc" \
         '.services[$svc] = { installed: false, enabled: false }' \
         "$COREX_STATE_FILE" > "$tmp" && mv "$tmp" "$COREX_STATE_FILE"
@@ -118,6 +121,7 @@ state_service_enable() {
     local svc="$1"
     local tmp
     tmp="$(mktemp)"
+    trap 'rm -f "$tmp"' RETURN
     jq --arg svc "$svc" '.services[$svc].enabled = true' "$COREX_STATE_FILE" > "$tmp" \
         && mv "$tmp" "$COREX_STATE_FILE"
 }
@@ -126,6 +130,7 @@ state_service_disable() {
     local svc="$1"
     local tmp
     tmp="$(mktemp)"
+    trap 'rm -f "$tmp"' RETURN
     jq --arg svc "$svc" '.services[$svc].enabled = false' "$COREX_STATE_FILE" > "$tmp" \
         && mv "$tmp" "$COREX_STATE_FILE"
 }

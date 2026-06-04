@@ -6,6 +6,47 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v2.5.0] - 2026-06-04
+
+### Security Fixes (Critical)
+- **Bash injection via eval in wizard.sh** — replaced with safe `printf+IFS read` pattern (no eval)
+- **Traefik dashboard on all interfaces** — bound to `127.0.0.1:8080` only; UFW rule for 8080 removed
+- **Vaultwarden open signup** — `SIGNUPS_ALLOWED` now defaults to `false`
+- **Stalwart password from Docker logs** — pre-generated, passed via `STALWART_ADMIN_SECRET` env var
+- **Restic password in world-readable backup script** — single-quoted heredoc; runtime read from credentials file
+- **Temp file leaks in state.sh** — `trap 'rm -f "$tmp"' RETURN` added to all 5 `mktemp` functions
+
+### Security Fixes (High)
+- **awk credential parsing** — replaced with `sed 's/^[^:]*: //'` (handles passwords with spaces)
+- **Dangerous glob in rm -rf** — `"${DATA_ROOT}/${svc}"*` → exact path, no glob
+- **Silent `git reset --hard` on update** — confirmation flow, `git pull --ff-only`, `bash -n` post-validation
+- **`log_warning` undefined in corex.sh** — added standard logging functions block
+
+### Added
+- Docker log rotation: `json-file` driver, `max-size: 10m`, `max-file: 3` (30MB cap per container)
+- Docker on SSD opt-in via wizard (`DOCKER_ON_SSD` state, `data-root` in daemon.json)
+- Per-service resource limits: `deploy.resources.limits` on all 14 service containers
+- `corex manage storage` — OS disk, SSD, per-service data breakdown, Docker usage
+- `corex manage cleanup [--dry-run]` — safe image/cache cleanup (no `docker system prune`)
+- Prometheus disk alerts: SSD < 15% free, OS disk < 10% free (`alerts.yml`)
+- Backup integrity verification: `restic check --read-data-subset=5%` after each backup
+- Restore `--list` (snapshots only) and `--dry-run` (preview) flags
+- Immich DB health check: `pg_isready -U postgres` with 30s start period
+- Separate `BROWSERLESS_TOKEN` credential (was shared with `WEBUI_SECRET_KEY`)
+- CrowdSec `crowdsecurity/nextcloud` collection added
+- `lib/services/dashboard.sh` — plugin stub for upcoming Go+HTMX web UI (v3.0.0)
+- Conditional directory creation — only creates dirs for selected services
+
+### Changed
+- `state.sh` `_COREX_VERSION`: `2.0.0` → `2.4.2` (version sync fix)
+- `corex.sh` version: `2.4.0` → `2.5.0`
+- `generate_pass()` entropy: 32 input bytes → 32 output chars (was 24 bytes, fewer chars after stripping)
+- Nuke log path: `/tmp/` → `/var/log/` (survives reboot, audit trail)
+- `cmd_update` digest check: skips pull+restart when remote digest matches local
+- Unattended upgrades: proper `/etc/apt/apt.conf.d/50unattended-upgrades` (security-only, no auto-reboot)
+
+---
+
 ## [v2.4.2] - 2026-03-09
 
 ### Added

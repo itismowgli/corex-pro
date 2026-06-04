@@ -58,7 +58,7 @@ DATA_ROOT="${MOUNT_POOL}/service-data"
 BACKUP_ROOT="${MOUNT_POOL}/backups"
 CRED_FILE="/root/corex-credentials.txt"
 DOCS_FILE="/root/CoreX_Dashboard_Credentials.md"
-NUKE_LOG="/tmp/corex-nuke-$(date +%Y%m%d-%H%M%S).log"
+NUKE_LOG="/var/log/corex-nuke-$(date +%Y%m%d-%H%M%S).log"
 
 # ── Flags ──
 DRY_RUN=false
