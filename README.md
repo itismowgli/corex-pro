@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/CoreX_Pro-v2.4.2-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
+  <img src="https://img.shields.io/badge/CoreX_Pro-v3.0.0-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
   <img src="https://img.shields.io/badge/Ubuntu-24.04_LTS-E95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Ubuntu">
   <img src="https://img.shields.io/badge/Docker-Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker">
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
@@ -85,6 +85,7 @@ sudo bash corex.sh manage status        # Live status dashboard
 sudo bash corex.sh manage add <svc>     # Add a service you skipped during install
 sudo bash corex.sh manage lan-setup     # Configure LAN fast-path (full-speed local transfers)
 sudo bash corex.sh manage network-tune  # Optimize kernel for Gbps file transfers
+sudo bash corex.sh manage network-check # Test HTTPS reachability, SSL expiry, and DNS
 sudo bash corex.sh update               # Pull latest CoreX Pro version
 sudo bash corex.sh migrate              # Change domain across all services
 sudo bash corex.sh nuke                 # Uninstall / rollback
@@ -111,6 +112,7 @@ After install, credentials are at `/root/corex-credentials.txt` and a full guide
 | Datadog / New Relic    | **Grafana + Prometheus** | Full observability, no per-host pricing                        |
 | Cloudflare Access      | **Cloudflare Tunnel**    | Zero port-forwarding, encrypted tunnel                         |
 | Pi-hole                | **AdGuard Home**         | DNS-level ad blocking + DNS rewrites for local routing         |
+| Portainer (advanced)   | **CoreX Dashboard**      | Service-level GUI — start/stop/update/repair from a browser    |
 
 ---
 
@@ -126,7 +128,7 @@ After install, credentials are at `/root/corex-credentials.txt` and a full guide
 │  AdGuard Home (DNS + ad blocking + local DNS rewrites)       │
 │  Traefik v3 (HTTPS termination, Let's Encrypt, auto-certs)  │
 ├─ SERVICES ──────────────────────────────────────────────────┤
-│  14 optional Docker containers on isolated networks          │
+│  15 optional Docker containers on isolated networks          │
 │  You choose which ones to install — nothing forced           │
 ├─ BACKUP ────────────────────────────────────────────────────┤
 │  Restic (encrypted, deduplicated, daily at 3AM)              │
@@ -310,6 +312,14 @@ Automatically adds the wildcard DNS rewrite `*.yourdomain.com → SERVER_IP` via
 
 ---
 
+### 🖥 CoreX Dashboard - Web GUI
+
+**What:** Go + HTMX web interface for managing all CoreX services. Start, stop, update, and repair services from a browser — no SSH required. ~15MB Docker image, single binary.
+
+**Access:** `https://dashboard.yourdomain.com`
+
+---
+
 ### 🛡 CrowdSec - Community IPS
 
 **What:** Community-powered intrusion prevention. Detects brute force, CVE exploits, and bot abuse. Shares threat intel globally — you block attackers before they target you.
@@ -383,7 +393,7 @@ cat /root/CoreX_Dashboard_Credentials.md  # Full guide with every URL and setup 
 
 ## 🔧 Managing Services
 
-v2.0.0 introduced full post-install service management. v2.1.0 added LAN fast-path automation. v2.2.0 added network performance tuning for multi-gigabit file transfers and hardened security. v2.4.0 added self-signed CA + wildcard certs for LAN HTTPS. v2.4.2 added HEVC video streaming via Memories. No need to re-run the installer to add, fix, or configure services.
+v2.0.0 introduced full post-install service management. v2.1.0 added LAN fast-path automation. v2.2.0 added network performance tuning and hardened security. v2.5.0 added storage management, hard resource limits, and security fixes. v3.0.0 introduced the web dashboard, CrowdSec firewall bouncer, and the `network-check` diagnostic command. No need to re-run the installer to add, fix, or configure services.
 
 ### Health Check & Auto-Repair
 
@@ -442,6 +452,50 @@ This command:
 - Includes a verification command to confirm the fast-path is active
 
 **External access** through Cloudflare Tunnel continues to work unchanged for devices off the LAN.
+
+### 🖥 Web Dashboard (v3.0.0)
+
+CoreX Pro now ships a lightweight web dashboard (Go + HTMX, ~15MB Docker image) at `https://dashboard.yourdomain.com`. It provides a service-level GUI for all daily operations without requiring SSH access:
+
+- **Services tab** — Health badges, CPU/RAM usage, start/stop/restart/update/repair buttons, install new services
+- **Storage tab** — OS disk vs SSD breakdown, per-service usage, cleanup trigger, Restic snapshot list
+- **Monitoring tab** — Embedded Prometheus metrics, per-container resource table
+- **Network tab** — All service URLs with status, LAN setup instructions, SSL certificate expiry countdown
+- **System tab** — Host info, CoreX version, SSH key management, reboot/shutdown
+
+The dashboard shells out to `corex-manage.sh` — all operations go through the same CLI surface. Portainer remains deployed and linked for advanced container management.
+
+```bash
+# Dashboard is auto-installed — access it after setup
+open https://dashboard.yourdomain.com
+```
+
+### 🔍 Network Check
+
+Test connectivity, SSL certificate health, and DNS routing for every installed service:
+
+```bash
+sudo bash corex.sh manage network-check
+```
+
+Output example:
+```
+CoreX Pro — Network Check
+──────────────────────────────────────────────────────
+  Domain:    example.com
+  Server IP: 192.168.1.100
+
+  SERVICE              URL                                    HTTP     CERT     DNS
+  ──────────────────────────────────────────────────────────────────────────────────
+  nextcloud            https://nextcloud.example.com          200      87d      LAN ✓
+  immich               https://photos.example.com             200      87d      LAN ✓
+  vaultwarden          https://vault.example.com              200      87d      LAN ✓
+  n8n                  https://n8n.example.com                200      87d      WAN (104.21.x.x)
+  ──────────────────────────────────────────────────────────────────────────────────
+  Results: 4 OK  0 WARN  0 DOWN
+```
+
+DNS column shows `LAN ✓` when AdGuard is routing your domain to the local IP (fast-path active), or `WAN (IP)` when traffic is going through Cloudflare.
 
 ### 🚀 Network Performance Tuning (Gbps File Transfers)
 
@@ -771,7 +825,13 @@ corex-pro/
 │       ├── crowdsec.sh
 │       ├── cloudflared.sh
 │       ├── monitoring.sh       # Uptime Kuma + Grafana + Prometheus bundle
-│       └── ai.sh               # Ollama + Open WebUI + Browserless bundle
+│       ├── ai.sh               # Ollama + Open WebUI + Browserless bundle
+│       └── dashboard.sh        # CoreX web dashboard (Go + HTMX)
+├── dashboard/
+│   ├── main.go                 # Go HTTP server + REST API + template rendering
+│   ├── templates/              # HTMX page templates
+│   ├── static/                 # Pre-compiled TailwindCSS
+│   └── Dockerfile              # Multi-stage build → ~15MB Alpine image
 └── test/
     ├── Dockerfile.test         # Ubuntu 24.04 + bats + shellcheck + jq
     ├── run-tests.sh

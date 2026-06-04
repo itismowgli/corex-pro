@@ -26,6 +26,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
   - API key auto-generated via `cscli bouncers add --force` (idempotent on re-run)
   - `crowdsec_repair()` restarts bouncer service; `crowdsec_destroy()` uninstalls package
 - **CrowdSec `crowdsecurity/nginx` collection** added alongside existing linux/traefik/http-cve/sshd/nextcloud
+- **`corex manage network-check`** — read-only diagnostic that tests HTTPS reachability (HTTP status code), SSL certificate expiry (days remaining), and DNS routing (LAN vs WAN) for every installed service. Also checks Traefik API health and Docker network membership for `proxy-net`, `monitoring-net`, and `ai-net`.
 
 ### Changed
 - **Nextcloud before-starting hook: sed → occ** — all `config.php` edits now use `occ config:system:set` and `occ config:app:set` instead of `sed -i "s|);|...|"` (fragile, injection-prone). Introduced `_occ()` helper with 6-attempt retry loop. `config:system:set` writes directly to `config.php` (no DB dependency); `config:app:set` retries cover DB startup delay.

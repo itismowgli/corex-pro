@@ -1103,6 +1103,158 @@ _network_speed_tips() {
     echo ""
 }
 
+# ── network-check ─────────────────────────────────────────────────────────────
+# Tests HTTPS reachability, SSL cert validity, and DNS resolution for every
+# installed service. Read-only diagnostic — safe to run at any time.
+
+cmd_network_check() {
+    local domain server_ip
+    domain=$(state_get "domain" 2>/dev/null || echo "")
+    server_ip=$(state_get "server_ip" 2>/dev/null || echo "")
+
+    echo ""
+    echo -e "${CYAN}${BOLD}CoreX Pro — Network Check${NC}"
+    echo "──────────────────────────────────────────────────────"
+
+    if [[ -z "$domain" || "$domain" == "null" ]]; then
+        log_warning "No domain configured (local-only mode). Skipping URL checks."
+        echo ""
+        _check_docker_networks
+        return 0
+    fi
+
+    echo -e "  Domain:    ${BOLD}${domain}${NC}"
+    echo -e "  Server IP: ${BOLD}${server_ip:-unknown}${NC}"
+    echo ""
+
+    # Subdomain map matching lib/services/*.sh Traefik labels
+    declare -A SUBDOMAINS=(
+        ["traefik"]="traefik"
+        ["adguard"]="adguard"
+        ["portainer"]="portainer"
+        ["nextcloud"]="nextcloud"
+        ["immich"]="photos"
+        ["vaultwarden"]="vault"
+        ["n8n"]="n8n"
+        ["stalwart"]="mail"
+        ["ai"]="ai"
+        ["uptime-kuma"]="status"
+        ["monitoring"]="grafana"
+        ["dashboard"]="dashboard"
+        ["coolify"]="coolify"
+    )
+
+    # ── Service URL checks ─────────────────────────────────────────────────────
+    log_step "Checking service endpoints..."
+    echo ""
+    printf "  %-20s %-38s %-8s %-8s %s\n" "SERVICE" "URL" "HTTP" "CERT" "DNS"
+    echo "  ──────────────────────────────────────────────────────────────────────────────────"
+
+    local ok_count=0 warn_count=0 err_count=0
+
+    for svc_file in "${SCRIPT_DIR}/lib/services/"*.sh; do
+        [[ -f "$svc_file" ]] || continue
+        local svc_name
+        svc_name=$(bash -c "source '${svc_file}' 2>/dev/null; echo \"\${SERVICE_NAME:-}\"" 2>/dev/null)
+        [[ -z "$svc_name" ]] && continue
+        state_service_is_installed "$svc_name" 2>/dev/null || continue
+        [[ -z "${SUBDOMAINS[$svc_name]:-}" ]] && continue
+
+        local sub="${SUBDOMAINS[$svc_name]}"
+        local url="https://${sub}.${domain}"
+
+        # HTTP status code
+        local http_code
+        http_code=$(curl -sk --connect-timeout 5 --max-time 10 \
+            -o /dev/null -w "%{http_code}" "$url" 2>/dev/null || echo "ERR")
+
+        local http_label http_color
+        case "$http_code" in
+            2*|3*) http_label="$http_code"; http_color="$GREEN" ;;
+            000|ERR) http_label="DOWN"; http_color="$RED"; (( err_count++ )) ;;
+            *) http_label="$http_code"; http_color="$YELLOW"; (( warn_count++ )) ;;
+        esac
+        [[ "$http_code" =~ ^[23] ]] && (( ok_count++ )) || true
+
+        # SSL certificate expiry
+        local cert_label cert_color
+        local expiry_str
+        expiry_str=$(echo | openssl s_client -connect "${sub}.${domain}:443" \
+            -servername "${sub}.${domain}" 2>/dev/null \
+            | openssl x509 -noout -enddate 2>/dev/null \
+            | cut -d= -f2 || true)
+        if [[ -z "$expiry_str" ]]; then
+            cert_label="N/A"; cert_color="$YELLOW"
+        else
+            local expiry_epoch today_epoch days_left
+            expiry_epoch=$(date -d "$expiry_str" +%s 2>/dev/null \
+                || date -j -f "%b %d %T %Y %Z" "$expiry_str" +%s 2>/dev/null \
+                || echo 0)
+            today_epoch=$(date +%s)
+            days_left=$(( (expiry_epoch - today_epoch) / 86400 ))
+            if (( days_left < 0 )); then
+                cert_label="EXPIRED"; cert_color="$RED"
+            elif (( days_left < 14 )); then
+                cert_label="${days_left}d!"; cert_color="$YELLOW"
+            else
+                cert_label="${days_left}d"; cert_color="$GREEN"
+            fi
+        fi
+
+        # DNS resolution — LAN vs WAN
+        local resolved_ip dns_label dns_color
+        resolved_ip=$(getent hosts "${sub}.${domain}" 2>/dev/null | awk '{print $1; exit}' || true)
+        if [[ -z "$resolved_ip" ]]; then
+            dns_label="NXDOMAIN"; dns_color="$RED"
+        elif [[ -n "${server_ip:-}" && "$resolved_ip" == "$server_ip" ]]; then
+            dns_label="LAN ✓"; dns_color="$GREEN"
+        else
+            dns_label="WAN (${resolved_ip})"; dns_color="$YELLOW"
+        fi
+
+        printf "  %-20s %-38s " "$svc_name" "$url"
+        printf "${http_color}%-8s${NC} " "$http_label"
+        printf "${cert_color}%-8s${NC} " "$cert_label"
+        printf "${dns_color}%s${NC}\n" "$dns_label"
+    done
+
+    echo "  ──────────────────────────────────────────────────────────────────────────────────"
+    printf "  Results: ${GREEN}%d OK${NC}  ${YELLOW}%d WARN${NC}  ${RED}%d DOWN${NC}\n" \
+        "$ok_count" "$warn_count" "$err_count"
+    echo ""
+
+    # ── Traefik API ────────────────────────────────────────────────────────────
+    log_step "Checking Traefik API..."
+    local traefik_version
+    traefik_version=$(curl -sk --connect-timeout 3 http://127.0.0.1:8080/api/version 2>/dev/null \
+        | grep -o '"Version":"[^"]*"' | cut -d'"' -f4 || true)
+    if [[ -n "$traefik_version" ]]; then
+        log_success "Traefik API reachable — version ${traefik_version}"
+    else
+        log_warning "Traefik API not reachable on 127.0.0.1:8080"
+    fi
+    echo ""
+
+    _check_docker_networks
+    echo ""
+}
+
+# Internal: check all three CoreX Docker networks
+_check_docker_networks() {
+    log_step "Checking Docker networks..."
+    for net in proxy-net monitoring-net ai-net; do
+        if docker network inspect "$net" &>/dev/null; then
+            local containers
+            containers=$(docker network inspect "$net" \
+                --format '{{range $k,$v := .Containers}}{{$v.Name}} {{end}}' 2>/dev/null \
+                | tr ' ' '\n' | grep -c '[^[:space:]]' || echo 0)
+            log_success "${net}: ${containers} container(s) connected"
+        else
+            log_warning "${net}: network not found"
+        fi
+    done
+}
+
 # ── help ──────────────────────────────────────────────────────────────────────
 
 cmd_help() {
@@ -1128,6 +1280,7 @@ Commands:
   cleanup [--dry-run] Remove stale Docker images and build cache safely
   lan-setup           Configure LAN fast-path for direct local network access
   network-tune        Diagnose and optimize network for high-speed file transfers
+  network-check       Test HTTPS reachability, SSL expiry, and DNS for all services
 
 Examples:
   sudo bash corex-manage.sh status
@@ -1136,6 +1289,7 @@ Examples:
   sudo bash corex-manage.sh remove n8n
   sudo bash corex-manage.sh lan-setup
   sudo bash corex-manage.sh network-tune
+  sudo bash corex-manage.sh network-check
 
 HELPEOF
 }
@@ -1163,7 +1317,8 @@ main() {
         storage)      cmd_storage ;;
         cleanup)      cmd_cleanup "$@" ;;
         lan-setup)    cmd_lan_setup ;;
-        network-tune) cmd_network_tune ;;
+        network-tune)  cmd_network_tune ;;
+        network-check) cmd_network_check ;;
         help|--help|-h) cmd_help ;;
         *) echo "Unknown command: ${cmd}"; cmd_help; exit 1 ;;
     esac
