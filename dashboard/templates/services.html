@@ -1,0 +1,85 @@
+<!-- Services tab — grid of installed service cards -->
+<div>
+  <div class="flex items-center justify-between mb-5">
+    <h2 class="text-lg font-semibold text-gray-200">Installed Services</h2>
+    <span class="text-xs text-gray-500">{{len .Services}} services</span>
+  </div>
+
+  <!-- Action result area — HTMX swaps output from service actions here -->
+  <div id="action-result" class="mb-4"></div>
+
+  {{if .Services}}
+  <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+    {{range .Services}}
+    <div class="bg-gray-900 border border-gray-800 rounded-lg p-4 flex flex-col gap-3">
+
+      <!-- Service header: name + status badge -->
+      <div class="flex items-start justify-between gap-2">
+        <div class="min-w-0">
+          <p class="font-medium text-sm text-gray-100 truncate">{{.Label}}</p>
+          {{if .URL}}
+          <a href="{{.URL}}" target="_blank" rel="noopener noreferrer"
+             class="text-xs text-blue-400 hover:text-blue-300 hover:underline truncate block mt-0.5">
+            {{.URL}}
+          </a>
+          {{end}}
+        </div>
+        <span class="shrink-0 text-xs px-2 py-0.5 rounded-full font-medium
+          {{if eq .Status "HEALTHY"}}bg-green-950 text-green-400 ring-1 ring-green-800
+          {{else if eq .Status "UNHEALTHY"}}bg-red-950 text-red-400 ring-1 ring-red-800
+          {{else}}bg-gray-800 text-gray-400 ring-1 ring-gray-700{{end}}">
+          {{.Status}}
+        </span>
+      </div>
+
+      <!-- Action buttons -->
+      <div class="flex flex-wrap gap-1.5">
+        <button
+          hx-post="/api/service/{{.Name}}/start"
+          hx-target="#action-result"
+          hx-swap="innerHTML"
+          hx-indicator="#spinner-{{.Name}}"
+          class="px-2.5 py-1 text-xs rounded bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors">
+          Start
+        </button>
+        <button
+          hx-post="/api/service/{{.Name}}/stop"
+          hx-target="#action-result"
+          hx-swap="innerHTML"
+          hx-indicator="#spinner-{{.Name}}"
+          hx-confirm="Stop {{.Label}}?"
+          class="px-2.5 py-1 text-xs rounded bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors">
+          Stop
+        </button>
+        <button
+          hx-post="/api/service/{{.Name}}/update"
+          hx-target="#action-result"
+          hx-swap="innerHTML"
+          hx-indicator="#spinner-{{.Name}}"
+          hx-confirm="Pull latest image and restart {{.Label}}?"
+          class="px-2.5 py-1 text-xs rounded bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors">
+          Update
+        </button>
+        {{if .Container}}
+        <button
+          onclick="openLogs('{{.Container}}', '{{.Label}}')"
+          class="px-2.5 py-1 text-xs rounded bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors">
+          Logs
+        </button>
+        {{end}}
+        <!-- Per-card spinner -->
+        <span id="spinner-{{.Name}}"
+              class="htmx-indicator self-center text-xs text-gray-500 italic">running…</span>
+      </div>
+
+    </div>
+    {{end}}
+  </div>
+
+  {{else}}
+  <div class="text-center py-16 text-gray-600">
+    <p class="text-lg mb-2">No services installed</p>
+    <p class="text-sm">Run <code class="text-gray-400">corex manage add &lt;service&gt;</code> to install services</p>
+  </div>
+  {{end}}
+</div>

@@ -132,44 +132,46 @@ APEOF
     mkdir -p "${dir}/hooks/before-starting"
     cat > "${dir}/hooks/before-starting/corex-memcache.sh" << 'HOOKEOF'
 #!/bin/bash
-# CoreX Pro — inject cache config + chunk size into Nextcloud config.php
+# CoreX Pro — configure Nextcloud via occ (idempotent, injection-safe)
+#
+# All config changes use occ instead of sed to avoid fragile PHP array
+# manipulation. config:system:set writes to config.php (no DB needed);
+# config:app:set writes to the database (retry loop handles DB readiness).
+#
+# Uses gosu (ships with the Nextcloud image) to drop to www-data (uid 33)
+# — compatible with no-new-privileges security policy; avoids root-owned
+# session/cache artifacts that break subsequent occ calls.
 CONFIG="/var/www/html/config/config.php"
 [ -f "$CONFIG" ] || exit 0
 
+# _occ: run an occ command as www-data with up to 6 retries (30s total).
+# config:system:set calls usually succeed on the first attempt.
+# config:app:set calls may need retries while the database is initialising.
+_occ() {
+    local _i
+    for _i in $(seq 1 6); do
+        if gosu www-data php /var/www/html/occ "$@" 2>&1; then
+            return 0
+        fi
+        sleep 5
+    done
+    echo "[corex] WARNING: occ $* failed after retries" >&2
+    return 1
+}
+
 # APCu as local (single-server) memory cache — speeds up metadata lookups
-if ! grep -q "memcache.local" "$CONFIG"; then
-    sed -i "s|);|  'memcache.local' => '\\\\OC\\\\Memcache\\\\APCu',\n);|" "$CONFIG"
-fi
+_occ config:system:set memcache.local --value '\OC\Memcache\APCu' || true
 
-# Ensure Redis is used for file locking (prevents corruption on parallel access)
-if ! grep -q "memcache.locking" "$CONFIG"; then
-    sed -i "s|);|  'memcache.locking' => '\\\\OC\\\\Memcache\\\\Redis',\n);|" "$CONFIG"
-fi
+# Redis for distributed file locking — prevents corruption on parallel access
+_occ config:system:set memcache.locking --value '\OC\Memcache\Redis' || true
 
-# Set default phone region to suppress admin warning
-if ! grep -q "default_phone_region" "$CONFIG"; then
-    sed -i "s|);|  'default_phone_region' => 'US',\n);|" "$CONFIG"
-fi
+# Suppress admin panel "default_phone_region not set" warning
+_occ config:system:set default_phone_region --value 'US' || true
 
-# Set max_chunk_size to 10MB (10485760 bytes) for Cloudflare compatibility.
-# Default is 100MB (104857600) which exceeds Cloudflare free plan's 100MB
-# body limit, causing HTTP 413 errors on large file uploads via the tunnel.
-# 10MB chunks work on all Cloudflare plans and have minimal overhead on LAN.
-#
-# Must run as www-data (uid 33) — running as root creates cache files with
-# wrong ownership, causing subsequent occ commands to fail.
-# Wait up to 30s for the database (health check should ensure readiness,
-# but retry defensively in case of transient connection issues).
-for i in $(seq 1 6); do
-    # Use gosu (ships with Nextcloud Docker image) instead of su.
-    # gosu drops privileges via setuid(2) syscall, not SUID binary —
-    # compatible with no-new-privileges security policy and doesn't
-    # create root-owned session/cache artifacts.
-    if gosu www-data php /var/www/html/occ config:app:set files max_chunk_size --value 10485760 2>&1; then
-        break
-    fi
-    sleep 5
-done
+# Set max_chunk_size to 10MB for Cloudflare compatibility.
+# Default 100MB exceeds Cloudflare free plan's body limit → HTTP 413.
+# config:app:set writes to DB — retry loop covers DB startup delay.
+_occ config:app:set files max_chunk_size --value 10485760 || true
 
 # ── Patch .htaccess for LimitRequestBody (Umbrel pattern) ────────
 # Nextcloud regenerates .htaccess on startup and updates. The

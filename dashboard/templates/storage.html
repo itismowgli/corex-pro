@@ -1,0 +1,46 @@
+<!-- Storage tab — disk usage report + cleanup controls -->
+<div>
+  <div class="flex items-center justify-between mb-5">
+    <h2 class="text-lg font-semibold text-gray-200">Storage</h2>
+    <div class="flex gap-2">
+      <button
+        hx-post="/api/cleanup?dry_run=1"
+        hx-target="#cleanup-result"
+        hx-swap="innerHTML"
+        hx-indicator="#cleanup-spinner"
+        class="px-3 py-1.5 text-xs rounded bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors">
+        Preview Cleanup
+      </button>
+      <button
+        hx-post="/api/cleanup"
+        hx-target="#cleanup-result"
+        hx-swap="innerHTML"
+        hx-indicator="#cleanup-spinner"
+        hx-confirm="Remove stale images and build cache? (safe — no service data deleted)"
+        class="px-3 py-1.5 text-xs rounded bg-orange-950 hover:bg-orange-900 text-orange-300 hover:text-orange-200 ring-1 ring-orange-800 transition-colors">
+        Run Cleanup
+      </button>
+      <span id="cleanup-spinner" class="htmx-indicator self-center text-xs text-gray-500 italic">running…</span>
+    </div>
+  </div>
+
+  <!-- Storage report (raw output from corex manage storage) -->
+  {{if .Output}}
+  <div class="bg-gray-900 border border-gray-800 rounded-lg p-5 mb-4">
+    <pre class="text-sm font-mono text-gray-200 whitespace-pre overflow-auto leading-relaxed">{{.Output}}</pre>
+  </div>
+  {{else}}
+  <div class="bg-gray-900 border border-gray-800 rounded-lg p-5 mb-4 text-gray-500 text-sm">
+    Could not load storage report. Ensure <code>corex manage storage</code> is available.
+  </div>
+  {{end}}
+
+  <!-- Cleanup result area -->
+  <div id="cleanup-result" class="mt-3"></div>
+
+  <!-- Tip -->
+  <p class="text-xs text-gray-600 mt-4">
+    Cleanup removes Docker images unused for 7+ days and build cache older than 3 days.
+    Service data is never deleted.
+  </p>
+</div>

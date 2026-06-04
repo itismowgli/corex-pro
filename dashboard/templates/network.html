@@ -1,0 +1,61 @@
+<!-- Network tab — service URLs and domain info -->
+<div>
+  <div class="flex items-center justify-between mb-5">
+    <h2 class="text-lg font-semibold text-gray-200">Network</h2>
+    {{if .State.Domain}}
+    <span class="text-xs text-gray-500 font-mono">*.{{.State.Domain}} → {{.State.ServerIP}}</span>
+    {{end}}
+  </div>
+
+  {{if .Services}}
+  <!-- Service URL table -->
+  <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden mb-6">
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="border-b border-gray-800 text-left">
+          <th class="px-4 py-3 text-xs font-medium text-gray-400 uppercase tracking-wide w-1/3">Service</th>
+          <th class="px-4 py-3 text-xs font-medium text-gray-400 uppercase tracking-wide w-1/3">URL</th>
+          <th class="px-4 py-3 text-xs font-medium text-gray-400 uppercase tracking-wide w-1/6">Status</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-800">
+        {{range .Services}}
+        <tr class="hover:bg-gray-800/50 transition-colors">
+          <td class="px-4 py-3 text-gray-200 font-medium">{{.Label}}</td>
+          <td class="px-4 py-3">
+            {{if .URL}}
+            <a href="{{.URL}}" target="_blank" rel="noopener noreferrer"
+               class="text-blue-400 hover:text-blue-300 hover:underline font-mono text-xs">
+              {{.URL}}
+            </a>
+            {{else}}
+            <span class="text-gray-600 text-xs italic">local only (no domain)</span>
+            {{end}}
+          </td>
+          <td class="px-4 py-3">
+            <span class="text-xs px-2 py-0.5 rounded-full
+              {{if eq .Status "HEALTHY"}}bg-green-950 text-green-400
+              {{else if eq .Status "UNHEALTHY"}}bg-red-950 text-red-400
+              {{else}}bg-gray-800 text-gray-500{{end}}">
+              {{.Status}}
+            </span>
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{else}}
+  <div class="text-gray-600 text-sm py-8 text-center">No services installed.</div>
+  {{end}}
+
+  <!-- LAN setup hint -->
+  <div class="bg-blue-950/40 border border-blue-900/50 rounded-lg p-4 text-sm">
+    <p class="text-blue-300 font-medium mb-1">LAN Fast-Path Setup</p>
+    <p class="text-gray-400 text-xs leading-relaxed">
+      To access services at full LAN speed without going through Cloudflare, run:<br>
+      <code class="text-blue-300">sudo corex manage lan-setup</code><br>
+      This configures AdGuard DNS rewrites and browser settings to bypass the tunnel on your local network.
+    </p>
+  </div>
+</div>

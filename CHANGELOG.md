@@ -6,6 +6,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.0.0] - 2026-06-04
+
+### Added
+- **CoreX Dashboard (Go + HTMX)** — browser-based management UI at `https://dashboard.DOMAIN`
+  - 4 tabs: Services, Storage, Network, System
+  - Services tab: health status cards (HEALTHY/UNHEALTHY/MISSING), Start/Stop/Update actions, real-time log viewer via SSE
+  - Storage tab: raw `corex manage storage` output + Cleanup / Preview Cleanup buttons
+  - Network tab: service URL table with health badges + LAN setup reminder
+  - System tab: host info (hostname, kernel, uptime, Docker/CoreX versions) + quick-reference command reference
+  - `hx-boost` navigation — full page re-render on tab switch keeps nav active state correct
+  - Input validation on all API endpoints (service names and actions allowlisted)
+  - Log streaming via Server-Sent Events (`/api/logs/<container>`) — cancel on tab close / Escape key
+  - Single Go binary ~15MB image (`golang:1.22-alpine` builder → `alpine:3.20` runtime)
+  - Embedded templates/static via `//go:embed` — no files outside the binary
+  - `dashboard/Dockerfile`, `dashboard/go.mod`, `dashboard/main.go`, `dashboard/templates/*.html`, `dashboard/static/tailwind.min.css`
+- **CrowdSec firewall bouncer** — `crowdsec-firewall-bouncer-iptables` installed on host, adds iptables DROP rules for flagged IPs (previously CrowdSec collected intel but never blocked)
+  - Bouncer connects to CrowdSec LAPI on `127.0.0.1:8081` (container port 8080 exposed to host port 8081 to avoid conflict with Traefik API on :8080)
+  - API key auto-generated via `cscli bouncers add --force` (idempotent on re-run)
+  - `crowdsec_repair()` restarts bouncer service; `crowdsec_destroy()` uninstalls package
+- **CrowdSec `crowdsecurity/nginx` collection** added alongside existing linux/traefik/http-cve/sshd/nextcloud
+
+### Changed
+- **Nextcloud before-starting hook: sed → occ** — all `config.php` edits now use `occ config:system:set` and `occ config:app:set` instead of `sed -i "s|);|...|"` (fragile, injection-prone). Introduced `_occ()` helper with 6-attempt retry loop. `config:system:set` writes directly to `config.php` (no DB dependency); `config:app:set` retries cover DB startup delay.
+
+---
+
 ## [v2.5.0] - 2026-06-04
 
 ### Security Fixes (Critical)
