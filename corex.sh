@@ -282,7 +282,9 @@ do_update() {
         if bash -n "${REPO_DIR}/install-corex-master.sh" 2>/dev/null \
             && bash -n "${REPO_DIR}/corex.sh" 2>/dev/null; then
             echo -e "${GREEN}Updated to v${REMOTE_VERSION}. Scripts validated OK.${NC}"
-            echo "Run 'corex doctor' to verify all services are healthy."
+            echo ""
+            # Re-exec with the freshly downloaded script so the new version loads
+            exec bash "${REPO_DIR}/corex.sh" "$@"
         else
             log_warning "Script syntax validation failed after update. Check manually."
         fi
@@ -314,8 +316,8 @@ show_menu() {
         echo -e "  ${GREEN}1)${NC} Doctor (health check + auto-repair)"
         echo -e "  ${CYAN}2)${NC} Manage services (add/remove/update)"
         echo -e "  ${CYAN}3)${NC} LAN fast-path setup (faster local file transfers)"
-        echo -e "  ${CYAN}4)${NC} Network tune (optimize for Gbps file transfers)"
-        echo -e "  ${YELLOW}5)${NC} Update CoreX Pro"
+        echo -e "  ${YELLOW}4)${NC} Update CoreX Pro"
+        echo -e "  ${CYAN}5)${NC} Network tune (optimize for Gbps file transfers)"
         echo -e "  ${CYAN}6)${NC} Change Domain"
         echo -e "  ${RED}7)${NC} Nuke / Rollback"
         echo -e "  ${NC}8)${NC} Help"
@@ -326,8 +328,8 @@ show_menu() {
             1) do_doctor ;;
             2) ensure_repo; bash "${REPO_DIR}/corex-manage.sh" ;;
             3) do_manage lan-setup ;;
-            4) do_manage network-tune ;;
-            5) do_update ;;
+            4) do_update ;;
+            5) do_manage network-tune ;;
             6) do_migrate ;;
             7) do_nuke ;;
             8) show_help ;;
