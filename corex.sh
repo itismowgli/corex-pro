@@ -146,7 +146,7 @@ do_install() {
 # ── Nuke ──
 do_nuke() {
     ensure_repo
-    shift_args=("${@}")
+    local shift_args=("${@}")
 
     echo -e "${RED}${BOLD}── Nuke / Rollback ──${NC}"
     echo ""
@@ -158,7 +158,7 @@ do_nuke() {
 # ── Migrate ──
 do_migrate() {
     ensure_repo
-    shift_args=("${@}")
+    local shift_args=("${@}")
 
     echo -e "${CYAN}${BOLD}── Domain Migration ──${NC}"
     echo ""
@@ -230,6 +230,10 @@ do_update() {
     ensure_repo
     echo -e "${CYAN}Checking for updates...${NC}"
     cd "$REPO_DIR"
+
+    # Ignore file-mode-only changes (scripts pulled by root often get +x set
+    # on the filesystem but the repo tracks them as 644 — not a real diff)
+    git config core.fileMode false 2>/dev/null || true
 
     LOCAL_VERSION="$COREX_VERSION"
 
