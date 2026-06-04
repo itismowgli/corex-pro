@@ -62,7 +62,7 @@ state_set() {
     local value="$2"
     local tmp
     tmp="$(mktemp)"
-    trap 'rm -f "$tmp"' RETURN
+    trap 'rm -f "${tmp:-}"' RETURN
     jq --arg k "$key" --arg v "$value" '.[$k] = $v' "$COREX_STATE_FILE" > "$tmp" \
         && mv "$tmp" "$COREX_STATE_FILE"
 }
@@ -76,7 +76,7 @@ state_service_installed() {
     local svc="$1"
     local tmp
     tmp="$(mktemp)"
-    trap 'rm -f "$tmp"' RETURN
+    trap 'rm -f "${tmp:-}"' RETURN
     jq --arg svc "$svc" \
         --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         '.services[$svc] = { installed: true, enabled: true, installed_at: $ts }' \
@@ -91,7 +91,7 @@ state_service_removed() {
     local svc="$1"
     local tmp
     tmp="$(mktemp)"
-    trap 'rm -f "$tmp"' RETURN
+    trap 'rm -f "${tmp:-}"' RETURN
     jq --arg svc "$svc" \
         '.services[$svc] = { installed: false, enabled: false }' \
         "$COREX_STATE_FILE" > "$tmp" && mv "$tmp" "$COREX_STATE_FILE"
@@ -123,7 +123,7 @@ state_service_enable() {
     local svc="$1"
     local tmp
     tmp="$(mktemp)"
-    trap 'rm -f "$tmp"' RETURN
+    trap 'rm -f "${tmp:-}"' RETURN
     jq --arg svc "$svc" '.services[$svc].enabled = true' "$COREX_STATE_FILE" > "$tmp" \
         && mv "$tmp" "$COREX_STATE_FILE"
 }
@@ -132,7 +132,7 @@ state_service_disable() {
     local svc="$1"
     local tmp
     tmp="$(mktemp)"
-    trap 'rm -f "$tmp"' RETURN
+    trap 'rm -f "${tmp:-}"' RETURN
     jq --arg svc "$svc" '.services[$svc].enabled = false' "$COREX_STATE_FILE" > "$tmp" \
         && mv "$tmp" "$COREX_STATE_FILE"
 }

@@ -582,8 +582,8 @@ cmd_lan_setup() {
     local YAML_FILE="${DATA_ROOT}/adguard-conf/AdGuardHome.yaml"
     if [[ -f "$YAML_FILE" ]]; then
         local PORT_FROM_YAML
-        PORT_FROM_YAML=$(grep -A5 "^http:" "$YAML_FILE" \
-            | grep "address:" | grep -oP ':\K[0-9]+' | head -1)
+        PORT_FROM_YAML=$(grep "address:" "$YAML_FILE" \
+            | grep -oP ':\K[0-9]+' | tail -1)
         [[ -n "$PORT_FROM_YAML" ]] && AG_INTERNAL_PORT="$PORT_FROM_YAML"
     fi
 
@@ -1258,9 +1258,9 @@ _check_docker_networks() {
 # ── help ──────────────────────────────────────────────────────────────────────
 
 cmd_help() {
+    echo ""
+    echo -e "${BOLD}CoreX Pro v2 — Service Manager${NC}"
     cat << HELPEOF
-
-${BOLD}CoreX Pro v2 — Service Manager${NC}
 
 Usage: sudo bash corex-manage.sh <command> [args]
 
