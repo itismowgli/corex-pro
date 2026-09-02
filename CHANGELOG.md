@@ -6,6 +6,49 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.6.0] - 2026-09-02
+
+### Fixed
+- **`corex manage update --all` reported success while Uptime Kuma sat ten
+  months behind.** The root cause is upstream:
+  `louislam/uptime-kuma:latest` was last built in October 2025 and is frozen
+  on the 1.x line, because the current release ships as `:2` and `:2.5.3`. A
+  moving tag that stops moving is the inverse of gotcha #19 and nothing below
+  the tag can detect it: `docker pull` correctly reports "Image is up to
+  date". Pinned to `2.5.3`, which migrates the 1.x database on first start.
+- **The update logic decided a whole stack from one image.** The digest
+  shortcut read `config --images | head -1`, so a single current image
+  returned early and skipped the rest. `monitoring` ships five images and `ai`
+  ships three, and the one it always checked was `node-exporter`, which rarely
+  changes. It also compared a `RepoDigest` against a per-platform entry from
+  `docker manifest inspect`, which are different digests by construction, so
+  the comparison was not meaningful either way. The shortcut is gone; docker
+  already skips layers it has.
+- **A failed pull was reported as an update.** `docker compose pull` ran
+  without its exit code being checked, `up -d` ran regardless, and success was
+  logged either way, so a rate limit, an expired tag or a dropped connection
+  all looked identical to a successful update. Both commands are checked now,
+  and `update --all` collects failures and names them at the end.
+- **Browserless ran a two-and-a-half-year-old abandoned image.**
+  `browserless/chrome` on Docker Hub was last built in February 2024; upstream
+  moved to `ghcr.io/browserless/chromium` for v2. Now pinned to `v2.38.1`.
+  `MAX_CONCURRENT_SESSIONS` is a v1 name that v2 ignores, which would have
+  left the default concurrency in force, so it is `CONCURRENT` with an
+  explicit `TIMEOUT`.
+
+### Changed
+- Browserless publishes on loopback rather than every interface. Open WebUI
+  reaches it over `ai-net` by container name, so a LAN-facing port was never
+  needed, and what it exposed was a scriptable browser behind one token.
+- `update` now reports which images actually changed, so "already current" and
+  "updated" are different messages.
+
+### Documented
+- Gotcha #26: a moving tag can stop moving, with the registry query that
+  detects it, since neither `docker pull` nor `docker inspect` can.
+
+---
+
 ## [v3.5.3] - 2026-09-02
 
 Three faults in `corex update`, each hiding the next. Together they meant the
