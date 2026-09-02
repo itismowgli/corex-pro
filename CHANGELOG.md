@@ -8,6 +8,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ## [Unreleased]
 
+### Fixed — Nextcloud setup warnings
+- **HSTS header missing on tunnel traffic.** Traefik's `nc-headers` middleware
+  sets `Strict-Transport-Security`, but Cloudflare Tunnel connects directly to
+  `nextcloud:80` and never traverses Traefik, so requests arriving through the
+  tunnel carried no HSTS header and Nextcloud's setup checks reported it as not
+  set. Now also set at the Apache layer with `Header always setifempty`, which
+  covers both paths without duplicating Traefik's value on the LAN path.
+- **`maintenance_window_start` was never configured**, so Nextcloud ran heavy
+  daily jobs (file scans, preview generation, cleanup) whenever cron fired,
+  including during peak use. On a mini server those jobs are a thermal event as
+  well as a performance one, so it is now pinned to 01:00 UTC.
+- **`nextcloud.log` grew unbounded** — it is written by PHP, not Docker, so the
+  daemon's `json-file` rotation never applied to it. Observed at 91MB in the
+  field. `log_rotate_size` is now 10MB.
+- **Missing database indices were never added.** Nextcloud and its apps
+  introduce indices over time but never apply them automatically, so the admin
+  panel accrues "Database missing indices" warnings and the affected queries
+  stay slow (15 were outstanding in the field). `occ db:add-missing-indices` now
+  runs on deploy; it is idempotent and a no-op when nothing is missing. The
+  mimetype migration is deliberately left manual, as it can take a very long
+  time on a large instance.
+
 ### Fixed
 - **`corex manage health` labelled a live reading as pre-crash evidence.** On
   detecting an unclean shutdown it printed the last line of `blackbox.log`

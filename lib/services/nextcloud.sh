@@ -117,6 +117,15 @@ LimitRequestBody 0
   # add latency to chunked upload acknowledgments.
   Header set X-Accel-Buffering "no" "expr=%{REQUEST_URI} =~ m#/remote\.php/dav/files/#"
   Header set Cache-Control "no-transform" "expr=%{REQUEST_URI} =~ m#/remote\.php/dav/files/#"
+
+  # ── HSTS ────────────────────────────────────────────────────────────
+  # Traefik's nc-headers middleware also sets this, but Cloudflare Tunnel
+  # connects directly to nextcloud:80 and never passes through Traefik —
+  # so tunnel traffic would carry no HSTS header, and Nextcloud's own
+  # setup checks report "Strict-Transport-Security not set". Setting it
+  # here covers both paths. setifempty avoids duplicating Traefik's value
+  # on the LAN path.
+  Header always setifempty Strict-Transport-Security "max-age=15552000; includeSubDomains"
 </IfModule>
 APEOF
 
@@ -172,6 +181,29 @@ _occ config:system:set default_phone_region --value 'US' || true
 # Default 100MB exceeds Cloudflare free plan's body limit → HTTP 413.
 # config:app:set writes to DB — retry loop covers DB startup delay.
 _occ config:app:set files max_chunk_size --value 10485760 || true
+
+# ── Maintenance window ───────────────────────────────────────────────
+# Without this, Nextcloud runs heavy daily jobs (file scans, previews,
+# cleanup) whenever cron fires, including peak usage. On a mini server
+# those jobs are also a thermal event, so pinning them to 01:00 UTC
+# matters more here than on rented hardware. Value is an hour 0-23 UTC.
+_occ config:system:set maintenance_window_start --type=integer --value=1 || true
+
+# ── Bound Nextcloud's own log ────────────────────────────────────────
+# nextcloud.log is written by PHP, not Docker, so the daemon's
+# json-file rotation does not apply and it grows unbounded — observed
+# at 91MB in the field. 10MB with rotation keeps it useful but finite.
+_occ config:system:set log_rotate_size --type=integer --value=10485760 || true
+
+# ── Add missing database indices ─────────────────────────────────────
+# Nextcloud and its apps add indices over time but never apply them
+# automatically, so the admin panel accrues "Database missing indices"
+# warnings and queries stay slow. This is idempotent and a no-op when
+# nothing is missing, so it is safe on every deploy.
+# NOTE: the mimetype migration (occ maintenance:repair --include-expensive)
+# is deliberately NOT run here — it can take a very long time on a large
+# instance. Run it by hand during a maintenance window.
+_occ db:add-missing-indices || true
 
 # ── Patch .htaccess for LimitRequestBody (Umbrel pattern) ────────
 # Nextcloud regenerates .htaccess on startup and updates. The
