@@ -764,6 +764,36 @@ elif command -v setpriv >/dev/null 2>&1; then ...
 when privilege-dropping is impossible rather than retrying 30s per call, a
 retry loop around an unsatisfiable command turns a warning into an outage.
 
+### 28. An entrypoint default TLS domain does not override a router's resolver
+
+`entryPoints.websecure.http.tls.domains` was set to request one
+`vyom.cloud` + `*.vyom.cloud` certificate for every route, so that individual
+subdomains would stop appearing in the Certificate Transparency logs.
+
+It does not take effect. Every CoreX service sets
+`traefik.http.routers.<name>.tls.certresolver=myresolver` on its own router,
+and a router's own TLS configuration wins over the entrypoint default. Measured
+after deploying it: `acme.json` held 13 certificates, all per hostname, none
+carrying a SAN, and a hostname added afterwards (`flows.vyom.cloud`) still got
+its own certificate rather than being covered by a wildcard.
+
+So the block is inert unless each router also declares the domains:
+
+```
+traefik.http.routers.<name>.tls.domains[0].main=DOMAIN
+traefik.http.routers.<name>.tls.domains[0].sans=*.DOMAIN
+```
+
+That is a label on all eleven routers, and it changes certificate issuance for
+every service at once, so it wants doing deliberately rather than as a side
+effect. Until then per-hostname issuance continues and every hostname is
+listed at crt.sh.
+
+Two things reduce how much that matters. Cloudflare terminates TLS at the edge
+for anything published through the tunnel, so external visitors never see
+Traefik's certificate; it is the LAN fast-path that uses it. And the CT
+exposure is a disclosure of names, not of access.
+
 ### 27. The tunnel bypasses Traefik, so Traefik cannot protect external traffic
 
 Cloudflare Public Hostnames point at container names and ports

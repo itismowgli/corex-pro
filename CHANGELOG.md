@@ -6,6 +6,38 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.7.1] - 2026-09-02
+
+### Fixed
+- **n8n crash-looped out of memory, 33 restarts.** It was unreachable because
+  it was not running. The log ends in `FATAL ERROR: Ineffective mark-compacts
+  near heap limit / JavaScript heap out of memory`, dying at roughly a 250MB
+  heap against a 512m container limit: Node sizes its old-space from the
+  cgroup limit, so 512m leaves it about 256MB and n8n 2.x needs more just to
+  start. Nothing in docker pointed at memory, because `OOMKilled` stayed false
+  throughout: Node killed itself at its own ceiling rather than the kernel
+  killing the container. The limit is now 1536m with
+  `NODE_OPTIONS=--max-old-space-size=1024`, set explicitly rather than
+  inferred, and deliberately below the container limit so the kernel does not
+  OOM-kill the container instead of Node collecting.
+- **uptime-kuma raised from 256m to 512m.** Also Node, and 2.x is heavier than
+  the 1.x line it was pinned up from, so it was one step from the same
+  failure. cadvisor stays at 256m, being Go.
+
+### Corrected
+- **The wildcard certificate added in v3.7.0 is inert**, and the release notes
+  overstated it. `entryPoints.websecure.http.tls.domains` does not override a
+  router's own `tls.certresolver`, which every CoreX service sets. Measured
+  after deploying it: `acme.json` held 13 certificates, all per hostname, none
+  with a SAN, and a hostname added afterwards still got its own certificate.
+  Making it work needs `tls.domains` labels on all eleven routers, which
+  changes issuance for every service and wants doing deliberately. Documented
+  as gotcha #28, with what reduces its importance: Cloudflare terminates TLS
+  at the edge for anything published through the tunnel, so it is the LAN
+  fast-path that uses Traefik's certificate.
+
+---
+
 ## [v3.7.0] - 2026-09-02
 
 ### Added
@@ -16,8 +48,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
   hostname being indexable. Nextcloud's own weaker `X-Robots-Tag` is removed,
   because router middlewares run after entrypoint middlewares and it would
   have replaced the full set.
-- **One wildcard certificate instead of one per hostname**, when a Cloudflare
-  DNS token is configured. Let's Encrypt publishes every certificate it issues
+- **A wildcard certificate is requested** when a Cloudflare DNS token is
+  configured, though see the correction in v3.7.1: the entrypoint default it
+  uses does not override a router's own resolver, so per-hostname issuance
+  continues. Let's Encrypt publishes every certificate it issues
   to the Certificate Transparency logs, so a certificate per hostname
   advertises that hostname at crt.sh; eleven certificates meant eleven names.
   A wildcard names only `*.DOMAIN`. It also covers a newly added hostname
