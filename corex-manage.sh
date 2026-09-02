@@ -731,7 +731,7 @@ cmd_mail_setup() {
     # Values may come from the environment (scriptable) or be prompted for.
     local host="${NC_SMTP_HOST:-}" port="${NC_SMTP_PORT:-587}"
     local user="${NC_SMTP_USER:-}" pass="${NC_SMTP_PASS:-}"
-    local from="${NC_MAIL_FROM:-}" secure="${NC_SMTP_SECURE:-tls}"
+    local from="${NC_MAIL_FROM:-}" secure="${NC_SMTP_SECURE:-}"
 
     if [[ -z "$host" || -z "$user" || -z "$pass" ]]; then
         if [[ ! -t 0 ]]; then
@@ -759,6 +759,19 @@ cmd_mail_setup() {
     fi
     from="${from:-$user}"
 
+    # Derive the encryption mode from the port unless explicitly set. Getting
+    # this wrong is the most common cause of "Email could not be sent": 587 is
+    # submission with STARTTLS (tls) and 465 is implicit TLS (ssl). Using ssl
+    # on 587 fails during the handshake, and the resulting Nextcloud error
+    # names neither the port nor the mode.
+    if [[ -z "$secure" ]]; then
+        case "$port" in
+            465) secure="ssl" ;;
+            587|25) secure="tls" ;;
+            *)   secure="tls" ;;
+        esac
+    fi
+
     [[ -n "$host" && -n "$user" && -n "$pass" ]] || {
         log_warning "Host, username and password are all required."
         return 1
@@ -774,7 +787,7 @@ cmd_mail_setup() {
     "${_o[@]}" config:system:set mail_smtphost     --value "$host"     >/dev/null
     "${_o[@]}" config:system:set mail_smtpport     --value "$port"     >/dev/null
     "${_o[@]}" config:system:set mail_smtpsecure   --value "$secure"   >/dev/null
-    "${_o[@]}" config:system:set mail_smtpauth     --value 1 --type=boolean >/dev/null
+    "${_o[@]}" config:system:set mail_smtpauth     --value 1 --type=integer >/dev/null
     "${_o[@]}" config:system:set mail_smtpname     --value "$user"     >/dev/null
     "${_o[@]}" config:system:set mail_smtppassword --value "$pass"     >/dev/null
     "${_o[@]}" config:system:set mail_from_address --value "$from_local"  >/dev/null
