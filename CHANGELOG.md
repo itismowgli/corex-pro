@@ -6,6 +6,44 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.5.1] - 2026-09-02
+
+### Added
+- **Coolify is published at `https://coolify.DOMAIN`.** It was reachable only
+  at `http://SERVER_IP:8000` with no certificate. Coolify installs its own
+  stack on its own Docker network with no interface on `proxy-net`, so
+  `coolify:8080` does not resolve from Traefik and a Docker label cannot
+  describe the backend. Traefik addresses it directly through a rule in its
+  file-provider directory, written from both deploy and repair and removed on
+  destroy. The rule lives outside Coolify's own compose, which Coolify
+  rewrites on upgrade.
+- **Traefik's file provider reads a directory** rather than a single
+  `dynamic.yml`, so any service whose backend Traefik cannot discover can
+  contribute a route. The TLS defaults move to `dynamic/00-tls.yml`.
+
+### Fixed
+- **Repair silently reverted Traefik from DNS-01 to `tlsChallenge`.** The
+  Cloudflare DNS API token lived only in the environment of whoever ran the
+  command, and repair regenerates `traefik.yml` unconditionally, so a repair
+  without it exported restored both faults that stopped certificates being
+  issued in the first place: the wrong challenge type and the wildcard
+  `defaultCertificate` that suppresses the resolver. It hides well, because
+  certificates already in `acme.json` keep being served and only a newly added
+  hostname is affected. `_traefik_cf_token` now resolves from the environment,
+  then a 0600 dotfile, then the running compose file, persisting forward at
+  each step.
+
+### Documented
+- README: n8n and Coolify added to the list of things to keep off the
+  internet, with the reason each is equivalent to a shell, and the observation
+  that Google Safe Browsing flagged both `portainer.` and `n8n.` as a
+  "Dangerous site" on a clean install. A generic admin login form on a domain
+  with no reputation matches its phishing heuristics; neither host was
+  compromised.
+- Gotcha #21 extended with the token persistence requirement.
+
+---
+
 ## [v3.5.0] - 2026-09-02
 
 ### Fixed

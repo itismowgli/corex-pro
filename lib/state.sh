@@ -10,7 +10,7 @@
 
 # Allow tests to override the state file path via env var
 COREX_STATE_FILE="${COREX_STATE_FILE:-/etc/corex/state.json}"
-_COREX_VERSION="3.5.0"
+_COREX_VERSION="3.5.1"
 
 # ── state_init ────────────────────────────────────────────────────────────────
 # Create a fresh state.json with default structure.
