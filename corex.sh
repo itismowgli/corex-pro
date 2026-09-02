@@ -345,8 +345,23 @@ do_update() {
         echo ""
     fi
 
+    # Without a terminal, `read` returns immediately with an empty answer, so
+    # this printed a bare "Aborted." and returned 0. A cron job or a
+    # `sudo -n bash corex.sh update` therefore reported success while updating
+    # nothing at all. Say what happened, and fail.
+    if [[ ! -t 0 ]]; then
+        log_warning "No terminal, so the update cannot be confirmed interactively."
+        log_warning "Run it from a shell, or non-interactively with: corex update --force"
+        _restore_repo_owner
+        return 1
+    fi
+
     local confirm
-    read -r -p "Update CoreX Pro (${update_desc})? [y/N]: " confirm
+    if [[ "${1:-}" == "--force" ]]; then
+        confirm="y"
+    else
+        read -r -p "Update CoreX Pro (${update_desc})? [y/N]: " confirm
+    fi
     [[ "$confirm" != "y" && "$confirm" != "Y" ]] && { echo "Aborted."; _restore_repo_owner; return 0; }
 
     # Apply update (fast-forward only — won't destroy diverged history)

@@ -492,3 +492,16 @@ _repair_body() {
 @test "AppleDouble sidecars are gitignored" {
     grep -qx '\._\*' "${REPO_ROOT}/.gitignore"
 }
+
+@test "update fails loudly when it cannot ask for confirmation" {
+    # read returns an empty answer with no terminal, so the prompt printed a
+    # bare "Aborted." and returned 0. A cron job or a sudo -n invocation
+    # reported success while updating nothing.
+    local body
+    body=$(awk '/^do_update\(\)/,/^}/' "${REPO_ROOT}/corex.sh")
+    echo "$body" | grep -q '! -t 0'
+    # The no-terminal branch must return non-zero.
+    echo "$body" | grep -A 5 '! -t 0' | grep -q 'return 1'
+    # --force must be a usable non-interactive path.
+    echo "$body" | grep -q 'confirm="y"'
+}

@@ -22,6 +22,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
   leaving you to guess. Aborting also restores repository ownership, which the
   early return skipped.
 
+- **A non-interactive `corex update` reported success while doing nothing.**
+  With no terminal, `read` returns an empty answer, so the confirmation prompt
+  printed a bare "Aborted." and returned 0. A cron job or a `sudo -n`
+  invocation therefore looked like it had updated. It now says why it cannot
+  ask, returns non-zero, and accepts `--force` as the non-interactive path.
+
 ### Added
 - `.gitignore` entries for `._*` and `.DS_Store`. Those sidecars arrive from
   any macOS copy and are not project files.
