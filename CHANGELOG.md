@@ -6,6 +6,45 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.8.0] - 2026-09-02
+
+### Added
+- **`corex manage route`**, for containers CoreX did not deploy:
+
+      corex manage route list
+      corex manage route add crm.example.com http://twenty-server:3000
+      corex manage route remove crm.example.com
+
+  Pointing the tunnel at a single wildcard hostname makes Traefik decide every
+  name, so a hostname Traefik does not route returns a Traefik 404 rather than
+  reaching its container. Anything deployed outside CoreX, a Coolify app for
+  instance, needs a route or it stops being reachable. Routes live in Traefik's
+  file-provider directory rather than the application's compose file, because
+  whatever deployed the application owns that file and rewrites it on upgrade,
+  and a test asserts a Traefik repair never wipes that directory.
+
+  Both inputs are validated. A malformed hostname produces a router Traefik
+  silently ignores, and a backend without a scheme is rejected when the file
+  loads, taking every other route in that file down rather than just the bad
+  one. An https backend also gets the `insecure-backend` transport, since a
+  self-signed or mismatched origin certificate otherwise returns 500.
+
+### Fixed
+- `route add` printed a verify hint with an over-escaped newline, so it
+  rendered across two lines with a stray quote.
+
+### Notes
+- With the wildcard tunnel entry in place, all fourteen hostnames were
+  confirmed to route through Traefik, each returning the `noindex` header on
+  the external path. Before the change that header only ever applied to LAN
+  traffic.
+- Cloudflare terminates TLS at the edge for proxied hostnames, so external
+  visitors see Cloudflare's certificate rather than Traefik's. Traefik's
+  Let's Encrypt certificates serve the LAN fast-path, which is what limits how
+  much the wildcard-certificate question in gotcha #28 matters.
+
+---
+
 ## [v3.7.2] - 2026-09-02
 
 ### Added
