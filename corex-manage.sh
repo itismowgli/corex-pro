@@ -1975,6 +1975,7 @@ RTEOF
 cmd_watchdog() {
     source "${SCRIPT_DIR}/lib/watchdog.sh"
     local sub="${1:-show}"
+    local NL_LITERAL=$'\n'
 
     case "$sub" in
         setup)
@@ -2007,15 +2008,26 @@ cmd_watchdog() {
             local token="${WATCHDOG_TOKEN_SHED:-}"
             [[ -n "$token" ]] || log_error "No push token registered. Run: corex manage watchdog setup"
 
-            log_warning "Sending a deliberate DOWN beat to 'Thermal Shedding'."
-            echo "  It takes two beats to alert (one retry), so expect Telegram in ~2-4 min,"
-            echo "  then a recovery message on the next real cycle."
-            curl -fsS -G -o /dev/null --max-time 10 \
-                --data-urlencode "status=down" \
-                --data-urlencode "msg=test alert from corex manage watchdog test, ignore" \
-                "${WATCHDOG_KUMA_URL:-http://127.0.0.1:3001}/api/push/${token}" \
-                && log_success "Test beat accepted by Kuma" \
-                || log_error "Kuma rejected the push. Is uptime-kuma running?"
+            log_warning "Sending two deliberate DOWN beats to 'Thermal Shedding'."
+            echo "  Two, not one: the monitor allows a single retry, so one bad beat only"
+            echo "  reaches PENDING and never notifies. The second is what alerts."
+            echo "  The next scheduled cycle sends the recovery."
+            local url="${WATCHDOG_KUMA_URL:-http://127.0.0.1:3001}/api/push/${token}"
+            local i ok=true
+            for i in 1 2; do
+                curl -fsS -G -o /dev/null --max-time 10 \
+                    --data-urlencode "status=down" \
+                    --data-urlencode "msg=Deliberate test from: corex manage watchdog test.${NL_LITERAL}Nothing is wrong, the next cycle clears it." \
+                    "$url" || ok=false
+                [[ "$i" == "1" ]] && sleep 3
+            done
+            if [[ "$ok" == "true" ]]; then
+                log_success "Both beats accepted by Kuma"
+                echo "  Check Telegram. If nothing arrives, the monitors are fine and the"
+                echo "  fault is in the notification itself: test that from the Kuma UI."
+            else
+                log_error "Kuma rejected the push. Is uptime-kuma running?"
+            fi
             ;;
 
         show|status)

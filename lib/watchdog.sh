@@ -194,7 +194,9 @@ push() {
         "${WATCHDOG_KUMA_URL}/api/push/${token}" 2>/dev/null \
         || say "push failed for ${key}: is Kuma reachable at ${WATCHDOG_KUMA_URL}?"
 
-    [[ "$status" == "down" ]] && say "${key} DOWN: ${msg}"
+    # The log stays one line per finding so `watchdog show` and grep remain
+    # useful; only the notification gets the multi-line form.
+    [[ "$status" == "down" ]] && say "${key} DOWN: ${msg//$'\n'/ | }"
     return 0
 }
 
@@ -259,16 +261,18 @@ read_temp() {
 }
 
 check_temp() {
-    local t; t=$(read_temp)
+    local t nl; t=$(read_temp); nl=$'\n'
     # No sensor is itself the finding: gotcha #17 exists because a thermal trip
     # is invisible without lm-sensors. Report it rather than passing silently.
     if [[ "$t" == "0" ]]; then
-        push temp down "no CPU temperature sensor: install lm-sensors, thermal trips are invisible without it"
+        push temp down "No CPU temperature sensor.${nl}Install lm-sensors: a thermal trip leaves no trace in any log without it."
         return
     fi
     if (( t >= WATCHDOG_TEMP_C )); then
-        local who; who=$(top_cpu)
-        push temp down "${t}C, over the ${WATCHDOG_TEMP_C}C limit${who:+ | top CPU: $who}" "$t"
+        local msg="${t}C, over the ${WATCHDOG_TEMP_C}C limit." who
+        who=$(top_cpu)
+        [[ -n "$who" ]] && msg="${msg}${nl}Heaviest: ${who}"
+        push temp down "$msg" "$t"
     else
         push temp up "${t}C" "$t"
     fi
@@ -276,14 +280,17 @@ check_temp() {
 
 # ── Check: CPU load ─────────────────────────────────────────────────────────
 check_load() {
-    local load5 cores limit
+    local load5 cores limit nl
+    nl=$'\n'
     load5=$(awk '{print $2}' /proc/loadavg 2>/dev/null || echo 0)
     cores=$(nproc 2>/dev/null || echo 1)
     limit=$(awk -v c="$cores" -v r="$WATCHDOG_LOAD_RATIO" 'BEGIN{printf "%.2f", c*r}')
 
     if awk -v l="$load5" -v m="$limit" 'BEGIN{exit !(l > m)}'; then
-        local who; who=$(top_cpu)
-        push load down "load ${load5} over ${limit} (${cores} cores)${who:+ | top CPU: $who}" "$load5"
+        local msg="Load ${load5}, over the ${limit} limit for ${cores} cores." who
+        who=$(top_cpu)
+        [[ -n "$who" ]] && msg="${msg}${nl}Heaviest: ${who}"
+        push load down "$msg" "$load5"
     else
         push load up "load ${load5} of ${limit}" "$load5"
     fi
@@ -291,7 +298,8 @@ check_load() {
 
 # ── Check: memory and swap ──────────────────────────────────────────────────
 check_memory() {
-    local total avail stotal sfree used_pct avail_pct swap_pct=0
+    local total avail stotal sfree used_pct avail_pct swap_pct=0 nl
+    nl=$'\n'
     total=$(awk '/^MemTotal:/{print $2}'     /proc/meminfo)
     avail=$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)
     stotal=$(awk '/^SwapTotal:/{print $2}'   /proc/meminfo)
@@ -304,13 +312,15 @@ check_memory() {
 
     local reasons=""
     (( avail_pct < WATCHDOG_MEM_AVAIL_PCT )) && \
-        reasons="only ${avail_pct}% RAM available"
+        reasons="Only ${avail_pct}% RAM available, floor is ${WATCHDOG_MEM_AVAIL_PCT}%."
     (( swap_pct > WATCHDOG_SWAP_USED_PCT )) && \
-        reasons="${reasons:+$reasons, }swap ${swap_pct}% used"
+        reasons="${reasons:+$reasons }Swap ${swap_pct}% used, floor is ${WATCHDOG_SWAP_USED_PCT}%."
 
     if [[ -n "$reasons" ]]; then
-        local who; who=$(top_mem)
-        push memory down "${reasons}${who:+ | top RAM: $who}" "$used_pct"
+        local msg="$reasons" who
+        who=$(top_mem)
+        [[ -n "$who" ]] && msg="${msg}${nl}Largest: ${who}"
+        push memory down "$msg" "$used_pct"
     else
         push memory up "RAM ${used_pct}% used, swap ${swap_pct}%" "$used_pct"
     fi
@@ -324,23 +334,24 @@ free_pct() {
 }
 
 check_disk() {
-    local osf ssdf reasons="" worst=100
+    local osf ssdf reasons="" worst=100 nl
+    nl=$'\n'
     osf=$(free_pct /)
     ssdf=$(free_pct "$COREX_SSD_MOUNT")
 
     if [[ -n "$osf" ]]; then
         (( osf < worst )) && worst=$osf
         (( osf < WATCHDOG_OS_FREE_PCT )) && \
-            reasons="OS disk only ${osf}% free (breaks Docker and dpkg, not just one service)"
+            reasons="OS disk ${osf}% free, floor is ${WATCHDOG_OS_FREE_PCT}%. This breaks Docker and apt, not just one service."
     fi
     if [[ -n "$ssdf" ]]; then
         (( ssdf < worst )) && worst=$ssdf
         (( ssdf < WATCHDOG_SSD_FREE_PCT )) && \
-            reasons="${reasons:+$reasons, }data SSD only ${ssdf}% free"
+            reasons="${reasons:+$reasons$nl}Data SSD ${ssdf}% free, floor is ${WATCHDOG_SSD_FREE_PCT}%."
     fi
 
     if [[ -n "$reasons" ]]; then
-        push disk down "${reasons} | run: corex manage cleanup" "$worst"
+        push disk down "${reasons}${nl}Reclaim space with: corex manage cleanup" "$worst"
     else
         push disk up "OS ${osf:-?}% free, SSD ${ssdf:-?}% free" "$worst"
     fi
@@ -418,17 +429,23 @@ check_containers() {
 
     printf '%s' "$now_state" > "$prev_file" 2>/dev/null
 
-    local reasons=""
-    [[ -n "$down" ]]      && reasons="stopped but set to restart: ${down}"
-    [[ -n "$unhealthy" ]] && reasons="${reasons:+$reasons; }unhealthy: ${unhealthy}"
-    [[ -n "$oom" ]]       && reasons="${reasons:+$reasons; }OOM-killed (raise the memory limit): ${oom}"
-    [[ -n "$looping" ]]   && reasons="${reasons:+$reasons; }restart-looping: ${looping}"
+    # One fault per line, because a container can be in several of these states
+    # at once and running them together as a single sentence is unreadable on a
+    # phone.
+    local nl=$'\n' reasons="" first=""
+    [[ -n "$down" ]]      && { reasons="Stopped but set to restart: ${down}"; first="${down%%,*}"; }
+    [[ -n "$unhealthy" ]] && { reasons="${reasons:+$reasons$nl}Unhealthy: ${unhealthy}"; first="${first:-${unhealthy%%,*}}"; }
+    [[ -n "$oom" ]]       && { reasons="${reasons:+$reasons$nl}OOM-killed, so its memory limit is too low: ${oom}"; first="${first:-${oom%%,*}}"; }
+    [[ -n "$looping" ]]   && { reasons="${reasons:+$reasons$nl}Restart-looping: ${looping}"; first="${first:-${looping%% *}}"; }
 
     local total running
     total=$(printf '%s\n' "$raw" | grep -c . )
     running=$(printf '%s\n' "$raw" | awk -F'|' '$2=="running"' | grep -c . )
 
     if [[ -n "$reasons" ]]; then
+        # The container log is the only place the cause appears for this class
+        # of fault, so name the command rather than leaving it to be recalled.
+        [[ -n "$first" ]] && reasons="${reasons}${nl}Cause: docker logs --tail 30 ${first}"
         push containers down "$reasons" "$running"
     else
         push containers up "${running}/${total} running, all healthy" "$running"
@@ -451,7 +468,9 @@ check_shed() {
         names=$(paste -sd, - < "$list" 2>/dev/null | sed 's/,/, /g')
     fi
     if (( n > 0 )); then
-        push shed down "thermal guardian has ${n} service(s) stopped: ${names}" "$n"
+        local nl=$'\n'
+        push shed down \
+            "Thermal guardian has stopped ${n} service(s) to shed heat.${nl}${names}${nl}They restart on their own once the CPU cools." "$n"
     else
         push shed up "nothing shed" 0
     fi
@@ -482,12 +501,18 @@ _watchdog_write_setup_helper() {
 """Register CoreX watchdog push monitors in the Uptime Kuma database.
 
 Reads `key<TAB>name<TAB>description` lines on stdin, creates any monitor that
-does not already exist, links it to every active notification, and prints the
-resulting `WATCHDOG_TOKEN_<KEY>=<token>` lines on stdout.
+does not already exist, links it to every active notification, applies a
+readable Telegram message template, and prints the resulting
+`WATCHDOG_TOKEN_<KEY>=<token>` lines on stdout.
+
+Only token lines go to stdout, because the caller appends them straight to
+/etc/corex/watchdog.conf and that file is sourced by bash. Progress goes to
+stderr.
 
 Idempotent: an existing monitor keeps its token and its notification links, so
 re-running this never invalidates a working setup or duplicates a monitor.
 """
+import json
 import secrets
 import sqlite3
 import sys
@@ -503,6 +528,41 @@ RETRY_INTERVAL = 120
 RESEND_INTERVAL = 30
 # One retry, so a single bad sample becomes PENDING rather than an alert.
 MAX_RETRIES = 1
+
+# Kuma's default Telegram message is "[name] [status] msg" on a single line,
+# which buries the two things you actually read first. This puts the verdict
+# and the service on line one, where the phone's notification preview shows
+# them, and the detail below.
+#
+# MarkdownV2 rather than HTML: in this mode Kuma escapes the interpolated
+# values for us, so a container name or an error string containing brackets or
+# a hyphen cannot break the parse and silently drop the whole notification.
+# Markup in the template itself is left alone, which is why the bold works.
+TELEGRAM_TEMPLATE = "{{ status }}  *{{ name }}*\n\n{{ msg }}"
+
+
+def apply_telegram_template(cur):
+    """Set a readable message template on every Telegram notification.
+
+    Skips any notification that already has a template, so an operator who
+    wrote their own keeps it. Returns the names that were changed.
+    """
+    changed = []
+    rows = list(cur.execute("SELECT id, name, config FROM notification"))
+    for nid, name, cfg in rows:
+        try:
+            conf = json.loads(cfg)
+        except (ValueError, TypeError):
+            continue
+        if conf.get("type") != "telegram" or conf.get("telegramUseTemplate"):
+            continue
+        conf["telegramUseTemplate"] = True
+        conf["telegramTemplate"] = TELEGRAM_TEMPLATE
+        conf["telegramTemplateParseMode"] = "MarkdownV2"
+        cur.execute("UPDATE notification SET config = ? WHERE id = ?",
+                    (json.dumps(conf), nid))
+        changed.append(name)
+    return changed
 
 
 def main(db_path):
@@ -561,6 +621,9 @@ def main(db_path):
 
         print("WATCHDOG_TOKEN_%s=%s" % (key.upper(), token))
 
+    for name in apply_telegram_template(cur):
+        print("applied Telegram message template to '%s'" % name, file=sys.stderr)
+
     db.commit()
     db.close()
     return 0
@@ -613,7 +676,9 @@ watchdog_seed_monitors() {
     local tmp
     tmp=$(mktemp) || return 1
     grep -v '^WATCHDOG_TOKEN_' /etc/corex/watchdog.conf > "$tmp" 2>/dev/null
-    printf '%s\n' "$tokens" >> "$tmp"
+    # Filtered, not appended wholesale: this file is sourced by bash, so a
+    # stray line from the helper would be executed rather than ignored.
+    printf '%s\n' "$tokens" | grep '^WATCHDOG_TOKEN_' >> "$tmp"
     cat "$tmp" > /etc/corex/watchdog.conf
     rm -f "$tmp"
     chmod 640 /etc/corex/watchdog.conf

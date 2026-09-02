@@ -38,6 +38,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
   the watchdog is running, so a silent phone can be told apart from nothing
   measuring.
 
+- **Readable alert formatting.** Kuma's default Telegram message is
+  `[name] [status] msg` on one line, which buries the two things read first.
+  `watchdog setup` now applies a message template putting the verdict and the
+  service on line one, where the phone's notification preview shows them, and
+  the detail below. It skips any Telegram notification that already has a
+  template, so an operator's own is never overwritten.
+
+  MarkdownV2 rather than HTML, because in that mode Kuma escapes the
+  interpolated values, so a container name or an error string containing
+  brackets or a hyphen cannot break the parse and silently drop the whole
+  notification.
+
+  Each alert is now built as three parts: what happened with numbers, who is
+  responsible, and what to run about it. Container faults get one line each,
+  since a container can be in several of those states at once. The log keeps
+  the flattened single-line form so `watchdog show` and grep still work.
+
 - **Log rotation for CoreX logs.** Nothing rotated them before. The blackbox
   log gets its own longer schedule because it is crash evidence rather than
   operational noise (gotcha #16), and rotation needs an `su root syslog`
@@ -45,6 +62,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
   group-writable.
 
 ### Fixed
+- **`watchdog test` never actually alerted.** It sent one DOWN beat, and the
+  monitor allows a single retry, so the beat only reached PENDING and no
+  notification was ever sent. It sends two now, which is what crosses the
+  retry threshold, and the next scheduled cycle delivers the recovery.
+
 - **Time Machine had been crash-looping 60 times and nothing reported it.**
   `CUSTOM_SMB_CONF=true` tells `mbentley/timemachine` that the operator
   supplies the whole of `/etc/samba/smb.conf`, so the image generates nothing

@@ -574,8 +574,26 @@ Six checks run every 60 seconds:
 | Container health | a container is stopped while set to restart, is unhealthy, was OOM-killed, or is restart-looping |
 | Thermal shedding | the guardian currently has services stopped |
 
-Every alert names the containers responsible. "The box is hot" is not
-actionable; "88C, top CPU: immich-ml 190%, nextcloud 52%" is.
+Every alert names the containers responsible, and says what to run about it.
+Setup also applies a Telegram message template, so alerts arrive with the
+verdict and the service on the first line and the detail below:
+
+```
+🔴 Down  Container Health
+
+Stopped but set to restart: timemachine
+Restart-looping: n8n (3x)
+Cause: docker logs --tail 30 timemachine
+```
+
+```
+🔴 Down  CPU Temperature
+
+88C, over the 80C limit.
+Heaviest: immich-ml 190%, nextcloud 52%
+```
+
+If you already wrote your own template in Kuma, setup leaves it alone.
 
 The container check reads restart policy as intent, so a service switched off
 with `corex-manage.sh disable` does not alert. That is what makes it safe to
