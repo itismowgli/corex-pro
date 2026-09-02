@@ -105,7 +105,7 @@ DCEOF
     docker compose -f "${dir}/docker-compose.yml" up -d \
         || log_warning "n8n may not have started — check: docker ps"
     state_service_installed "n8n"
-    log_success "n8n deployed (5678, n8n.${DOMAIN})"
+    log_success "n8n deployed (5678, ${sub}.${DOMAIN})"
 }
 
 n8n_destroy() {
