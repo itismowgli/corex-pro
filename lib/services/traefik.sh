@@ -198,6 +198,13 @@ ACMEEOF
 
     # ── Static config: entrypoints, providers, certificate resolvers ───
     cat > "${dir}/traefik.yml" << TEOF
+# Traefik defaults to log level ERROR, which hides ALL ACME activity —
+# including the reason a certificate was never requested. A misconfigured
+# resolver then presents only as a browser warning with an empty log, which is
+# close to undiagnosable. INFO is quiet in normal operation (a handful of lines
+# at startup) and is the difference between a five-minute fix and an afternoon.
+log:
+  level: INFO
 api:
   dashboard: true
   # insecure mode binds to the 'traefik' entrypoint (127.0.0.1:8080)
