@@ -9,6 +9,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 ## [Unreleased]
 
 ### Fixed
+- **`corex manage health` labelled a live reading as pre-crash evidence.** On
+  detecting an unclean shutdown it printed the last line of `blackbox.log`
+  under "Last health sample before it died" — but that line comes from the
+  *running* system, so a perfectly healthy current reading was presented as the
+  state at the moment of the crash. It now selects the last sample recorded
+  before the current boot began, and says so plainly when none exists (e.g.
+  the blackbox was not yet installed during that boot).
 - **A successful `corex update` dropped the user on the interactive-setup
   screen.** `do_update` ended with `exec bash corex.sh "$@"`, but inside that
   function `"$@"` is the function's own arguments and all three call sites

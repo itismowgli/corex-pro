@@ -648,8 +648,22 @@ cmd_health() {
         || markers=0
     if [[ "$markers" == "0" ]]; then
         echo -e "${RED}UNCLEAN${NC} (power loss, thermal trip, or hang)"
-        echo "      Last health sample before it died:"
-        grep -E 'temp=' /mnt/corex-data/blackbox.log 2>/dev/null | tail -1 | sed 's/^/        /'
+        # The useful sample is the last one recorded BEFORE the current boot.
+        # Simply tailing the log prints a reading from the running system, which
+        # would be labelled as pre-crash evidence while actually describing now.
+        local boot_ts pre_sample
+        boot_ts=$(date -d "$(uptime -s)" +%Y-%m-%dT%H:%M:%S 2>/dev/null)
+        if [[ -n "$boot_ts" ]]; then
+            pre_sample=$(awk -v b="$boot_ts" '$1 < b' \
+                /mnt/corex-data/blackbox.log 2>/dev/null | grep -E 'temp=' | tail -1)
+        fi
+        if [[ -n "${pre_sample:-}" ]]; then
+            echo "      Last health sample before it died:"
+            echo "        ${pre_sample}"
+        else
+            echo "      No pre-crash sample recorded — the blackbox was not"
+            echo "      running during that boot. Samples begin from this boot on."
+        fi
     else
         echo -e "${GREEN}clean${NC}"
     fi
