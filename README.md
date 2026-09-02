@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://img.shields.io/badge/CoreX_Pro-v3.3.0-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
+  <img src="https://img.shields.io/badge/CoreX_Pro-v3.4.0-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
   <img src="https://img.shields.io/badge/Ubuntu-24.04_LTS-E95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Ubuntu">
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
 </div>
@@ -582,6 +582,34 @@ sudo bash corex-manage.sh network-check # HTTPS, certificates, DNS per service
 | Services stopped by themselves | The thermal guardian shed load. Check `blackbox.log` and the temperature |
 | Machine crashes with nothing in the log | Almost certainly heat. The last line of `blackbox.log` will show it |
 | Traefik dashboard refuses connections | It is bound to the server's loopback. Use an SSH tunnel |
+| The mail hostname returns 502 while the container is healthy | A bot scanned the hostname and Stalwart banned the proxy's container IP, not the bot's. `corex manage repair stalwart` clears it. See below |
+| Portainer returns 500 through Traefik but 200 on port 9443 | Its self-signed certificate is issued for `0.0.0.0`, so Traefik cannot verify it. Repair Traefik, then Portainer |
+| The dashboard says no services are installed | It cannot read `/etc/corex/state.json`. Check the file's mode, then `docker logs corex-dashboard` |
+
+### Stalwart bans the proxy instead of the scanner
+
+Stalwart bans any IP that probes scanner paths. Behind a proxy the address it
+sees is the proxy's, so a single bot request to `mail.DOMAIN//wp-content/.env`
+bans cloudflared and cuts off every external visitor at once. The container
+stays up and the LAN path keeps working, because Traefik has a different
+container IP, which makes it look like a tunnel problem. Only
+`docker logs stalwart` names the cause:
+
+```
+Banned due to scan (security.scan-ban) remoteIp=172.18.0.11 path="//wp-content/.env"
+```
+
+Restarting clears the ban list, which is held in memory. To stop it recurring,
+set these two in Stalwart's own settings once initial setup is finished:
+
+| Setting | Value |
+|---|---|
+| `proxyTrustedNetworks` | `172.16.0.0/12` |
+| `useXForwarded` | `true` |
+
+Together they tell Stalwart to trust the Docker network as a proxy and to ban
+the real client from the forwarded header. They live in Stalwart's store, so
+they cannot be set through environment variables or the compose file.
 
 Traefik logs at INFO, which is where ACME problems show up:
 

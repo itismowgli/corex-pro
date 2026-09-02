@@ -6,6 +6,60 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.4.0] - 2026-09-02
+
+### Fixed
+- **The dashboard reported "No services installed" on a box running 36
+  containers.** `state.json` is mode 0600 root, the dashboard container runs as
+  `nobody`, and `loadState` discarded the read error. The file is now 0644 and
+  the read failure is logged. Every write site re-applies the mode, because
+  `mv` from `mktemp` preserves 0600 and a single `state_set` silently re-broke
+  it.
+- **The Cloudflare tunnel token was stored in `state.json`**, which is
+  bind-mounted into that same web-facing container. It now lives in
+  `${DOCKER_ROOT}/cloudflared/.tunnel-token` at mode 0600, matching every other
+  CoreX secret. `state_set` refuses secret-looking keys outright rather than
+  trusting callers, and `state_strip_secrets` removes the legacy copy from an
+  installed box.
+- **A repair destroyed working Cloudflare tunnels.** `cloudflared_deploy` ran
+  `docker rm -f cloudflared` before checking for a token, so a repair on a box
+  whose `state.json` lacked one tore down all external access and returned only
+  a warning. The token is resolved first, from env, the dotfile, legacy
+  `state.json`, or the running compose file, and an existing tunnel is left
+  alone when no token can be found.
+- **The dashboard mounted `/root/corex-credentials.txt`** and never read it.
+  The container cannot read it either, so the mount only exposed every service
+  password to a web-facing service. Removed.
+- **Stalwart reported healthy through a total external mail outage.** A bot
+  probed `mail.DOMAIN//wp-content/.env`; because the request arrived through
+  the tunnel, Stalwart banned cloudflared's container IP and with it every
+  external visitor. Traefik has a different container IP, so the LAN path kept
+  working and the failure looked like tunnel misrouting. `stalwart_status` now
+  returns UNHEALTHY when a proxy IP is banned or when the server is still in
+  bootstrap mode, since both leave mail unusable while `docker ps` looks fine.
+- **Portainer returned 500 through Traefik on every request.** Its self-signed
+  certificate is issued for `0.0.0.0`, so Traefik could not verify it against
+  the container IP. `dynamic.yml` now defines an `insecure-backend`
+  serversTransport that Portainer opts into by label. Scoped on purpose:
+  `serversTransport.insecureSkipVerify` in `traefik.yml` would disable backend
+  verification for every route.
+
+### Added
+- `state_strip_secrets` for migrating a credential out of an existing
+  `state.json`.
+- Detection for Stalwart bootstrap mode and for a banned reverse proxy, both
+  surfaced through `corex doctor` and `corex manage repair stalwart`.
+- Unit tests covering the no-secrets invariant, the state file mode after a
+  write, the token resolution order, and the honest Stalwart status.
+
+### Documented
+- CLAUDE.md gotcha #23: Stalwart bans the reverse proxy, not the scanner, and
+  the two settings that fix it for good.
+- CLAUDE.md gotcha #24: `state.json` must never hold a credential, and why its
+  mode is load-bearing.
+
+---
+
 ## [v3.3.0] - 2026-09-02
 
 ### Fixed
