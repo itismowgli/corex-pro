@@ -166,7 +166,9 @@ _stalwart_proxy_banned() {
 
     for ip in $proxy_ips; do
         [[ -n "$ip" ]] || continue
-        echo "$recent" | grep -q "$ip" && return 0
+        # Pattern match rather than `| grep -q`, for the pipefail/SIGPIPE
+        # reason described in _stalwart_bootstrap_mode.
+        [[ "$recent" == *"$ip"* ]] && return 0
     done
     return 1
 }
@@ -177,7 +179,13 @@ _stalwart_proxy_banned() {
 # HTTP and looks healthy but cannot send or receive mail.
 _stalwart_bootstrap_mode() {
     container_running "stalwart" || return 1
-    docker logs stalwart 2>&1 | grep -q "server.bootstrap-mode"
+    # No pipe into `grep -q` here: grep exits on the first match, docker logs
+    # takes SIGPIPE, and `set -o pipefail` reports the pipeline as failing
+    # with 141. Under pipefail that inverts the result of every such check, so
+    # this reported "not in bootstrap mode" precisely when it was.
+    local logs
+    logs=$(docker logs stalwart 2>&1) || true
+    [[ "$logs" == *"server.bootstrap-mode"* ]]
 }
 
 stalwart_status() {

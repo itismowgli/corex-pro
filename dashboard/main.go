@@ -221,6 +221,25 @@ func getServices(state CoreXState) []ServiceInfo {
 	running := getRunningContainers()
 	var svcs []ServiceInfo
 
+	// Health belongs to the service modules, which know more than "is the
+	// container up". Stalwart is the clearest case: a bootstrap-mode server,
+	// or one that has banned the proxy IP in front of it, is running and
+	// completely unusable. Deriving health from docker ps alone made this
+	// dashboard disagree with `corex doctor` and report such a service
+	// HEALTHY. Fall back to the container check only if the modules cannot
+	// be consulted.
+	moduleStatus := map[string]string{}
+	if out, err := runManage("status", "--plain"); err == nil {
+		for _, line := range strings.Split(out, "\n") {
+			parts := strings.SplitN(strings.TrimSpace(line), "\t", 2)
+			if len(parts) == 2 && parts[0] != "" {
+				moduleStatus[parts[0]] = strings.TrimSpace(parts[1])
+			}
+		}
+	} else {
+		log.Printf("serviceList: module status unavailable, falling back to container state: %v", err)
+	}
+
 	for name, entry := range state.Services {
 		if !entry.Installed {
 			continue
@@ -233,6 +252,9 @@ func getServices(state CoreXState) []ServiceInfo {
 			} else if containerExists(container) {
 				status = "UNHEALTHY"
 			}
+		}
+		if ms, ok := moduleStatus[name]; ok && ms != "" && ms != "UNKNOWN" {
+			status = ms
 		}
 
 		url := ""

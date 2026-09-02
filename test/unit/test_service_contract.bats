@@ -274,3 +274,22 @@ _repair_body() {
     run bash -c "echo '$body' | grep -c 'docker logs --since 24h'"
     [ "$output" = "0" ]
 }
+
+@test "no module pipes docker logs into grep -q" {
+    # grep -q exits on the first match, docker logs takes SIGPIPE, and
+    # `set -o pipefail` reports 141 — so under pipefail the check returns
+    # false exactly when it matched. This inverted Stalwart's bootstrap-mode
+    # detection, which is why a bootstrap-mode server reported HEALTHY.
+    # docker logs is unbounded, so it is the case that reliably triggers it.
+    local offenders=""
+    for f in "${REPO_ROOT}"/lib/services/*.sh "${REPO_ROOT}"/lib/*.sh; do
+        [ -f "$f" ] || continue
+        grep -nE 'docker logs[^|]*\|[[:space:]]*grep[^|]*-[a-zA-Z]*q' "$f" >/dev/null \
+            && offenders+=" $(basename "$f")"
+    done
+    [ -z "$offenders" ] || {
+        echo "docker logs piped into grep -q in:$offenders"
+        echo "Fix: capture the output, then match with [[ \$var == *pat* ]]."
+        false
+    }
+}

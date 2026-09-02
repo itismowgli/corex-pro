@@ -209,7 +209,44 @@ _all_services() {
 
 # ── status ────────────────────────────────────────────────────────────────────
 
+# ── cmd_status_plain ──────────────────────────────────────────────────────────
+# Machine-readable service health: one "<service><TAB><STATUS>" line, no
+# colour and no framing.
+#
+# Exists because the dashboard derived health from `docker ps` alone and so
+# disagreed with `corex doctor`: it showed Stalwart HEALTHY while the module's
+# own status function correctly reported UNHEALTHY (a banned proxy IP, or a
+# bootstrap-mode server that cannot carry mail). Health lives in the service
+# modules; anything displaying it should ask them rather than re-deriving it.
+cmd_status_plain() {
+    local installed svc module status_fn status
+    installed=$(state_list_installed)
+    [[ -n "$installed" ]] || return 0
+
+    while IFS= read -r svc; do
+        [[ -z "$svc" ]] && continue
+        module="${SCRIPT_DIR}/lib/services/${svc}.sh"
+        if [[ ! -f "$module" ]]; then
+            printf '%s\tNO MODULE\n' "$svc"
+            continue
+        fi
+        # shellcheck disable=SC1090
+        source "$module"
+        status_fn="${svc}_status"
+        if declare -f "$status_fn" &>/dev/null; then
+            status=$("$status_fn" 2>/dev/null || echo UNKNOWN)
+        else
+            status="UNKNOWN"
+        fi
+        printf '%s\t%s\n' "$svc" "$status"
+    done <<< "$installed"
+}
+
 cmd_status() {
+    if [[ "${1:-}" == "--plain" ]]; then
+        cmd_status_plain
+        return 0
+    fi
     echo ""
     echo -e "${CYAN}${BOLD}CoreX Pro — Service Health${NC}"
     echo "──────────────────────────────────────────────────────"
@@ -1692,7 +1729,7 @@ main() {
     shift || true
 
     case "$cmd" in
-        status)       cmd_status ;;
+        status)       cmd_status "${1:-}" ;;
         list)         cmd_list ;;
         add)          cmd_add "$@" ;;
         remove)       cmd_remove "$@" ;;
