@@ -345,20 +345,20 @@ do_update() {
         echo ""
     fi
 
-    # Without a terminal, `read` returns immediately with an empty answer, so
-    # this printed a bare "Aborted." and returned 0. A cron job or a
-    # `sudo -n bash corex.sh update` therefore reported success while updating
-    # nothing at all. Say what happened, and fail.
-    if [[ ! -t 0 ]]; then
+    local confirm
+    if [[ "${1:-}" == "--force" ]]; then
+        # --force is the non-interactive path: it answers the prompt as well as
+        # waiving the local-changes check.
+        confirm="y"
+    elif [[ ! -t 0 ]]; then
+        # Without a terminal, `read` returns immediately with an empty answer,
+        # so this printed a bare "Aborted." and returned 0. A cron job or a
+        # `sudo -n bash corex.sh update` therefore reported success while
+        # updating nothing at all. Say what happened, and fail.
         log_warning "No terminal, so the update cannot be confirmed interactively."
         log_warning "Run it from a shell, or non-interactively with: corex update --force"
         _restore_repo_owner
         return 1
-    fi
-
-    local confirm
-    if [[ "${1:-}" == "--force" ]]; then
-        confirm="y"
     else
         read -r -p "Update CoreX Pro (${update_desc})? [y/N]: " confirm
     fi

@@ -501,7 +501,13 @@ _repair_body() {
     body=$(awk '/^do_update\(\)/,/^}/' "${REPO_ROOT}/corex.sh")
     echo "$body" | grep -q '! -t 0'
     # The no-terminal branch must return non-zero.
-    echo "$body" | grep -A 5 '! -t 0' | grep -q 'return 1'
-    # --force must be a usable non-interactive path.
-    echo "$body" | grep -q 'confirm="y"'
+    echo "$body" | grep -A 8 '! -t 0' | grep -q 'return 1'
+    # --force must be a usable non-interactive path, so it has to be tested
+    # BEFORE the terminal check or it cannot be used without a terminal.
+    local force_line tty_line
+    force_line=$(echo "$body" | grep -n 'confirm="y"' | head -1 | cut -d: -f1)
+    tty_line=$(echo "$body" | grep -n '! -t 0' | head -1 | cut -d: -f1)
+    [ -n "$force_line" ]
+    [ -n "$tty_line" ]
+    [ "$force_line" -lt "$tty_line" ]
 }
