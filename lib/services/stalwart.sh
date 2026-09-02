@@ -35,16 +35,27 @@ stalwart_firewall() {
     ufw allow 993/tcp comment 'IMAPS (encrypted mail retrieval)' 2>/dev/null || true
 }
 
-stalwart_deploy() {
+_stalwart_write_compose() {
     stalwart_dirs
     local dir="${DOCKER_ROOT}/stalwart"
 
-    # Generate admin password before starting the container.
-    # Avoids log-scraping for credentials (docker logs readable by docker group).
-    # STALWART_ADMIN_PASS is set externally by the installer; fallback generates here.
+    # Generate the admin password up front so it is known, not log-scraped.
+    #
+    # It must also be STABLE across re-runs. The previous version regenerated
+    # it whenever STALWART_ADMIN_PASS was unset — the case for every
+    # `corex manage repair stalwart` — so a repair silently changed the
+    # administrator password to a value nothing recorded. Persisted in its own
+    # 0600 file rather than corex-credentials.txt, whose format is parsed by
+    # exact grep patterns in phase 0 (CLAUDE.md "What NOT to Do" #2).
+    local pass_file="${dir}/.admin-password"
+    if [[ -z "${STALWART_ADMIN_PASS:-}" ]] && [[ -s "$pass_file" ]]; then
+        STALWART_ADMIN_PASS=$(cat "$pass_file")
+    fi
     if [[ -z "${STALWART_ADMIN_PASS:-}" ]]; then
         STALWART_ADMIN_PASS=$(openssl rand -base64 32 | tr -d '/+=' | head -c 32)
     fi
+    printf '%s' "$STALWART_ADMIN_PASS" > "$pass_file"
+    chmod 600 "$pass_file"
     export STALWART_ADMIN_PASS
 
     cat > "${dir}/docker-compose.yml" << DCEOF
@@ -65,11 +76,19 @@ services:
     volumes:
       - ${DATA_ROOT}/stalwart-data:/opt/stalwart-mail
     environment:
-      # Bootstrap admin credentials on first run.
-      # Stalwart v0.7+ reads these env vars to set the initial admin password.
-      # If your version doesn't support this, retrieve via: docker logs stalwart | grep password
-      STALWART_ADMIN_USER: "admin"
-      STALWART_ADMIN_SECRET: "${STALWART_ADMIN_PASS}"
+      # Pin the administrator credential on first run.
+      #
+      # STALWART_ADMIN_USER / STALWART_ADMIN_SECRET are NOT read by current
+      # Stalwart images. Setting them looked correct but did nothing, so
+      # Stalwart fell back to "bootstrap mode": it generated its own random
+      # temporary password, printed it once to the container log, and CoreX's
+      # generated password was never in effect. If that log line was missed or
+      # rotated away the instance became permanently unreachable — observed in
+      # the field as a mail server nobody could ever log into.
+      #
+      # STALWART_RECOVERY_ADMIN is the supported variable, in user:password
+      # form, and Stalwart's own bootstrap log message points at it.
+      STALWART_RECOVERY_ADMIN: "admin:${STALWART_ADMIN_PASS}"
     networks: [proxy-net]
     deploy:
       resources:
@@ -87,14 +106,19 @@ services:
 networks:
   proxy-net: { external: true }
 DCEOF
+}
+
+stalwart_deploy() {
+    _stalwart_write_compose
+    # `dir` is local to the writer, so it must be re-declared here.
+    local dir="${DOCKER_ROOT}/stalwart"
 
     docker compose -f "${dir}/docker-compose.yml" up -d \
         || log_warning "Stalwart may not have started — check: docker ps"
 
     state_service_installed "stalwart"
     log_success "Stalwart Mail deployed (SMTP:25/587, IMAP:993, mail.${DOMAIN})"
-    log_info "Admin credentials saved to credentials file. If login fails, check:"
-    log_info "  docker logs stalwart | grep -i password"
+    log_info "Admin login: admin / password in ${dir}/.admin-password"
 }
 
 stalwart_destroy() {
@@ -111,6 +135,11 @@ stalwart_status() {
 }
 
 stalwart_repair() {
+    # Regenerate the compose file before recreating. Without this, repair
+    # rebuilt the container from a stale compose file, so configuration fixes
+    # never reached an existing install — the same trap fixed for Nextcloud
+    # in v2.4.2.
+    _stalwart_write_compose
     local dir="${DOCKER_ROOT}/stalwart"
     [[ -f "${dir}/docker-compose.yml" ]] && \
         docker compose -f "${dir}/docker-compose.yml" up -d --force-recreate
@@ -119,5 +148,7 @@ stalwart_repair() {
 stalwart_credentials() {
     echo "Stalwart Mail: https://mail.${DOMAIN}"
     echo "  Admin user: admin"
-    echo "  Admin pass: ${STALWART_ADMIN_PASS:-run: docker logs stalwart | grep password}"
+    echo "  Admin user: admin"
+    echo "  Admin pass: ${STALWART_ADMIN_PASS:-see ${DOCKER_ROOT}/stalwart/.admin-password}"
+    echo "    (also kept at ${DOCKER_ROOT}/stalwart/.admin-password, mode 600)"
 }

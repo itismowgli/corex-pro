@@ -378,11 +378,33 @@ Portainer listens on 9443 with HTTPS internally. Traefik must be told to use
 HTTPS: add `traefik.http.services.portainer.loadbalancer.server.scheme=https`.
 Without this, Traefik sends HTTP to an HTTPS endpoint → bad handshake.
 
-### 3. Stalwart admin password
+### 3. Stalwart admin password — pin it, never scrape the log
 
-Stalwart generates its own admin password on first boot and prints it to stdout.
-The installer waits ~20 seconds, then reads it from `docker logs`. If this fails,
-credential file gets a placeholder. To recover: `docker logs stalwart | grep password`.
+`STALWART_ADMIN_USER` / `STALWART_ADMIN_SECRET` are **not read** by current
+Stalwart images. CoreX set them for a long time, which looked correct and did
+nothing: Stalwart fell back to **bootstrap mode**, generated its own random
+temporary password, and printed it to the container log exactly once.
+
+The result in the field was a mail server nobody could ever log into — the
+credentials file had no Stalwart entry at all, and the only copy of the
+password was a log line. The service appeared healthy the whole time.
+
+The supported variable is `STALWART_RECOVERY_ADMIN`, in `user:password` form,
+and Stalwart's own bootstrap message points at it:
+
+```yaml
+STALWART_RECOVERY_ADMIN: "admin:${STALWART_ADMIN_PASS}"
+```
+
+The password is also persisted to `${DOCKER_ROOT}/stalwart/.admin-password`
+(0600), because it must stay **stable across re-runs** — the previous code
+regenerated it whenever `STALWART_ADMIN_PASS` was unset, which is every
+`corex manage repair stalwart`, silently changing the admin password to a
+value nothing recorded.
+
+To recover a lost password: read that file, or set
+`STALWART_RECOVERY_ADMIN` to a known value and recreate the container. As a
+last resort the bootstrap password may still be in `docker logs stalwart`.
 
 ### 4. Nextcloud behind proxy (3 required env vars)
 
