@@ -6,6 +6,51 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- **UFW silently dropped and logged all Docker Swarm / Coolify overlay traffic.**
+  `lib/security.sh` allowed only `docker0` and `172.16.0.0/12`, but Swarm-based
+  services (Coolify) allocate overlay networks from `10.0.0.0/8`. Every overlay
+  packet (e.g. `10.0.1.x -> 10.0.0.1`) was dropped and kernel-logged every
+  10-60 seconds, producing a continuous `[UFW BLOCK]` flood that buried real
+  security events. Added an explicit `10.0.0.0/8` allow rule and an explicit
+  `ufw logging low` so the intent is recorded rather than inherited.
+- **`vm.dirty_ratio` lowered from 40% to 10%** (`dirty_background_ratio` 10 -> 5,
+  added `dirty_expire_centisecs=3000`). Allowing 40% of RAM to hold un-flushed
+  writes meant multiple GB of unwritten data during heavy transfers; on an
+  unclean shutdown all of it is lost, risking MariaDB/PostgreSQL corruption. It
+  also caused multi-second stalls on flush.
+
+### Added
+- **Systemd journal size cap** (`/etc/systemd/journald.conf.d/99-corex.conf`).
+  journald previously ran with its default of 10% of the filesystem and was
+  never bounded. Now `SystemMaxUse=500M`, `SystemKeepFree=1G`,
+  `MaxRetentionSec=1month`, with `Storage=persistent` retained so post-crash
+  forensics remain possible.
+- **Blackbox crash-forensics recorder** — `corex-blackbox.timer` samples
+  temperature, load, memory, swap, CPU throttle count and container count to
+  `/mnt/corex-data/blackbox.log` every 20 seconds. An unclean shutdown leaves
+  nothing in the journal because journald never flushes; this makes the last
+  line before a crash the diagnostic. Self-truncating at ~20MB.
+- **Hardware watchdog** (`RuntimeWatchdogSec=60s`) so a hard kernel hang
+  triggers an automatic reset instead of leaving the machine dark until it is
+  manually power-cycled.
+- **`lm-sensors` and `smartmontools`** added to the install package set. Neither
+  was previously installed, so no temperature or SMART disk health data was
+  available on any CoreX system.
+
+### Changed
+- **`corex manage cleanup` now actually reclaims the bulk of recoverable space.**
+  It previously pruned only stale images, build cache and `/tmp`. It now also
+  vacuums the systemd journal (30 day / 500M), clears the apt cache, prunes
+  unused Docker networks, removes rotated logs older than 30 days, and reports
+  before/after free space per filesystem. Docker volumes remain deliberately
+  un-pruned. `apt-get autoremove --purge` is reported but not executed, since a
+  dpkg transaction interrupted by a crash can remove a running kernel.
+
+---
+
 ## [v3.0.0] - 2026-06-04
 
 ### Added

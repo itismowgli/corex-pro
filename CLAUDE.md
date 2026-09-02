@@ -553,6 +553,46 @@ DNS race conditions. Some queries hit the fallback server, which returns
 Cloudflare IPs instead of the LAN IP. The `lan-setup` command warns against
 this in Steps 1 and 2.
 
+### 15. UFW must allow 10.0.0.0/8, not just 172.16.0.0/12
+
+Docker's default address pool is `172.16.0.0/12`, but Docker **Swarm** — which
+Coolify uses — allocates overlay networks from `10.0.0.0/8`. A UFW config that
+only allows `172.16.0.0/12` silently drops every overlay packet and kernel-logs
+each one, producing a `[UFW BLOCK]` entry every 10-60 seconds:
+
+```
+[UFW BLOCK] IN=br-<hash> SRC=10.0.1.5 DST=10.0.0.1 PROTO=TCP DPT=23517
+```
+
+This is self-inflicted noise, not an attack, and it buries genuine security
+events. `lib/security.sh` now allows both ranges. Note that `ufw allow in on
+br-+` is **not** a valid workaround — ufw validates interface names against
+`[a-zA-Z0-9.:_-]+` and rejects the `+` wildcard outright.
+
+### 16. Unclean shutdowns leave no journal evidence — use the blackbox log
+
+When the machine loses power or hard-hangs, journald never flushes, so the
+journal simply stops mid-line with no `systemd-shutdown` or `Reached target
+Shutdown` marker. Diagnosing that class of failure from the journal alone is
+impossible. Two things make it tractable:
+
+- **Detecting it:** count clean-shutdown markers in the previous boot. Zero
+  means power loss or hard hang, not a reboot:
+  ```bash
+  journalctl -b -1 | grep -cE "systemd-shutdown|Reached target Shutdown|Powering off"
+  ```
+  Also note that `last -x` showing every boot as "still running" is the same
+  signal — no boot ever recorded a clean shutdown.
+- **Diagnosing it:** `/mnt/corex-data/blackbox.log`, written every 20s by
+  `corex-blackbox.timer`, survives unclean shutdown because it is a plain
+  append to the SSD. The last line before the gap gives temperature, load,
+  memory, swap and CPU throttle count at the moment of death — which
+  distinguishes thermal shutdown from PSU failure from OOM.
+
+**Do not clear logs on a crashing system before archiving them.** The journal
+is the only crash evidence; `corex manage cleanup` vacuums it. Archive
+`journalctl -b -1` first.
+
 ---
 
 ## What NOT to Do

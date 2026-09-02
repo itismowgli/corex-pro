@@ -468,11 +468,51 @@ cmd_cleanup() {
         | grep -v "^$" | sed 's/^/  /' || true
     echo ""
 
+    # Journal usage (was never reported or reclaimed)
+    echo -e "  ${BOLD}systemd journal:${NC} $(journalctl --disk-usage 2>/dev/null \
+        | grep -oE '[0-9.]+[GMK]' | head -1 || echo 'n/a')"
+    echo -e "  ${BOLD}apt cache:${NC} $(du -sh /var/cache/apt/archives 2>/dev/null \
+        | cut -f1 || echo 'n/a')"
+    echo ""
+
     if [[ "$dry_run" == "false" ]]; then
+        local before_root before_data
+        before_root=$(df --output=avail / 2>/dev/null | tail -1)
+        before_data=$(df --output=avail /mnt/corex-data 2>/dev/null | tail -1)
+
         echo -e "  ${BOLD}Removing stale images...${NC}"
         docker image prune --filter "until=168h" --force 2>/dev/null || true
+        docker image prune --force 2>/dev/null || true
+
+        # Unused networks accumulate as services are added/removed. Volumes are
+        # deliberately NOT pruned — that would destroy live service data.
+        echo -e "  ${BOLD}Removing unused Docker networks...${NC}"
+        docker network prune --force 2>/dev/null || true
+
+        echo -e "  ${BOLD}Vacuuming systemd journal (keep 30d, cap 500M)...${NC}"
+        journalctl --vacuum-time=30d &>/dev/null || true
+        journalctl --vacuum-size=500M &>/dev/null || true
+
+        echo -e "  ${BOLD}Clearing apt cache...${NC}"
+        apt-get clean 2>/dev/null || true
+
+        echo -e "  ${BOLD}Removing rotated logs older than 30 days...${NC}"
+        find /var/log -type f -name '*.gz' -mtime +30 -delete 2>/dev/null || true
+        find /var/log -type f -regex '.*\.[0-9]+$' -mtime +30 -delete 2>/dev/null || true
+
         echo -e "  ${BOLD}Cleaning old CoreX temp files...${NC}"
         find /tmp -name "corex-*" -mtime +1 -delete 2>/dev/null || true
+
+        local after_root after_data
+        after_root=$(df --output=avail / 2>/dev/null | tail -1)
+        after_data=$(df --output=avail /mnt/corex-data 2>/dev/null | tail -1)
+        echo ""
+        echo -e "  ${BOLD}Reclaimed:${NC}"
+        printf '    /              %s MB\n' "$(( ( ${after_root:-0} - ${before_root:-0} ) / 1024 ))"
+        printf '    /mnt/corex-data %s MB\n' "$(( ( ${after_data:-0} - ${before_data:-0} ) / 1024 ))"
+        echo ""
+        log_warning "Old kernels/orphans not removed (dpkg transaction)."
+        echo "    Run manually when the system is stable: apt-get autoremove --purge"
         log_success "Cleanup complete."
     else
         echo "  [DRY RUN] Run without --dry-run to apply cleanup."

@@ -23,6 +23,7 @@ phase2_security() {
         net-tools parted \
         avahi-daemon avahi-utils \
         logrotate rsync cron \
+        lm-sensors smartmontools \
         apparmor apparmor-utils \
         restic \
         || log_warning "Some package installs failed — continuing..."
@@ -178,12 +179,113 @@ fs.inotify.max_user_watches = 524288
 fs.inotify.max_user_instances = 512
 
 # ── Performance: VM tuning for file-server workloads ─────────────────────────
-vm.dirty_ratio = 40
-vm.dirty_background_ratio = 10
+# dirty_ratio caps how much RAM may hold un-flushed writes. The old value (40%)
+# meant many GB of unwritten data on a 32GB box — a power loss then discards all
+# of it, risking database corruption (MariaDB/PostgreSQL). It also causes
+# multi-second stalls when the kernel finally flushes. 10/5 keeps throughput
+# while bounding the loss window.
+vm.dirty_ratio = 10
+vm.dirty_background_ratio = 5
+vm.dirty_expire_centisecs = 3000
 vm.swappiness = 10
 SYEOF
     sysctl --system > /dev/null 2>&1
     log_success "Kernel hardened + network tuned for multi-gigabit performance"
+
+    # ── Journal size cap ─────────────────────────────────────────────────────
+    # systemd-journald defaults to 10% of the filesystem, which on a large SSD
+    # grows to many GB and was never bounded. Persistent storage is kept (it is
+    # what makes post-crash forensics possible) but capped.
+    log_info "Capping systemd journal size..."
+    mkdir -p /etc/systemd/journald.conf.d
+    cat > /etc/systemd/journald.conf.d/99-corex.conf << JEOF
+[Journal]
+Storage=persistent
+SystemMaxUse=500M
+SystemKeepFree=1G
+SystemMaxFileSize=50M
+MaxRetentionSec=1month
+JEOF
+    systemctl restart systemd-journald 2>/dev/null || true
+    log_success "Journal capped at 500M, 1 month retention"
+
+    # ── Crash forensics recorder ─────────────────────────────────────────────
+    # An unclean shutdown (power loss, thermal trip, hard hang) leaves nothing
+    # in the journal, because journald never gets to flush. This samples health
+    # to a plain file on the SSD every 20s, so the last line before a crash
+    # tells you the temperature, load and memory state at that moment.
+    log_info "Installing crash forensics recorder..."
+    cat > /usr/local/bin/corex-blackbox.sh << 'BBEOF'
+#!/bin/bash
+# Appends a health sample to the blackbox log. Survives unclean shutdown.
+LOG="/mnt/corex-data/blackbox.log"
+mkdir -p "$(dirname "$LOG")" 2>/dev/null
+temp=""
+if command -v sensors &>/dev/null; then
+    temp=$(sensors 2>/dev/null | grep -oE 'Tctl:.*?\+[0-9.]+' | grep -oE '[0-9.]+' | head -1)
+fi
+if [[ -z "$temp" ]]; then
+    for z in /sys/class/thermal/thermal_zone*/temp; do
+        [[ -r "$z" ]] && temp=$(( $(cat "$z" 2>/dev/null) / 1000 )) && break
+    done
+fi
+read -r l1 l5 l15 _ < /proc/loadavg
+mem=$(free -m | awk '/^Mem:/{printf "%d/%dMB", $3, $2}')
+swap=$(free -m | awk '/^Swap:/{printf "%d/%dMB", $3, $2}')
+throttle=$(cat /sys/devices/system/cpu/cpu0/thermal_throttle/core_throttle_count 2>/dev/null || echo "-")
+printf '%s temp=%sC load=%s/%s/%s mem=%s swap=%s throttle=%s containers=%s\n' \
+    "$(date -Is)" "${temp:-?}" "$l1" "$l5" "$l15" "$mem" "$swap" "$throttle" \
+    "$(docker ps -q 2>/dev/null | wc -l)" >> "$LOG"
+# Keep the file bounded (~last 3 days at 20s cadence).
+if [[ $(stat -c%s "$LOG" 2>/dev/null || echo 0) -gt 20000000 ]]; then
+    tail -n 100000 "$LOG" > "${LOG}.tmp" && mv "${LOG}.tmp" "$LOG"
+fi
+BBEOF
+    chmod +x /usr/local/bin/corex-blackbox.sh
+
+    cat > /etc/systemd/system/corex-blackbox.service << BBSEOF
+[Unit]
+Description=CoreX blackbox health recorder
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/corex-blackbox.sh
+BBSEOF
+
+    cat > /etc/systemd/system/corex-blackbox.timer << BBTEOF
+[Unit]
+Description=Sample CoreX health every 20s for post-crash forensics
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=20s
+AccuracySec=1s
+Persistent=false
+
+[Install]
+WantedBy=timers.target
+BBTEOF
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable --now corex-blackbox.timer 2>/dev/null || true
+
+    # Detect sensors non-interactively so temperatures are actually available.
+    command -v sensors-detect &>/dev/null && yes | sensors-detect --auto &>/dev/null || true
+    log_success "Blackbox recorder active (/mnt/corex-data/blackbox.log)"
+
+    # ── Hardware watchdog ────────────────────────────────────────────────────
+    # If the kernel hard-hangs, systemd's watchdog resets the box instead of
+    # leaving it dark until someone power-cycles it manually.
+    log_info "Enabling systemd hardware watchdog..."
+    mkdir -p /etc/systemd/system.conf.d
+    cat > /etc/systemd/system.conf.d/99-corex-watchdog.conf << WDEOF
+[Manager]
+RuntimeWatchdogSec=60s
+RebootWatchdogSec=10min
+ShutdownWatchdogSec=10min
+WDEOF
+    systemctl daemon-reexec 2>/dev/null || true
+    log_success "Watchdog armed (60s runtime timeout)"
 
     # ── UFW Firewall ──────────────────────────────────────────────────────────
     log_info "Configuring UFW firewall..."
@@ -222,7 +324,18 @@ SYEOF
 
     # Docker internal traffic (prevents 502 Bad Gateway)
     ufw allow in on docker0
-    ufw allow from 172.16.0.0/12 to any
+    # Compose's per-project bridges (br-<hash>) draw from Docker's default
+    # address pool, so the 172.16.0.0/12 rule below already covers them.
+    ufw allow from 172.16.0.0/12 to any comment 'Docker default address pool'
+    # Docker Swarm / Coolify allocate overlay networks from 10.0.0.0/8, which is
+    # outside 172.16.0.0/12. Without this, overlay traffic (e.g. 10.0.1.x ->
+    # 10.0.0.1) is dropped and logged continuously.
+    ufw allow from 10.0.0.0/8 to any comment 'Docker Swarm / Coolify overlay'
+
+    # Blocked-packet logging stays ON — it is real security signal. The log
+    # flood it used to produce came from the missing 10.0.0.0/8 rule above,
+    # not from logging being too verbose.
+    ufw logging low
 
     ufw --force enable
     log_success "UFW firewall active (${SSH_PORT}, 80, 443 + LAN services)"
