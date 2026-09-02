@@ -27,6 +27,11 @@ THERMAL_CRITICAL_C="${THERMAL_CRITICAL_C:-90}"
 THERMAL_EMERGENCY_C="${THERMAL_EMERGENCY_C:-97}"
 # Restore only once comfortably back down, to avoid flapping.
 THERMAL_RECOVER_C="${THERMAL_RECOVER_C:-72}"
+# Containers restarted per guardian cycle when recovering. Restoring the whole
+# shed list at once is what made a shed event self-sustaining: bringing 24
+# containers back together took a measured box from 79C to 96C in under two
+# minutes, one degree under the emergency threshold, which sheds them again.
+THERMAL_RESTORE_BATCH="${THERMAL_RESTORE_BATCH:-3}"
 # Consecutive samples required before acting (hysteresis).
 THERMAL_CONFIRM_SAMPLES="${THERMAL_CONFIRM_SAMPLES:-3}"
 
@@ -59,6 +64,11 @@ THERMAL_RECOVER_C=${THERMAL_RECOVER_C}
 # Consecutive samples above a threshold before acting (avoids reacting to
 # momentary spikes from a compile or a backup run).
 THERMAL_CONFIRM_SAMPLES=${THERMAL_CONFIRM_SAMPLES}
+
+# Containers restarted per cycle while recovering. Raise it only if the
+# machine has cooling headroom; restoring everything at once can push a
+# marginal box straight back over the shed threshold.
+THERMAL_RESTORE_BATCH=${THERMAL_RESTORE_BATCH}
 
 # Categories shed at SHED level, in order. Space-separated.
 THERMAL_SHED_TIER1="ai"
@@ -192,11 +202,20 @@ shed() {
     (( stopped > 0 )) && say "SHED ($reason): stopped $stopped container(s)"
 }
 
+# Restart at most $1 shed containers, oldest entry first. Anything not started
+# this cycle stays on the list, so the next sample sees the new temperature
+# before more load returns. Restoring the full list in one pass is what turned
+# a single shed event into a loop.
 restore() {
     [[ -s "$SHED_LIST" ]] || return 0
+    local batch="${1:-$THERMAL_RESTORE_BATCH}"
     local c restored=0 remaining=""
     while read -r c; do
         [[ -z "$c" ]] && continue
+        if (( restored >= batch )); then
+            remaining+="${c}"$'\n'
+            continue
+        fi
         if timeout 60 docker start "$c" >/dev/null 2>&1; then
             restored=$((restored+1))
         else
@@ -204,7 +223,10 @@ restore() {
         fi
     done < "$SHED_LIST"
     printf '%s' "$remaining" > "$SHED_LIST"
-    (( restored > 0 )) && say "RECOVERED: restarted $restored container(s)"
+    local left
+    left=$(grep -c . "$SHED_LIST" 2>/dev/null) || left=0
+    (( restored > 0 )) && \
+        say "RECOVERED at ${temp}C: restarted $restored container(s), $left still shed"
 }
 
 # ── Hysteresis: count consecutive samples in the same band ──────────────────
@@ -260,8 +282,23 @@ case "$band" in
     warn)
         say "WARN ${temp}C (no action; shed threshold ${THERMAL_SHED_C}C)"
         ;;
-    recover)
-        restore
+    normal|recover)
+        # Recovery cannot depend on reaching THERMAL_RECOVER_C. That is an
+        # absolute value, and on a machine whose idle temperature sits above
+        # it the shed list is never drained: a box measured idling at 79C to
+        # 84C with a recover threshold of 72C left 24 containers stopped
+        # indefinitely, with no error anywhere, because the guardian was
+        # waiting for a temperature the hardware never reaches.
+        #
+        # Anything below THERMAL_WARN_C is cool enough to take load back. The
+        # gap to THERMAL_SHED_C plus THERMAL_CONFIRM_SAMPLES supplies the
+        # hysteresis, and the batch limit keeps each step small. Below
+        # THERMAL_RECOVER_C there is real headroom, so recover faster.
+        if [[ "$band" == "recover" ]]; then
+            restore $(( THERMAL_RESTORE_BATCH * 2 ))
+        else
+            restore "$THERMAL_RESTORE_BATCH"
+        fi
         ;;
 esac
 TGEOF

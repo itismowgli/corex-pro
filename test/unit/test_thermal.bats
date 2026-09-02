@@ -193,3 +193,41 @@ setup() {
 @test "unattended upgrades does not auto-remove kernels" {
     grep -q 'Remove-Unused-Kernel-Packages "false"' "${REPO_ROOT}/lib/security.sh"
 }
+
+# ─── Recovery must be reachable and gradual ──────────────────────────────────
+
+@test "recovery happens below WARN, not only at RECOVER_C" {
+    # THERMAL_RECOVER_C is absolute. On a machine whose idle temperature sits
+    # above it the shed list is never drained: a box idling at 79C to 84C with
+    # a 72C recover threshold left 24 containers stopped indefinitely, with no
+    # error, because the guardian waited for a temperature the hardware never
+    # reaches.
+    local out="${BATS_TEST_TMPDIR:-/tmp}/guard-recover.sh"
+    awk "/cat > \/usr\/local\/bin\/corex-thermal-guard.sh << 'TGEOF'/{f=1;next} /^TGEOF$/{f=0} f" \
+        "$THERMAL_LIB" > "$out"
+    [ -s "$out" ]
+    grep -qE '^\s*normal\|recover\)' "$out"
+}
+
+@test "recovery restores a bounded batch per cycle" {
+    # Restoring the whole shed list at once took a measured box from 79C to
+    # 96C in under two minutes, one degree below the emergency threshold,
+    # which sheds everything again.
+    # shellcheck disable=SC1090
+    source "$THERMAL_LIB"
+    [ -n "$THERMAL_RESTORE_BATCH" ]
+    [ "$THERMAL_RESTORE_BATCH" -ge 1 ]
+    [ "$THERMAL_RESTORE_BATCH" -le 10 ]
+
+    local out="${BATS_TEST_TMPDIR:-/tmp}/guard-batch.sh"
+    awk "/cat > \/usr\/local\/bin\/corex-thermal-guard.sh << 'TGEOF'/{f=1;next} /^TGEOF$/{f=0} f" \
+        "$THERMAL_LIB" > "$out"
+    grep -q 'THERMAL_RESTORE_BATCH' "$out"
+    # The batch must actually cap the loop, not just be read.
+    grep -qE 'restored >= batch' "$out"
+}
+
+@test "restore batch is written into the config file" {
+    # Otherwise an operator cannot tune it on a box with more cooling.
+    grep -q 'THERMAL_RESTORE_BATCH=\${THERMAL_RESTORE_BATCH}' "$THERMAL_LIB"
+}

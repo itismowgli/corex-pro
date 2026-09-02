@@ -839,6 +839,37 @@ echo | openssl s_client -connect SERVER_IP:443 -servername sub.DOMAIN 2>/dev/nul
 # "CN=TRAEFIK DEFAULT CERT" => the default cert store is not loading
 ```
 
+### 25. Thermal recovery must be reachable, and must be gradual
+
+Two faults in the guardian, both silent, both observed on the same machine.
+
+**An absolute recover threshold can sit below the machine's idle floor.**
+Recovery only ran when the temperature reached `THERMAL_RECOVER_C` (72C). The
+box idles at 79C to 84C, so the guardian shed 24 containers and then waited
+for a temperature the hardware never reaches. Half the services were down
+indefinitely, with nothing in any log to say why, because from the guardian's
+point of view it was still too hot. Recovery now also runs in the `normal`
+band, meaning anything below `THERMAL_WARN_C`, with the gap to
+`THERMAL_SHED_C` and `THERMAL_CONFIRM_SAMPLES` supplying the hysteresis.
+
+**Restoring the whole shed list at once re-triggers the shed.** Measured while
+bringing containers back by hand, three at a time:
+
+| Started | Tctl |
+|---|---|
+| nextcloud-db, nextcloud-redis | 92.9C |
+| nextcloud, nextcloud-cron, nextcloud-whiteboard | 96.2C |
+| immich-db, immich-redis | 96.2C |
+
+From 79C to 96.2C in under two minutes, one degree below
+`THERMAL_EMERGENCY_C`. `restore` now restarts at most
+`THERMAL_RESTORE_BATCH` containers per cycle (six in the `recover` band), so
+each step is followed by a fresh sample.
+
+The wider point is that those numbers are a cooling verdict, not a tuning
+problem. A machine that reaches 96C from starting five containers cannot host
+the workload, and no amount of shedding logic changes that.
+
 ### 23. Stalwart bans the reverse proxy, not the scanner
 
 Stalwart auto-bans an IP that probes scanner paths. Behind a proxy it sees the
