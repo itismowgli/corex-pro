@@ -86,9 +86,12 @@ every mention of the `CLAUDE.md` filename counts as a hit:
 
 ```bash
 git log --format='%an <%ae>%n%s%n%b' -30 \
-  | grep -inE 'co-authored-by|generated with|assisted by|claude (code|opus|sonnet)|anthropic'
+  | grep -inE '^co-authored-by:|generated with \[|assisted by|claude (code|opus|sonnet)|anthropic'
 # must print nothing
 ```
+
+`Co-Authored-By` is anchored to the start of a line and followed by a colon so
+that prose describing this rule does not register as a violation.
 
 A commit that already carries attribution has to be amended or rebased out
 before it is pushed.
