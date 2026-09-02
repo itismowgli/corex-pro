@@ -25,8 +25,11 @@ FROM alpine:3.20
 
 # bash: needed to execute corex-manage.sh
 # docker-cli: needed for `docker ps`, `docker logs`, etc.
+# jq: corex-manage.sh reads state.json with it. Without jq every state_get
+#     returned empty, so `status --plain` printed nothing and the dashboard
+#     fell back to deriving health from `docker ps`.
 # ca-certificates: needed for HTTPS calls from shell scripts
-RUN apk add --no-cache bash docker-cli ca-certificates
+RUN apk add --no-cache bash docker-cli jq ca-certificates
 
 WORKDIR /app
 

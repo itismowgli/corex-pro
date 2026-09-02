@@ -1725,14 +1725,20 @@ main() {
     local cmd="${1:-help}"
     shift || true
 
-    # `status --plain` is read-only and needs Docker socket access, not root.
-    # The dashboard container runs as nobody on purpose, so requiring root
-    # here is what made it fall back to deriving health from `docker ps` and
-    # disagree with `corex doctor`. Every command that changes anything still
-    # goes through check_root below.
+    # Read-only commands do not need root, only Docker socket access. The
+    # dashboard container runs as nobody on purpose, so requiring root here is
+    # why it fell back to deriving health from `docker ps` (disagreeing with
+    # `corex doctor`) and why its Storage tab had never worked: main.go
+    # discarded the error, so "Run as root" was never shown. Every command
+    # that changes anything still goes through check_root below.
     if [[ "$cmd" == "status" && "${1:-}" == "--plain" ]]; then
         _load_config
         cmd_status_plain
+        return 0
+    fi
+    if [[ "$cmd" == "storage" && $EUID -ne 0 ]]; then
+        _load_config
+        cmd_storage
         return 0
     fi
 

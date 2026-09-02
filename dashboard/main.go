@@ -321,7 +321,13 @@ func renderTabContent(tab string, state CoreXState) (template.HTML, error) {
 		}
 
 	case "storage":
-		out, _ := runManage("storage")
+		out, err := runManage("storage")
+		if err != nil {
+			// Discarding this error is why the Storage tab silently showed
+			// nothing for so long: corex-manage.sh refused to run as nobody
+			// and the "Run as root" message went straight into the void.
+			log.Printf("storage tab: corex-manage storage failed: %v (output: %q)", err, out)
+		}
 		err := tmpl.ExecuteTemplate(&buf, "storage.html", struct {
 			Output string
 			State  CoreXState
