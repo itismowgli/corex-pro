@@ -80,7 +80,12 @@ ALEOF
     cat > "${dir}/docker-compose.yml" << DCEOF
 services:
   uptime-kuma:
-    image: louislam/uptime-kuma:latest
+    # Pinned, and not to :latest. That tag was last built in October 2025 and
+    # is frozen on the 1.x line: upstream ships the current release as :2 and
+    # :2.5.3, so a box tracking :latest sat ten months behind while every
+    # `corex manage update` reported success. A moving tag that stops moving is
+    # the inverse of gotcha #19 and just as silent.
+    image: louislam/uptime-kuma:2.5.3
     container_name: uptime-kuma
     restart: unless-stopped
     ports: ["3001:3001"]

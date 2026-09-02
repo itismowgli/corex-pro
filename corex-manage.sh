@@ -398,11 +398,20 @@ cmd_update() {
 
     if [[ "$target" == "--all" ]]; then
         log_step "Updating all installed services..."
-        local svc
+        local svc failed=""
         while IFS= read -r svc; do
             [[ -z "$svc" ]] && continue
-            _update_single "$svc"
+            _update_single "$svc" || failed+=" $svc"
         done < <(state_list_installed)
+        echo ""
+        if [[ -n "$failed" ]]; then
+            # Without this the run ended on whatever the last service printed,
+            # so a failure partway through was easy to miss entirely.
+            log_warning "Services that did not update:${failed}"
+            log_warning "Re-run for one of them: corex manage update <service>"
+            return 1
+        fi
+        log_success "All installed services processed."
     else
         _update_single "$target"
     fi
@@ -412,27 +421,65 @@ _update_single() {
     local svc="$1"
     local dir="${DOCKER_ROOT}/${svc}"
     if [[ ! -f "${dir}/docker-compose.yml" ]]; then
-        log_warning "No compose file for ${svc} — skipping"
+        log_warning "No compose file for ${svc}, skipping"
         return 0
     fi
-    # Digest check: skip pull+restart if image is already at latest
-    local image
-    image=$(docker compose -f "${dir}/docker-compose.yml" config --images 2>/dev/null | head -1)
-    if [[ -n "$image" ]]; then
-        local local_digest remote_digest
-        local_digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$image" 2>/dev/null || true)
-        remote_digest=$(docker manifest inspect "$image" 2>/dev/null | \
-            grep -oP '"digest":\s*"\K[^"]+' | head -1 || true)
-        if [[ -n "$local_digest" && -n "$remote_digest" && \
-              "$local_digest" == *"$remote_digest"* ]]; then
-            log_info "${svc}: already at latest — skipping pull"
-            return 0
-        fi
-    fi
+
     log_info "Updating ${svc}..."
-    docker compose -f "${dir}/docker-compose.yml" pull
-    docker compose -f "${dir}/docker-compose.yml" up -d
-    log_success "${svc} updated."
+
+    # Record what each image resolves to now, so the report afterwards can say
+    # which ones actually moved. The previous shortcut here compared one
+    # digest and returned early on a match, using
+    # `config --images | head -1`: a single image out of a stack. monitoring
+    # ships five and ai ships three, so one current image was enough to skip
+    # the entire stack, and it was always the same one (node-exporter, which
+    # rarely changes). It also compared a RepoDigest against a per-platform
+    # entry from `docker manifest inspect`, which are different digests by
+    # construction, so the match it was gating on could not be trusted either
+    # way. Let docker decide what needs fetching; it already skips layers it
+    # has.
+    local images before=""
+    images=$(docker compose -f "${dir}/docker-compose.yml" config --images 2>/dev/null)
+    local img
+    while IFS= read -r img; do
+        [[ -n "$img" ]] || continue
+        before+="${img} $(docker image inspect --format '{{.Id}}' "$img" 2>/dev/null || echo none)"$'\n'
+    done <<< "$images"
+
+    # A failed pull must not be reported as an update. This ran without
+    # checking, then ran `up -d` and logged success regardless, so a rate
+    # limit, an expired tag or a dropped connection all looked identical to a
+    # successful update.
+    if ! docker compose -f "${dir}/docker-compose.yml" pull; then
+        log_warning "${svc}: pull failed, containers left on their current images"
+        return 1
+    fi
+    if ! docker compose -f "${dir}/docker-compose.yml" up -d; then
+        log_warning "${svc}: pull succeeded but the containers did not come up"
+        return 1
+    fi
+
+    # Say what changed. An image whose tag has stopped moving upstream is
+    # otherwise invisible: uptime-kuma sat ten months behind because
+    # louislam/uptime-kuma:latest was frozen on the 1.x line while 2.x shipped
+    # under a different tag, and every update run reported success.
+    local changed=0 line old_id new_id
+    while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        img="${line%% *}"; old_id="${line##* }"
+        new_id=$(docker image inspect --format '{{.Id}}' "$img" 2>/dev/null || echo none)
+        if [[ "$old_id" != "$new_id" ]]; then
+            log_success "  ${img}: updated"
+            changed=$((changed + 1))
+        fi
+    done <<< "$before"
+
+    if (( changed > 0 )); then
+        log_success "${svc} updated (${changed} image(s) changed)."
+    else
+        log_info "${svc}: already current, no image changed."
+    fi
+    return 0
 }
 
 # ── storage ───────────────────────────────────────────────────────────────────
