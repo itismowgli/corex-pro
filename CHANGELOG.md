@@ -6,6 +6,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.5.2] - 2026-09-02
+
+### Fixed
+- **`corex update` refused to run on a repo that was already in sync.** It
+  reported "Local changes detected, update would overwrite them" on a checkout
+  zero commits behind, where there was nothing to pull and nothing that could
+  be overwritten. The three offending files were macOS AppleDouble sidecars
+  left behind by a file copy, and `git pull` does not touch an untracked file
+  unless an incoming commit writes the same path. The check ran before the
+  fetch, so "already up to date" never got a chance to win, and it used plain
+  `git status --porcelain`, which counts untracked files. It now runs after the
+  commits-behind count, considers tracked modifications plus untracked files
+  that collide with an incoming path, and lists the offending files rather than
+  leaving you to guess. Aborting also restores repository ownership, which the
+  early return skipped.
+
+### Added
+- `.gitignore` entries for `._*` and `.DS_Store`. Those sidecars arrive from
+  any macOS copy and are not project files.
+
+---
+
 ## [v3.5.1] - 2026-09-02
 
 ### Added
