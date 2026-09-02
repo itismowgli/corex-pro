@@ -52,6 +52,23 @@
           Stop
         </button>
         <button
+          hx-post="/api/service/{{.Name}}/restart"
+          hx-target="#action-result"
+          hx-swap="innerHTML"
+          hx-indicator="#spinner-{{.Name}}"
+          class="px-2.5 py-1 text-xs rounded bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors">
+          Restart
+        </button>
+        <button
+          hx-post="/api/service/{{.Name}}/repair"
+          hx-target="#action-result"
+          hx-swap="innerHTML"
+          hx-indicator="#spinner-{{.Name}}"
+          hx-confirm="Regenerate config and recreate {{.Label}}? No data is lost."
+          class="px-2.5 py-1 text-xs rounded bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors">
+          Repair
+        </button>
+        <button
           hx-post="/api/service/{{.Name}}/update"
           hx-target="#action-result"
           hx-swap="innerHTML"

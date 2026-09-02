@@ -1972,6 +1972,58 @@ RTEOF
 # The watchdog answers "what is degrading this box", which is the half of
 # monitoring the HTTP checks cannot cover. See lib/watchdog.sh for why it
 # pushes to Kuma rather than running a Prometheus stack.
+# ── corex manage restart <service> ────────────────────────────────────────────
+# Distinct from repair: this restarts containers and changes nothing else,
+# where repair regenerates the compose file and recreates them. Restarting is
+# what you want when a service has wedged; repairing is what you want when its
+# configuration is stale.
+#
+# It restarts only what is already running, which is the invariant that keeps
+# it safe. `docker restart` starts a stopped container, so operating on the
+# full container list resurrected four deliberately disabled monitoring
+# components on the first run of this command. Anything switched off stays off;
+# starting things is what `enable` is for.
+cmd_restart() {
+    local svc="${1:-}"
+    [[ -n "$svc" ]] || log_error "Usage: corex manage restart <service>"
+    [[ -f "${SCRIPT_DIR}/lib/services/${svc}.sh" ]] \
+        || log_error "Unknown service: ${svc}"
+
+    if ! state_service_is_enabled "$svc"; then
+        log_warning "${svc} is disabled. Start it with: corex manage enable ${svc}"
+        return 0
+    fi
+
+    local names
+    names=$(docker ps --filter "label=com.docker.compose.project=${svc}" \
+        --format '{{.Names}}' 2>/dev/null)
+    # A service predating the compose-project label, or one deployed by name.
+    [[ -z "$names" ]] && names=$(docker ps --filter "name=^${svc}" \
+        --format '{{.Names}}' 2>/dev/null)
+
+    if [[ -z "$names" ]]; then
+        log_warning "Nothing running for ${svc}. Start it with: corex manage enable ${svc}"
+        return 0
+    fi
+
+    local n=0 skipped=0 name
+    while read -r name; do
+        [[ -n "$name" ]] || continue
+        # Belt and braces alongside the running-only filter above: a disabled
+        # component must never be touched, even if something started it.
+        if declare -f state_component_is_enabled >/dev/null 2>&1; then
+            if ! state_component_is_enabled "$svc" "$name"; then
+                log_info "${name}: component disabled, leaving it alone"
+                skipped=$((skipped+1))
+                continue
+            fi
+        fi
+        docker restart "$name" >/dev/null 2>&1 && n=$((n+1))
+    done <<< "$names"
+
+    log_success "Restarted ${n} container(s) for ${svc}${skipped:+, skipped ${skipped} disabled}"
+}
+
 cmd_watchdog() {
     source "${SCRIPT_DIR}/lib/watchdog.sh"
     local sub="${1:-show}"
@@ -2069,6 +2121,82 @@ cmd_watchdog() {
     esac
 }
 
+# ── corex manage agent ────────────────────────────────────────────────────────
+# The action agent is what makes the dashboard buttons and the Telegram bot
+# work without either of them holding root. See lib/agent.sh for the privilege
+# layout.
+cmd_agent() {
+    source "${SCRIPT_DIR}/lib/agent.sh"
+    local sub="${1:-show}"
+
+    case "$sub" in
+        setup)
+            check_root
+            agent_install
+            echo ""
+            echo "  Verify with: corex manage agent test"
+            ;;
+
+        test)
+            check_root
+            [[ -x /usr/local/bin/corex-agentctl ]] \
+                || log_error "Agent not installed. Run: corex manage agent setup"
+            log_info "Calling the agent over its socket..."
+            if corex-agentctl status >/dev/null 2>&1; then
+                log_success "Agent answered on ${AGENT_SOCKET}"
+            else
+                log_error "Agent did not answer. Check: journalctl -u corex-agent -n 30"
+            fi
+            # Prove the dashboard's own path too, since that is the one that
+            # was broken: same socket, but reached from inside the container
+            # as nobody, through the group.
+            if container_running corex-dashboard; then
+                if docker exec corex-dashboard sh -c \
+                    '[ -S /run/corex/agent.sock ] && [ -r /etc/corex/agent.token ]' 2>/dev/null; then
+                    log_success "Dashboard container can see the socket and the token"
+                else
+                    log_warning "Dashboard cannot reach the socket. Recreate it: corex manage repair dashboard"
+                fi
+            fi
+            ;;
+
+        show|status)
+            echo ""
+            echo -e "${BOLD}Action agent${NC}"
+            case "$(agent_status)" in
+                ACTIVE)   echo -e "  Agent:  ${GREEN}running${NC} on ${AGENT_SOCKET}" ;;
+                NOSOCKET) echo -e "  Agent:  ${YELLOW}running but no socket${NC} at ${AGENT_SOCKET}" ;;
+                *)        echo -e "  Agent:  ${RED}not running${NC}, run: corex manage agent setup" ;;
+            esac
+            case "$(agent_telegram_status)" in
+                ACTIVE)       echo -e "  Telegram bot: ${GREEN}running${NC}" ;;
+                INACTIVE)     echo -e "  Telegram bot: ${RED}configured but not running${NC}" ;;
+                *)            echo -e "  Telegram bot: ${YELLOW}not configured${NC} (needs a Telegram notification in Uptime Kuma)" ;;
+            esac
+
+            if [[ -S "$AGENT_SOCKET" ]]; then
+                echo ""
+                echo "  Socket: $(stat -c '%a %U:%G' "$AGENT_SOCKET" 2>/dev/null)"
+            fi
+            echo ""
+            echo "  Actions reachable from the dashboard and Telegram:"
+            echo "    start stop restart repair update cleanup status list health storage logs"
+            echo "  Deliberately not reachable: remove, replace, add, migrate, nuke."
+            echo ""
+            if [[ -r /var/log/corex-agent.log ]]; then
+                echo "  Recent jobs:"
+                grep ' job ' /var/log/corex-agent.log 2>/dev/null | tail -6 | sed 's/^/    /'
+                grep -q ' job ' /var/log/corex-agent.log 2>/dev/null || echo "    none yet"
+                echo ""
+            fi
+            ;;
+
+        *)
+            log_error "Usage: corex manage agent [show|setup|test]"
+            ;;
+    esac
+}
+
 cmd_help() {
     echo ""
     echo -e "${BOLD}CoreX Pro v2 — Service Manager${NC}"
@@ -2086,6 +2214,7 @@ Commands:
   update <service>    Pull latest image + restart
   update --all        Update all installed services
   repair [service]    Force-recreate unhealthy service(s) (no data loss)
+  restart <service>   Restart its containers, changing nothing else
   replace <old> <new> Remove one service, install another
   doctor              Full health check + auto-repair
   health              Host hardware health (temp, SMART, dpkg, last shutdown)
@@ -2096,6 +2225,11 @@ Commands:
   lan-setup           Configure LAN fast-path for direct local network access
   network-tune        Diagnose and optimize network for high-speed file transfers
   network-check       Test HTTPS reachability, SSL expiry, and DNS for all services
+  agent [sub]         Action agent behind the dashboard buttons and Telegram bot
+                        agent          show state and what it will run
+                        agent setup    install the agent and the Telegram bot
+                        agent test     prove the socket works, including from
+                                       inside the dashboard container
   watchdog [sub]      Resource alerting: temp, load, RAM, disk, container health
                         watchdog          show state, thresholds, recent findings
                         watchdog setup    install it and register Kuma monitors
@@ -2169,7 +2303,9 @@ main() {
         lan-setup)    cmd_lan_setup ;;
         network-tune)  cmd_network_tune ;;
         network-check) cmd_network_check ;;
+        restart)      cmd_restart "$@" ;;
         watchdog)     cmd_watchdog "$@" ;;
+        agent)        cmd_agent "$@" ;;
         route)        cmd_route "$@" ;;
         help|--help|-h) cmd_help ;;
         *) echo "Unknown command: ${cmd}"; cmd_help; exit 1 ;;

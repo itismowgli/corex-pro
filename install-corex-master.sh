@@ -33,6 +33,7 @@ source "${SCRIPT_DIR}/lib/drive.sh"
 source "${SCRIPT_DIR}/lib/security.sh"
 source "${SCRIPT_DIR}/lib/thermal.sh"
 source "${SCRIPT_DIR}/lib/watchdog.sh"
+source "${SCRIPT_DIR}/lib/agent.sh"
 source "${SCRIPT_DIR}/lib/selfheal.sh"
 source "${SCRIPT_DIR}/lib/docker.sh"
 source "${SCRIPT_DIR}/lib/directories.sh"
@@ -215,6 +216,9 @@ main() {
     # After thermal_install, so the watchdog can report on the shed list the
     # guardian owns, and after services, so its first run sees the real set.
     watchdog_install
+    # After the watchdog, so the agent can report job results through the
+    # same Telegram credentials the watchdog alerts already use.
+    agent_install
     selfheal_install
     selfheal_install_blackbox
     selfheal_delay_docker_start

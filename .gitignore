@@ -18,3 +18,7 @@ Thumbs.db
 # as local changes made `corex update` refuse to run on a clean repo.
 ._*
 .DS_Store
+
+# Python bytecode from agent/ syntax checks
+__pycache__/
+*.pyc

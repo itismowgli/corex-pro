@@ -65,6 +65,15 @@ dashboard_deploy() {
     local docker_gid
     docker_gid=$(stat -c '%g' /var/run/docker.sock 2>/dev/null || echo 999)
 
+    # The action buttons go through the CoreX agent's unix socket, which is
+    # 0660 root:corex-agent. Joining that group is what makes them work while
+    # the container keeps running as nobody: corex-manage.sh needs root, and
+    # the alternatives were running this container as root or giving it sudo.
+    local agent_gid group_block
+    agent_gid=$(getent group corex-agent 2>/dev/null | cut -d: -f3)
+    group_block="      - \"${docker_gid}\""
+    [[ -n "$agent_gid" ]] && group_block="${group_block}"$'\n'"      - \"${agent_gid}\""
+
     cat > "${dir}/docker-compose.yml" << DCEOF
 services:
   dashboard:
@@ -85,7 +94,7 @@ services:
     container_name: corex-dashboard
     restart: unless-stopped
     group_add:
-      - "${docker_gid}"
+${group_block}
     volumes:
       # /root/corex-credentials.txt was mounted here and never read by the
       # dashboard. It is 0600 root and the container runs as nobody, so the
@@ -93,9 +102,16 @@ services:
       # container without granting it anything.
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /etc/corex:/etc/corex:ro
+      # The directory, not the socket itself. Bind-mounting the socket file
+      # pins one inode, so restarting the agent would leave the dashboard
+      # holding a stale mount and every button failing until the container was
+      # restarted too.
+      - /run/corex:/run/corex
       - ${SCRIPT_DIR:-/opt/corex-pro}:/opt/corex-pro:ro
     environment:
       COREX_MANAGE: "/opt/corex-pro/corex-manage.sh"
+      COREX_AGENT_SOCKET: "/run/corex/agent.sock"
+      COREX_AGENT_TOKEN_FILE: "/etc/corex/agent.token"
       SERVER_IP: "${SERVER_IP}"
       DOMAIN: "${DOMAIN}"
     networks: [proxy-net]

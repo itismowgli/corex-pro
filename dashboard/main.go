@@ -8,11 +8,14 @@ import (
 	"fmt"
 	"html/template"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
+	"regexp"
 	"sort"
 	"strings"
+	"time"
 )
 
 //go:embed templates static
@@ -94,8 +97,8 @@ var serviceLabels = map[string]string{
 // A module can serve more than one address: monitoring answers on both
 // grafana and status.
 var serviceURLs = map[string][]string{
-	"adguard":     {"http://{IP}:3000"},
-	"ai":          {"https://ai.{DOMAIN}"},
+	"adguard": {"http://{IP}:3000"},
+	"ai":      {"https://ai.{DOMAIN}"},
 	// Routed by a Traefik file-provider rule rather than a Docker label,
 	// because Coolify sits on its own network. Port 8000 stays listed as the
 	// LAN way in and the address the route itself connects to.
@@ -161,6 +164,7 @@ func main() {
 	mux.HandleFunc("/tab/", tabHandler)
 	mux.HandleFunc("/api/service/", serviceActionHandler)
 	mux.HandleFunc("/api/cleanup", cleanupHandler)
+	mux.HandleFunc("/api/job/", jobHandler)
 	mux.HandleFunc("/api/logs/", logsSSEHandler)
 
 	log.Printf("CoreX Dashboard listening on :8080 (domain=%s)", getenv("DOMAIN", "unconfigured"))
@@ -202,6 +206,156 @@ func getenv(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// ── Action agent client ───────────────────────────────────────────────────────
+//
+// The buttons used to shell out to corex-manage.sh directly, which could never
+// work: this container runs as nobody and corex-manage requires root, so every
+// action returned "Run as root". Rather than make the web container root or
+// give it sudo, a single privileged agent on the host exposes a fixed list of
+// reversible actions over a unix socket. The container reaches it by being a
+// member of the corex-agent group; see lib/agent.sh.
+
+var (
+	agentSocket    = getenv("COREX_AGENT_SOCKET", "/run/corex/agent.sock")
+	agentTokenFile = getenv("COREX_AGENT_TOKEN_FILE", "/etc/corex/agent.token")
+)
+
+// jobIDRe guards the job id before it is interpolated into a polling URL and
+// an element id. The agent generates hex, so anything else is not ours.
+var jobIDRe = regexp.MustCompile(`^[a-f0-9]{6,32}$`)
+
+func agentCall(req map[string]interface{}, timeout time.Duration) (map[string]interface{}, error) {
+	token, err := os.ReadFile(agentTokenFile)
+	if err != nil {
+		return nil, fmt.Errorf("cannot read the agent token: %w", err)
+	}
+	req["token"] = strings.TrimSpace(string(token))
+
+	conn, err := net.DialTimeout("unix", agentSocket, 5*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("agent unreachable: %w", err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(timeout))
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := conn.Write(append(body, '\n')); err != nil {
+		return nil, fmt.Errorf("agent write failed: %w", err)
+	}
+
+	// The reply is one line. Cap it so a misbehaving agent cannot exhaust the
+	// 128MB this container is limited to.
+	rd := bufio.NewReaderSize(conn, 64*1024)
+	line, err := rd.ReadBytes('\n')
+	if err != nil && len(line) == 0 {
+		return nil, fmt.Errorf("agent read failed: %w", err)
+	}
+	var out map[string]interface{}
+	if err := json.Unmarshal(line, &out); err != nil {
+		return nil, fmt.Errorf("malformed agent reply: %w", err)
+	}
+	return out, nil
+}
+
+func agentString(m map[string]interface{}, key string) string {
+	if v, ok := m[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+func agentOK(m map[string]interface{}) bool {
+	ok, _ := m["ok"].(bool)
+	return ok
+}
+
+// ── Job rendering ─────────────────────────────────────────────────────────────
+
+func writeFragment(w http.ResponseWriter, html string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprint(w, html)
+}
+
+func errorFragment(w http.ResponseWriter, msg string) {
+	writeFragment(w, fmt.Sprintf(
+		`<pre class="rounded p-3 text-xs bg-gray-950 text-red-400 overflow-auto max-h-48 font-mono whitespace-pre-wrap">%s</pre>`,
+		template.HTMLEscapeString(msg)))
+}
+
+// runningFragment polls itself until the job finishes. Actions are asynchronous
+// because update and repair outlast any sensible request timeout, and a button
+// that appears to hang is how you end up clicking it twice.
+func runningFragment(w http.ResponseWriter, jobID, label string) {
+	writeFragment(w, fmt.Sprintf(
+		`<div id="job-%s" hx-get="/api/job/%s" hx-trigger="load delay:2s" hx-swap="outerHTML">`+
+			`<pre class="rounded p-3 text-xs bg-gray-950 text-blue-300 font-mono whitespace-pre-wrap">`+
+			`$ %s&#10;<span class="text-gray-500">running, this updates on its own…</span></pre></div>`,
+		template.HTMLEscapeString(jobID),
+		template.HTMLEscapeString(jobID),
+		template.HTMLEscapeString(label),
+	))
+}
+
+func finishedFragment(w http.ResponseWriter, jobID, label, output string, ok bool) {
+	colour := "text-green-400"
+	status := "done"
+	if !ok {
+		colour = "text-red-400"
+		status = "failed"
+	}
+	if strings.TrimSpace(output) == "" {
+		output = "(no output)"
+	}
+	// No hx-trigger, so this is the last swap and the polling stops.
+	//
+	// It deliberately does not refresh the tab by itself. The tab links are
+	// full page loads into #content, so an automatic refresh would replace
+	// this element with the service grid a second after it appeared, throwing
+	// away the output the user is reading. The badges are stale until they ask.
+	writeFragment(w, fmt.Sprintf(
+		`<div id="job-%s">`+
+			`<pre class="rounded p-3 text-xs bg-gray-950 %s overflow-auto max-h-64 font-mono whitespace-pre-wrap">`+
+			`$ %s&#10;%s&#10;<span class="text-gray-500">%s</span></pre>`+
+			`<button hx-get="/tab/services" hx-target="#content" hx-swap="innerHTML" `+
+			`class="mt-2 px-2.5 py-1 text-xs rounded bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors">`+
+			`Refresh statuses</button></div>`,
+		template.HTMLEscapeString(jobID), colour,
+		template.HTMLEscapeString(label),
+		template.HTMLEscapeString(output),
+		status,
+	))
+}
+
+// jobHandler serves GET /api/job/<id>, the polling endpoint for a running job.
+func jobHandler(w http.ResponseWriter, r *http.Request) {
+	jobID := strings.TrimPrefix(r.URL.Path, "/api/job/")
+	if !jobIDRe.MatchString(jobID) {
+		errorFragment(w, "bad job id")
+		return
+	}
+	res, err := agentCall(map[string]interface{}{"action": "job", "job_id": jobID}, 30*time.Second)
+	if err != nil {
+		errorFragment(w, err.Error())
+		return
+	}
+	if !agentOK(res) {
+		errorFragment(w, agentString(res, "error"))
+		return
+	}
+	label := strings.TrimSpace(agentString(res, "action") + " " + agentString(res, "service"))
+	switch agentString(res, "state") {
+	case "running":
+		runningFragment(w, jobID, label)
+	case "done":
+		finishedFragment(w, jobID, label, agentString(res, "output"), true)
+	default:
+		finishedFragment(w, jobID, label, agentString(res, "output"), false)
+	}
 }
 
 // ── Command helpers ───────────────────────────────────────────────────────────
@@ -485,35 +639,40 @@ func serviceActionHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown service", 400)
 		return
 	}
-	validActions := map[string]bool{"start": true, "stop": true, "update": true}
-	if !validActions[action] {
+	// Mirrors the agent's own whitelist. Anything destructive is absent from
+	// both: remove, replace and migrate stay on SSH.
+	actionLabel := map[string]string{
+		"start":   "start",
+		"stop":    "stop",
+		"restart": "restart",
+		"repair":  "repair",
+		"update":  "update",
+	}
+	if _, ok := actionLabel[action]; !ok {
 		http.Error(w, "unknown action", 400)
 		return
 	}
 
-	manageAction := map[string]string{
-		"start":  "enable",
-		"stop":   "disable",
-		"update": "update",
-	}[action]
-
-	out, err := runManage(manageAction, svcName)
-
-	colorClass := "text-green-400"
-	statusLabel := "done"
+	res, err := agentCall(map[string]interface{}{
+		"action":  action,
+		"service": svcName,
+	}, 60*time.Second)
 	if err != nil {
-		colorClass = "text-red-400"
-		statusLabel = "failed"
+		errorFragment(w, err.Error())
+		return
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w,
-		`<pre class="rounded p-3 text-xs bg-gray-950 %s overflow-auto max-h-48 font-mono whitespace-pre-wrap">$ %s %s&#10;%s&#10;<span class="text-gray-500">— %s</span></pre>`,
-		colorClass,
-		template.HTMLEscapeString(action),
-		template.HTMLEscapeString(svcName),
-		template.HTMLEscapeString(out),
-		statusLabel,
-	)
+	if !agentOK(res) {
+		errorFragment(w, agentString(res, "error"))
+		return
+	}
+
+	label := action + " " + svcName
+	if jobID := agentString(res, "job_id"); jobIDRe.MatchString(jobID) {
+		runningFragment(w, jobID, label)
+		return
+	}
+	// A synchronous action, which the agent answers inline.
+	finishedFragment(w, "sync", label, agentString(res, "output"), true)
 }
 
 func cleanupHandler(w http.ResponseWriter, r *http.Request) {
@@ -521,20 +680,36 @@ func cleanupHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", 405)
 		return
 	}
-	args := []string{"cleanup"}
+	// The dry run is read-only and quick, so it stays inline. A real cleanup
+	// prunes images and build cache and can run for minutes, so it becomes a
+	// job like any other action.
+	req := map[string]interface{}{"action": "cleanup"}
 	if r.URL.Query().Get("dry_run") == "1" {
-		args = append(args, "--dry-run")
+		out, err := runManage("cleanup", "--dry-run")
+		colour := "text-green-400"
+		if err != nil {
+			colour = "text-yellow-400"
+		}
+		writeFragment(w, fmt.Sprintf(
+			`<pre class="rounded p-3 text-xs bg-gray-950 %s overflow-auto max-h-64 font-mono whitespace-pre-wrap">%s</pre>`,
+			colour, template.HTMLEscapeString(out)))
+		return
 	}
-	out, err := runManage(args...)
-	colorClass := "text-green-400"
+
+	res, err := agentCall(req, 60*time.Second)
 	if err != nil {
-		colorClass = "text-yellow-400"
+		errorFragment(w, err.Error())
+		return
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w,
-		`<pre class="rounded p-3 text-xs bg-gray-950 %s overflow-auto max-h-64 font-mono">%s</pre>`,
-		colorClass, template.HTMLEscapeString(out),
-	)
+	if !agentOK(res) {
+		errorFragment(w, agentString(res, "error"))
+		return
+	}
+	if jobID := agentString(res, "job_id"); jobIDRe.MatchString(jobID) {
+		runningFragment(w, jobID, "cleanup")
+		return
+	}
+	finishedFragment(w, "sync", "cleanup", agentString(res, "output"), true)
 }
 
 // logsSSEHandler streams container logs as Server-Sent Events.

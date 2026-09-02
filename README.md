@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://img.shields.io/badge/CoreX_Pro-v3.11.0-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
+  <img src="https://img.shields.io/badge/CoreX_Pro-v3.12.0-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
   <img src="https://img.shields.io/badge/Ubuntu-24.04_LTS-E95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Ubuntu">
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
 </div>
@@ -31,6 +31,7 @@ curl -fsSL https://raw.githubusercontent.com/itismowgli/corex-pro/main/corex.sh 
 - [LAN fast path](#lan-fast-path)
 - [Outbound email](#outbound-email)
 - [Monitoring and alerting](#monitoring-and-alerting)
+- [Control from Telegram](#control-from-telegram)
 - [Thermal protection](#thermal-protection)
 - [UPS monitoring](#ups-monitoring)
 - [Backups](#backups)
@@ -183,6 +184,8 @@ sudo bash corex-manage.sh lan-setup     # route LAN traffic locally, not via Clo
 sudo bash corex-manage.sh network-tune  # kernel tuning for gigabit transfers
 sudo bash corex-manage.sh network-check # test HTTPS, certificate expiry, and DNS
 sudo bash corex-manage.sh watchdog      # resource alerting: what is degrading the box
+sudo bash corex-manage.sh restart <svc> # restart its containers, nothing else
+sudo bash corex-manage.sh agent         # the agent behind the buttons and the bot
 ```
 
 `repair` regenerates a service's compose file before recreating the container,
@@ -615,6 +618,69 @@ there to stop it without uninstalling.
 Kuma cannot alert on its own unavailability, so nothing here covers Kuma being
 down. If that matters, add an external check from outside the machine.
 
+## Control from Telegram
+
+Send a command in the same chat that receives the alerts:
+
+```
+stop immich
+restart n8n
+update all
+logs nextcloud 60
+status
+health
+```
+
+The bot replies straight away, and sends a second message when the job
+finishes. Send `help` for the full list.
+
+It takes its bot token and chat id from the Telegram notification you set up in
+Uptime Kuma, so there is nothing extra to configure. Commands from any other
+chat are logged and ignored.
+
+The dashboard's Start, Stop, Restart, Repair and Update buttons go through the
+same path, so both work the same way and neither can do more than the other.
+
+### Why it is built this way
+
+The dashboard runs as `nobody` in a container and `corex-manage.sh` needs root,
+so the buttons used to fail with "Run as root". Running a web-facing container
+as root would hand it the whole machine, and passwordless sudo is the same
+thing with extra steps.
+
+Instead there is one privileged process, `corex-agent`, which accepts a fixed
+list of actions over a unix socket. The dashboard and the bot are both
+unprivileged clients of it:
+
+| Component | What it can do |
+|---|---|
+| `corex-agent` | root, but only the whitelisted actions |
+| `corex-bot` | its own user. Its only privilege is reaching that socket |
+| dashboard | joins the same group, still runs as `nobody` |
+
+Available: start, stop, restart, repair, update, cleanup, status, list, health,
+storage, logs.
+
+Not available, on purpose: removing a service, replacing one, adding one,
+changing the domain, and uninstalling. Everything you can reach is reversible,
+so a stolen phone cannot destroy your data. Those operations stay on SSH.
+
+### What to be aware of
+
+Anyone who can post in that chat can stop your services. Treat it the way you
+would treat shell access: keep the chat private, and if you lose the device,
+revoke the bot token in BotFather.
+
+To point the bot at a different chat, edit `/etc/corex/telegram.conf` and
+restart it with `systemctl restart corex-telegram`.
+
+```bash
+sudo bash corex-manage.sh agent        # is it running, and what will it run
+sudo bash corex-manage.sh agent setup  # install or reinstall it
+sudo bash corex-manage.sh agent test   # prove the socket works, including
+                                       # from inside the dashboard container
+```
+
 ## Thermal protection
 
 Small machines often use mobile CPUs in cases with limited cooling. Under
@@ -886,6 +952,8 @@ files so fixes reach existing installs, fixed certificate issuance behind
 blocked ports, and documented the dashboard and Cloudflare setup. v3.11.0 added
 the resource watchdog, so alerts cover memory, disk, heat and container faults
 rather than only reachability, and fixed a Time Machine crash loop it found.
+v3.12.0 made the dashboard buttons work and added Telegram control, both
+through a single privileged agent rather than by granting either of them root.
 
 See [CHANGELOG.md](CHANGELOG.md) for the detail.
 

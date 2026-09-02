@@ -6,6 +6,81 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.12.0] - 2026-09-03
+
+### Added
+- **The dashboard action buttons work, and the same actions are available from
+  Telegram.** The buttons had never worked: the dashboard runs as `nobody` in a
+  container and `corex-manage.sh` requires root, so every click returned "Run
+  as root: sudo bash corex.sh". Both obvious fixes are wrong. Running a
+  web-facing container as root hands it the host, and giving it passwordless
+  sudo is the same thing with extra steps.
+
+  `lib/agent.sh` installs one privileged process, `corex-agent`, which accepts
+  a fixed list of actions over a unix socket at `/run/corex/agent.sock`, mode
+  0660, group `corex-agent`. The dashboard joins that group and keeps running
+  as `nobody`. There is one place to audit, and a second client adds no new
+  privilege.
+
+  Reachable: start, stop, restart, repair, update, cleanup, status, list,
+  health, storage, logs. Absent by design: remove, replace, add, migrate and
+  nuke, so neither a stolen Telegram account nor a dashboard session can
+  destroy data or an install. Those stay on SSH.
+
+- **`corex-telegram`, a control bot.** Send `stop immich` or `restart n8n` in
+  the chat that already receives the alerts and it happens. It long-polls
+  rather than using a webhook, so nothing has to be forwarded through the
+  router, which is the same reason CoreX uses a Cloudflare tunnel at all.
+
+  It takes its bot token and chat id from the Uptime Kuma Telegram
+  notification, so there is nothing extra to configure and replies land in the
+  same chat as the alerts. Commands from any other chat id are logged and
+  ignored without a reply.
+
+  The bot is not root. It runs as `corex-bot`, whose entire privilege is
+  membership of the `corex-agent` group. It cannot read the credentials file,
+  reach the Docker socket, or remove anything. This is the process that parses
+  untrusted input from the internet, so it holds nothing worth stealing.
+
+- **Job completion notices.** Actions run asynchronously, because update and
+  repair outlast any sensible request timeout and a button that appears to hang
+  gets clicked twice. The dashboard polls and updates itself; Telegram gets a
+  second message when the job finishes.
+
+  The notice comes from the bot rather than from Kuma because Kuma only
+  notifies on a state change: a successful `update` produces no Kuma event at
+  all, and a successful `stop` produces one only when the service monitor
+  notices a minute later.
+
+- **`corex manage agent`**, with `setup`, `test` and a default view showing
+  what the agent will and will not run. `test` also checks the path from inside
+  the dashboard container, which is the one that was broken.
+
+- **`corex manage restart <service>`**, distinct from `repair`: it restarts
+  containers and changes nothing else.
+
+### Fixed
+- **`corex manage restart` resurrected disabled components on its first run.**
+  `docker restart` starts a stopped container, so operating on the full
+  container list started Prometheus, Grafana, cAdvisor and node-exporter, all
+  four deliberately switched off, one of which had previously been measured
+  burning 49% of a core on a box that thermal-trips. It now restarts only what
+  is already running, and skips any disabled component regardless.
+
+- **A non-UTF-8 file in `lib/services/` crashed the agent on startup.** A macOS
+  `tar` had left an AppleDouble sidecar named `._dashboard.sh`, which matches
+  the `*.sh` service-module glob and is binary. Service discovery now skips
+  `._*` and decodes with `errors="replace"`, because one undecodable byte
+  anywhere in `lib/` must never stop the agent from starting.
+
+- **`agent setup` installed new code and kept running the old.** It used
+  `systemctl enable --now`, which leaves an already-running unit alone. Same
+  trap as regenerating config only when it is missing, gotcha #22.
+
+- **ANSI colour codes reached the browser and Telegram.** `corex-manage.sh`
+  colours its output, which rendered as a literal `[0;32m` in both. Stripped
+  once in the agent, where output leaves the host, so no client needs to know.
+
 ## [v3.11.0] - 2026-09-03
 
 ### Added

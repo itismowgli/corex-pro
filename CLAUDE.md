@@ -28,7 +28,7 @@ learning nginx, SSL, Docker networking, or Linux hardening.
 - Re-run on existing server = health-check + repair broken services only
 - No live server required for testing (Docker-in-Docker + bats)
 
-**Current version:** v3.11.0
+**Current version:** v3.12.0
 **Current service modules:** 16 (Traefik, AdGuard, Portainer, Nextcloud,
 Immich, Vaultwarden, Stalwart Mail, Coolify, n8n, Time Machine,
 Uptime Kuma + Grafana + Prometheus (monitoring), Ollama + OpenWebUI +
@@ -124,11 +124,17 @@ corex-pro/
 │   ├── summary.sh            # Phase 7 extracted
 │   ├── thermal.sh            # Thermal guardian — sheds load before TjMax (#17)
 │   ├── watchdog.sh           # Resource alerting via Kuma push monitors (#29)
+│   ├── agent.sh              # Privileged action agent + Telegram bot (#30)
 │   ├── selfheal.sh           # Boot self-repair: dpkg + unclean shutdown (#16)
 │   └── services/             # One file per service (auto-discovered)
 │       ├── traefik.sh
 │       ├── adguard.sh
 │       └── ...               # Drop new service files here
+├── agent/                    # Action agent and Telegram bot (Python, stdlib only)
+│   ├── corex-agent.py        # Privileged action server on a unix socket
+│   ├── corex-telegram.py     # Long-polling control bot, runs as corex-bot
+│   ├── corex-agentctl.py     # CLI client, used by corex manage agent test
+│   └── corex_common.py       # Shared helpers, installed to /usr/local/lib/corex
 └── test/
     ├── Dockerfile.test       # Ubuntu 24.04 test container
     ├── run-tests.sh          # Test runner
@@ -150,6 +156,10 @@ corex-pro/
 | `/root/CoreX_Dashboard_Credentials.md` | Full dashboard and post-install guide |
 | `/etc/corex/state.json` | [v2] Tracks installed services and configuration |
 | `/etc/corex/watchdog.conf` | Watchdog thresholds and Kuma push tokens (0640) |
+| `/etc/corex/agent.conf` | Action agent config (0640 root:corex-agent) |
+| `/etc/corex/agent.token` | Agent bearer token (0640 root:corex-agent) |
+| `/etc/corex/telegram.conf` | Bot token and authorised chat id (0640 root:corex-bot) |
+| `/run/corex/agent.sock` | Agent socket (0660 root:corex-agent) |
 | `/usr/local/bin/corex-watchdog.sh` | Resource watchdog, run every 60s by timer |
 | `/var/log/corex-watchdog.log` | Watchdog findings (DOWN beats and push failures) |
 | `/usr/local/bin/corex-backup.sh` | Daily Restic backup script |
@@ -1099,6 +1109,73 @@ levels. Docker keeps the last health verdict on a stopped container forever, so
 checking `Health.Status` unconditionally reported ten deliberately-stopped
 Coolify containers as `unhealthy`; and `State.OOMKilled` stays true until the
 container is recreated, so alerting on the flag itself alerts forever.
+
+### 30. One privileged process beats sprinkling privilege around
+
+The dashboard's action buttons never worked. The container runs as `nobody` and
+`corex-manage.sh` calls `check_root`, so every click returned:
+
+```
+[FAIL] Run as root: sudo bash corex.sh
+```
+
+The two obvious fixes are both worse than the bug. Running a web-facing
+container as root hands the host to whatever gets into it, and passwordless
+sudo is the same thing with extra steps. Letting the dashboard call
+`docker stop` directly is tempting, since it already has the socket, but it
+breaks a different invariant: a bare `docker stop` leaves the restart policy at
+`unless-stopped`, so Docker restores the container at the next boot, the
+thermal guardian may restore it sooner, and the resource watchdog reports it as
+a fault because nothing recorded that the stop was deliberate. `corex manage
+disable` sets `restart=no` and writes `state.json`. There has to be one meaning
+of "stopped".
+
+So `lib/agent.sh` installs exactly one privileged process with a fixed list of
+actions, and everything else is an unprivileged client of it:
+
+| Component | Privilege |
+|---|---|
+| `corex-agent` | root, one unix socket, whitelisted actions only |
+| group `corex-agent` | owns the socket at 0660; **this** is the boundary |
+| `corex-bot` | its own user, whose entire privilege is that group |
+| dashboard | joins the group, still runs as `nobody` |
+
+The bearer token in each request is not the security boundary, the socket
+permissions are. The token exists so that getting those permissions wrong is
+not immediately fatal. Verified in that order: a user outside the group gets
+`PermissionError` on connect, before any token is read.
+
+`remove`, `replace`, `add`, `migrate` and `nuke` are absent from the whitelist
+deliberately. Everything reachable is reversible, so a stolen Telegram account
+cannot destroy data. Service names are validated against the modules in
+`lib/services/`, never interpolated into a shell, so `traefik;rm -rf /` and
+`$(id)` both come back as `unknown service`.
+
+**Do not use `RuntimeDirectory=` for a socket a container mounts.** systemd
+deletes and recreates that directory on every restart, which leaves the
+container holding a bind mount of a deleted inode: the socket vanishes from the
+container's view and every button fails until the container itself is
+recreated. Measured by deleting `/run/corex` by hand, which reproduces it
+exactly:
+
+```
+agent unreachable: dial unix /run/corex/agent.sock: connect: no such file or directory
+```
+
+Use `tmpfiles.d`, which adjusts an existing directory in place, mount the
+directory rather than the socket file, and have the agent set the directory's
+mode itself on every start so a cold boot does not depend on whether Docker or
+systemd got there first. `corex manage agent test` checks the path from inside
+the container for this reason, and names the fix.
+
+Two smaller traps from the same work. `agent setup` used
+`systemctl enable --now`, which leaves an already-running unit alone, so it
+installed new code and carried on executing the old one, which is gotcha #22
+again in a different costume. And a macOS `tar` had left an AppleDouble
+sidecar, `lib/services/._dashboard.sh`, which matches the service-module glob
+and is binary, so service discovery died on a `UnicodeDecodeError` before the
+agent could start. Any code that globs a directory written by other machines
+wants `errors="replace"` and a `._*` skip.
 
 ---
 
