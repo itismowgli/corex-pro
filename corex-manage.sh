@@ -1724,6 +1724,114 @@ _check_docker_networks() {
 
 # ── help ──────────────────────────────────────────────────────────────────────
 
+# ── cmd_route ─────────────────────────────────────────────────────────────────
+# Manage Traefik routes for containers CoreX did not deploy.
+#
+#   corex manage route list
+#   corex manage route add crm.example.com http://twenty-server:3000
+#   corex manage route remove crm.example.com
+#
+# Needed because of how the tunnel should be configured. With one wildcard
+# Public Hostname pointing at Traefik, Traefik decides every hostname, so a
+# name it does not route returns a Traefik 404 rather than reaching its
+# container. Anything deployed outside CoreX, a Coolify app for instance,
+# therefore needs a route here or it stops being reachable.
+#
+# Routes live in Traefik's file-provider directory, not in the application's
+# compose file, because whatever deployed the application owns that file and
+# rewrites it on upgrade. _traefik_write_configs never touches this directory
+# beyond its own 00-tls.yml, so these survive a repair.
+#
+# The backend must be reachable from the Traefik container. A Coolify app on
+# its own Docker network needs to be attached to proxy-net, or addressed by
+# the server's IP and a published port.
+cmd_route() {
+    local action="${1:-list}"
+    local route_dir="${DOCKER_ROOT}/traefik/dynamic"
+
+    case "$action" in
+        list)
+            echo ""
+            echo -e "${CYAN}${BOLD}Traefik routes for containers CoreX did not deploy${NC}"
+            echo "──────────────────────────────────────────────────────"
+            local f found=0
+            for f in "${route_dir}"/route-*.yml; do
+                [[ -f "$f" ]] || continue
+                local host backend
+                host=$(grep -m1 -oE 'Host\(`[^`]+`\)' "$f" | sed 's/Host(`//;s/`)//')
+                backend=$(grep -m1 -oE 'url: "[^"]+"' "$f" | sed 's/url: "//;s/"$//')
+                printf "  %-32s -> %s\n" "$host" "$backend"
+                found=1
+            done
+            (( found == 0 )) && echo "  None. Services CoreX deploys route themselves by Docker label."
+            echo ""
+            ;;
+        add)
+            local host="${2:-}" backend="${3:-}"
+            [[ -n "$host" && -n "$backend" ]] \
+                || log_error "Usage: corex manage route add <hostname> <backend-url>"
+            # A bad hostname produces a router Traefik silently ignores, and a
+            # backend without a scheme is rejected at load with the rest of the
+            # file, taking every other route in it down. Check both here.
+            [[ "$host" =~ ^[a-zA-Z0-9._-]+$ ]] \
+                || log_error "Not a hostname: ${host}"
+            [[ "$backend" =~ ^https?://[a-zA-Z0-9._-]+(:[0-9]+)?(/.*)?$ ]] \
+                || log_error "Backend must be http://host:port or https://host:port, got: ${backend}"
+
+            [[ -d "$route_dir" ]] || log_error "Traefik is not deployed (${route_dir} missing)"
+
+            local name file
+            name=$(printf '%s' "$host" | tr -c 'a-zA-Z0-9-' '-')
+            file="${route_dir}/route-${name}.yml"
+
+            local transport=""
+            # An https backend with a self-signed or mismatched certificate
+            # fails verification, which is the Portainer case (its certificate
+            # is issued for 0.0.0.0).
+            [[ "$backend" == https://* ]] && transport="
+        serversTransport: insecure-backend"
+
+            cat > "$file" << RTEOF
+# Written by: corex manage route add ${host} ${backend}
+# Remove with: corex manage route remove ${host}
+http:
+  routers:
+    ${name}:
+      rule: "Host(\`${host}\`)"
+      entryPoints:
+        - websecure
+      service: ${name}
+      tls:
+        certResolver: myresolver
+  services:
+    ${name}:
+      loadBalancer:${transport}
+        servers:
+          - url: "${backend}"
+RTEOF
+            log_success "Route added: https://${host} -> ${backend}"
+            log_info "Traefik watches this directory, so it applies within seconds."
+            log_info "Verify: curl -sk -o /dev/null -w '%{http_code}\\n' https://${SERVER_IP} -H 'Host: ${host}'"
+            ;;
+        remove)
+            local host="${2:-}"
+            [[ -n "$host" ]] || log_error "Usage: corex manage route remove <hostname>"
+            local name file
+            name=$(printf '%s' "$host" | tr -c 'a-zA-Z0-9-' '-')
+            file="${route_dir}/route-${name}.yml"
+            if [[ -f "$file" ]]; then
+                rm -f "$file"
+                log_success "Route removed: ${host}"
+            else
+                log_warning "No route file for ${host}"
+            fi
+            ;;
+        *)
+            log_error "Usage: corex manage route [list|add <host> <backend>|remove <host>]"
+            ;;
+    esac
+}
+
 cmd_help() {
     echo ""
     echo -e "${BOLD}CoreX Pro v2 — Service Manager${NC}"
@@ -1751,6 +1859,10 @@ Commands:
   lan-setup           Configure LAN fast-path for direct local network access
   network-tune        Diagnose and optimize network for high-speed file transfers
   network-check       Test HTTPS reachability, SSL expiry, and DNS for all services
+  route               Traefik routes for containers CoreX did not deploy:
+                        route list
+                        route add <hostname> <backend-url>
+                        route remove <hostname>
 
 Examples:
   sudo bash corex-manage.sh status
@@ -1760,6 +1872,7 @@ Examples:
   sudo bash corex-manage.sh lan-setup
   sudo bash corex-manage.sh network-tune
   sudo bash corex-manage.sh network-check
+  sudo bash corex-manage.sh route add crm.example.com http://twenty-server:3000
   sudo bash corex-manage.sh health
   sudo bash corex-manage.sh os-upgrade
   sudo bash corex-manage.sh mail-setup
@@ -1812,6 +1925,7 @@ main() {
         lan-setup)    cmd_lan_setup ;;
         network-tune)  cmd_network_tune ;;
         network-check) cmd_network_check ;;
+        route)        cmd_route "$@" ;;
         help|--help|-h) cmd_help ;;
         *) echo "Unknown command: ${cmd}"; cmd_help; exit 1 ;;
     esac

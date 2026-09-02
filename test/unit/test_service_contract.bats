@@ -649,3 +649,40 @@ _repair_body() {
     # _n8n_subdomain takes the first word of the list.
     awk '/^_n8n_subdomain\(\)/,/^}/' "$f" | grep -q '${subs%% \*}'
 }
+
+# ─── Routes for containers CoreX did not deploy ──────────────────────────────
+
+@test "corex manage route validates its inputs" {
+    # A malformed hostname yields a router Traefik silently ignores, and a
+    # backend without a scheme is rejected at load along with the rest of the
+    # file, taking every other route in it down with it.
+    local body
+    body=$(awk '/^cmd_route\(\)/,/^}/' "${REPO_ROOT}/corex-manage.sh")
+    echo "$body" | grep -q 'Not a hostname'
+    echo "$body" | grep -q 'Backend must be http'
+    echo "$body" | grep -qE 'https\?://'
+}
+
+@test "route files live where a traefik repair will not delete them" {
+    # _traefik_write_configs must only ever touch its own generated file, or a
+    # repair would silently drop every user route.
+    grep -q 'route_dir="\${DOCKER_ROOT}/traefik/dynamic"' "${REPO_ROOT}/corex-manage.sh"
+    local body
+    body=$(awk '/^_traefik_write_configs\(\)/,/^}/' "${REPO_ROOT}/lib/services/traefik.sh")
+    # The only removal allowed in there is the legacy single dynamic.yml.
+    local removals
+    removals=$(echo "$body" | grep -cE 'rm -[rf]+ .*dynamic' || true)
+    [ "$removals" -le 1 ]
+    echo "$body" | grep -qE 'rm -f "\$\{dir\}/dynamic\.yml"'
+    # And it must not wipe the directory.
+    run bash -c "echo '$body' | grep -c 'rm -rf .*dynamic'"
+    [ "$output" = "0" ]
+}
+
+@test "an https backend gets the insecure-backend transport" {
+    # Portainer's certificate is issued for 0.0.0.0, so verification against a
+    # container name or IP fails and Traefik returns 500.
+    local body
+    body=$(awk '/^cmd_route\(\)/,/^}/' "${REPO_ROOT}/corex-manage.sh")
+    echo "$body" | grep -q 'serversTransport: insecure-backend'
+}
