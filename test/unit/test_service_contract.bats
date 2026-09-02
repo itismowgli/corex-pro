@@ -36,7 +36,7 @@ _host_rules() {
             "${REPO_ROOT}"/lib/services/*.sh \
             | sed 's/.*Host(\\`//;s/\.$//'
         # Variable subdomains: take the default out of ${sub:-default}.
-        grep -rhoE '\$\{sub:-[a-z0-9-]+\}' "${REPO_ROOT}"/lib/services/*.sh \
+        grep -rhoE '\$\{subs?:-[a-z0-9-]+\}' "${REPO_ROOT}"/lib/services/*.sh \
             | sed 's/.*:-//;s/}//'
     } | sort -u
 }
@@ -628,4 +628,24 @@ _repair_body() {
     limit=$(echo "$block" | grep -oE 'memory: ([0-9]+)m' | head -1 | grep -oE '[0-9]+')
     [ -n "$limit" ]
     [ "$limit" -ge 512 ]
+}
+
+@test "n8n can answer on more than one hostname, first is primary" {
+    # A hostname can be blocked by something outside the service: Safe
+    # Browsing flagged n8n.DOMAIN while n8n kept returning HTTP 200, and
+    # Chrome then refuses it everywhere including the LAN. Keeping a second,
+    # unflagged name routed means a URL that opens while a review is pending.
+    local f="${REPO_ROOT}/lib/services/n8n.sh"
+    grep -q '_n8n_subdomains' "$f"
+    grep -q '_n8n_host_rule' "$f"
+
+    # The primary must drive the links n8n generates about itself, or webhooks
+    # point at the wrong host.
+    grep -q 'N8N_HOST: "${sub}.${DOMAIN}"' "$f"
+    grep -q 'WEBHOOK_URL: "https://${sub}.${DOMAIN}"' "$f"
+    # And the router rule must cover every configured name.
+    grep -q 'routers.n8n.rule=${host_rule}' "$f"
+
+    # _n8n_subdomain takes the first word of the list.
+    awk '/^_n8n_subdomain\(\)/,/^}/' "$f" | grep -q '${subs%% \*}'
 }

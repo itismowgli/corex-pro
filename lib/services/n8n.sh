@@ -30,7 +30,17 @@ n8n_firewall() {
 }
 
 # ── _n8n_subdomain ────────────────────────────────────────────────────────────
-# The hostname n8n answers on, "n8n" unless overridden.
+# The hostnames n8n answers on, "n8n" unless overridden.
+#
+# Accepts a space-separated list. The first entry is primary: it is what
+# N8N_HOST and WEBHOOK_URL use, so it is the name n8n puts in the links and
+# webhook URLs it generates. Every entry gets a Traefik Host rule, so the
+# others keep working as aliases.
+#
+# Two names are genuinely useful here. Google Safe Browsing can flag a
+# hostname, and Chrome then refuses it everywhere including the LAN, while the
+# service itself keeps returning HTTP 200. Keeping a second, unflagged name
+# routed means there is always a URL that opens while a review is pending.
 #
 # A hostname can become unusable through no fault of the service. Google Safe
 # Browsing flagged n8n.DOMAIN as a "Dangerous site" on a clean install, and
@@ -47,24 +57,44 @@ n8n_firewall() {
 #
 # Set it once and every generated file follows: the Traefik router, N8N_HOST
 # and WEBHOOK_URL. Add the new name in Cloudflare if the service is published.
-_n8n_subdomain() {
-    local sub="${N8N_SUBDOMAIN:-}"
-    if [[ -z "$sub" ]] && declare -f state_get >/dev/null 2>&1; then
-        sub=$(state_get "n8n_subdomain" 2>/dev/null)
-        [[ "$sub" == "null" ]] && sub=""
+# Every configured hostname, space separated.
+_n8n_subdomains() {
+    local subs="${N8N_SUBDOMAIN:-}"
+    if [[ -z "$subs" ]] && declare -f state_get >/dev/null 2>&1; then
+        subs=$(state_get "n8n_subdomain" 2>/dev/null)
+        [[ "$subs" == "null" ]] && subs=""
     fi
-    printf '%s' "${sub:-n8n}"
+    printf '%s' "${subs:-n8n}"
+}
+
+# The primary one, used for the links n8n generates about itself.
+_n8n_subdomain() {
+    local subs
+    subs=$(_n8n_subdomains)
+    printf '%s' "${subs%% *}"
+}
+
+# The Traefik router rule covering every configured hostname.
+_n8n_host_rule() {
+    local sub rule=""
+    for sub in $(_n8n_subdomains); do
+        [[ -n "$rule" ]] && rule+=" || "
+        rule+="Host(\`${sub}.${DOMAIN}\`)"
+    done
+    printf '%s' "$rule"
 }
 
 n8n_deploy() {
     n8n_dirs
     local dir="${DOCKER_ROOT}/n8n"
-    local sub
+    local sub subs host_rule
+    subs=$(_n8n_subdomains)
     sub=$(_n8n_subdomain)
-    # Persist it, so a later repair regenerates the same hostname rather than
-    # silently reverting to the default and breaking the URL again.
-    if [[ "$sub" != "n8n" ]] && declare -f state_set >/dev/null 2>&1; then
-        state_set "n8n_subdomain" "$sub" 2>/dev/null || true
+    host_rule=$(_n8n_host_rule)
+    # Persist the list, so a later repair regenerates the same hostnames rather
+    # than silently reverting to the default and breaking the URL again.
+    if [[ "$subs" != "n8n" ]] && declare -f state_set >/dev/null 2>&1; then
+        state_set "n8n_subdomain" "$subs" 2>/dev/null || true
     fi
 
     cat > "${dir}/docker-compose.yml" << DCEOF
@@ -107,7 +137,7 @@ services:
           memory: 256m
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.n8n.rule=Host(\`${sub}.${DOMAIN}\`)"
+      - "traefik.http.routers.n8n.rule=${host_rule}"
       - "traefik.http.routers.n8n.entrypoints=websecure"
       - "traefik.http.routers.n8n.tls.certresolver=myresolver"
       - "traefik.http.services.n8n.loadbalancer.server.port=5678"
@@ -118,7 +148,9 @@ DCEOF
     docker compose -f "${dir}/docker-compose.yml" up -d \
         || log_warning "n8n may not have started — check: docker ps"
     state_service_installed "n8n"
-    log_success "n8n deployed (5678, ${sub}.${DOMAIN})"
+    local shown
+    shown=$(for h in $subs; do printf '%s.%s ' "$h" "$DOMAIN"; done)
+    log_success "n8n deployed (5678, ${shown% })"
 }
 
 n8n_destroy() {
