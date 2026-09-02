@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://img.shields.io/badge/CoreX_Pro-v3.6.0-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
+  <img src="https://img.shields.io/badge/CoreX_Pro-v3.7.0-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
   <img src="https://img.shields.io/badge/Ubuntu-24.04_LTS-E95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Ubuntu">
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
 </div>
@@ -362,6 +362,26 @@ sudo docker logs cloudflared --tail 20   # look for "Registered tunnel connectio
 For each service you want reachable from outside, add a Public Hostname under
 your tunnel:
 
+The simplest configuration is one wildcard hostname pointing at Traefik:
+
+| Hostname | Service | Additional settings |
+|---|---|---|
+| `*.yourdomain.com` | `https://traefik:443` | turn No TLS Verify on |
+
+Traefik then routes by Host header for external traffic exactly as it does on
+the LAN, which matters more than it sounds. Anything Traefik adds, the
+`noindex` header, HSTS, the CalDAV redirect, applies only to traffic that
+passes through it, so a tunnel pointing straight at containers leaves external
+visitors, including search engine crawlers, outside all of it. A container port
+change also cannot break the tunnel any more, and a new service needs no
+Cloudflare work.
+
+No TLS Verify is needed because Traefik presents a certificate for the public
+hostname while cloudflared connects to the name `traefik`, so verification
+fails on a name mismatch. That hop is inside the Docker network.
+
+Per-service hostnames also work, and are what CoreX documented previously:
+
 | Subdomain | Service | Tunnel URL |
 |---|---|---|
 | `nextcloud` | Nextcloud | `http://nextcloud:80` |
@@ -388,6 +408,39 @@ Use the internal port too. Grafana publishes `3002:3000` on the host, but the
 tunnel URL is `http://grafana:3000`.
 
 Cloudflare creates the DNS records for you.
+
+### Keeping the domain out of search results
+
+Every route carries a `noindex` directive, set once as a middleware on
+Traefik's `websecure` entrypoint so it covers services added later:
+
+```
+X-Robots-Tag: noindex, nofollow, noarchive, nosnippet, noimageindex, notranslate
+```
+
+`robots.txt` is not the mechanism. It asks a crawler not to fetch a URL, but a
+URL that was never fetched can still be indexed from an external link and
+listed without a snippet. `noindex` is the directive that removes it. Both are
+requests rather than enforcement, so neither substitutes for authentication.
+
+Check it, from outside rather than the LAN, because the two paths differ:
+
+```bash
+curl -sI https://nextcloud.yourdomain.com/ | grep -i x-robots-tag
+```
+
+If that comes back empty, the tunnel is pointing at containers rather than at
+Traefik, so the header never gets added. See the wildcard hostname above.
+
+Certificates are the other way a hostname becomes public. Let's Encrypt
+publishes every certificate it issues to the Certificate Transparency logs, so
+a certificate per hostname advertises every hostname at crt.sh. With a
+Cloudflare DNS token configured, CoreX requests a single wildcard instead, and
+the individual names never appear. Check what is already listed:
+
+```bash
+curl -s 'https://crt.sh/?q=%25.yourdomain.com&output=json' | grep -o '"name_value":"[^"]*"'
+```
 
 ### What to leave off the internet
 

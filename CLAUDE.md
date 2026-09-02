@@ -764,6 +764,43 @@ elif command -v setpriv >/dev/null 2>&1; then ...
 when privilege-dropping is impossible rather than retrying 30s per call, a
 retry loop around an unsatisfiable command turns a warning into an outage.
 
+### 27. The tunnel bypasses Traefik, so Traefik cannot protect external traffic
+
+Cloudflare Public Hostnames point at container names and ports
+(`http://n8n:5678`), which means cloudflared talks to the application
+directly. Traefik is only in the path for LAN requests. Everything Traefik
+adds is therefore absent from exactly the traffic that comes from the
+internet.
+
+Measured after attaching a `noindex` middleware to the `websecure` entrypoint.
+On the LAN all ten hostnames returned the full directive set. From outside:
+
+| Hostname | External `X-Robots-Tag` |
+|---|---|
+| `nextcloud` | full set, from its own configuration |
+| `vault` | `noindex, nofollow`, Vaultwarden's own |
+| `mail` | absent entirely |
+
+So the header was set on the one path search engines never use. The same
+applies to HSTS, the CalDAV redirect, and any middleware added later.
+
+**Point the tunnel at Traefik instead of at containers.** One wildcard Public
+Hostname replaces every per-service entry:
+
+| Hostname | Service | Additional settings |
+|---|---|---|
+| `*.DOMAIN` | `https://traefik:443` | No TLS Verify on |
+
+Traefik then routes by Host header, exactly as it does on the LAN. Three
+things follow: middlewares apply to external traffic, a container port change
+can no longer break the tunnel (which is what a per-service entry pins), and
+a new service needs no Cloudflare work at all.
+
+No TLS Verify is required because Traefik presents a certificate for the
+public hostname while cloudflared connects to the name `traefik`, so
+verification would fail on a name mismatch. The hop is inside the Docker
+network.
+
 ### 26. A moving tag can stop moving, which is worse than moving too fast
 
 Gotcha #19 is about `:release` and `:stable` carrying a major upgrade in

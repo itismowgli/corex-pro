@@ -6,6 +6,48 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.7.0] - 2026-09-02
+
+### Added
+- **Every route carries a `noindex` directive.** Set once as a middleware on
+  Traefik's `websecure` entrypoint, so it covers services added later:
+  `X-Robots-Tag: noindex, nofollow, noarchive, nosnippet, noimageindex,
+  notranslate`. A per-service label would be one forgotten label away from a
+  hostname being indexable. Nextcloud's own weaker `X-Robots-Tag` is removed,
+  because router middlewares run after entrypoint middlewares and it would
+  have replaced the full set.
+- **One wildcard certificate instead of one per hostname**, when a Cloudflare
+  DNS token is configured. Let's Encrypt publishes every certificate it issues
+  to the Certificate Transparency logs, so a certificate per hostname
+  advertises that hostname at crt.sh; eleven certificates meant eleven names.
+  A wildcard names only `*.DOMAIN`. It also covers a newly added hostname
+  immediately with no ACME round trip, which is what left Coolify on the
+  self-signed CA, and leaves one certificate to renew rather than one per
+  service.
+- **n8n's hostname is overridable** through `$N8N_SUBDOMAIN` or
+  `n8n_subdomain` in `state.json`. A hostname can be blocked by something
+  outside the service: Google Safe Browsing flagged `n8n.DOMAIN` as a
+  "Dangerous site" while n8n itself kept returning HTTP 200, and that block
+  follows the name rather than the address, so it applies on the LAN too. Set
+  it once and the Traefik router, `N8N_HOST`, `WEBHOOK_URL`, the credentials
+  output and the dashboard link all follow.
+
+### Documented
+- Gotcha #27: the tunnel bypasses Traefik, so Traefik cannot protect external
+  traffic. Public Hostnames point at container names, meaning cloudflared
+  talks to applications directly and everything Traefik adds is absent from
+  exactly the traffic that comes from the internet. Measured: on the LAN all
+  ten hostnames returned the full `noindex` set, while from outside `mail` had
+  no such header at all and `vault` had only what Vaultwarden sets itself. The
+  fix is one wildcard Public Hostname pointing at `https://traefik:443` with
+  No TLS Verify, which also stops a container port change from breaking the
+  tunnel.
+- README: a section on keeping the domain out of search results, including why
+  `robots.txt` is not the mechanism, and the `crt.sh` query for checking what
+  is already public.
+
+---
+
 ## [v3.6.0] - 2026-09-02
 
 ### Fixed
