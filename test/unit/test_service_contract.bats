@@ -240,3 +240,26 @@ _repair_body() {
     grep -q 'chmod 600 "\${dir}/docker-compose.yml"' \
         "${REPO_ROOT}/lib/services/cloudflared.sh"
 }
+
+# ─── A running container is not proof of health ──────────────────────────────
+
+@test "stalwart_status checks for a banned proxy and bootstrap mode" {
+    # stalwart_status returned HEALTHY through a total external outage: a bot
+    # scan had banned cloudflared's container IP, and a bootstrap-mode server
+    # answers HTTP while being unable to carry mail at all.
+    local f="${REPO_ROOT}/lib/services/stalwart.sh"
+    grep -q '_stalwart_proxy_banned' "$f"
+    grep -q '_stalwart_bootstrap_mode' "$f"
+    local body
+    body=$(awk '/^stalwart_status\(\)/,/^}/' "$f")
+    echo "$body" | grep -q '_stalwart_proxy_banned'
+    echo "$body" | grep -q '_stalwart_bootstrap_mode'
+}
+
+@test "stalwart credentials output has no duplicated line" {
+    local body
+    body=$(awk '/^stalwart_credentials\(\)/,/^}/' "${REPO_ROOT}/lib/services/stalwart.sh")
+    local dupes
+    dupes=$(echo "$body" | sort | uniq -d | grep -c . || true)
+    [ "$dupes" = "0" ]
+}

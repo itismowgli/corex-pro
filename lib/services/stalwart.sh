@@ -128,10 +128,65 @@ stalwart_destroy() {
     state_service_removed "stalwart"
 }
 
+# ── _stalwart_proxy_banned ────────────────────────────────────────────────────
+# Return 0 if Stalwart has banned one of the reverse proxies in front of it.
+#
+# Stalwart bans a source IP that probes scanner paths. Behind a proxy it sees
+# the proxy's container IP, not the scanner's, so a single bot request to
+# https://mail.DOMAIN//wp-content/.env bans cloudflared or Traefik — and with
+# it every visitor arriving that way. Observed in the field: external mail
+# access was dead for hours while the container reported healthy, because
+# Traefik had a different container IP and the LAN path kept working.
+#
+# The durable fix is Stalwart's own proxy settings, which need a configured
+# store (see stalwart_credentials and CLAUDE.md gotcha #23). Until then this
+# at least makes the condition visible instead of silent.
+_stalwart_proxy_banned() {
+    container_running "stalwart" || return 1
+
+    local proxy_ips="" c ip
+    for c in cloudflared traefik; do
+        container_running "$c" || continue
+        ip=$(docker inspect "$c" \
+            --format '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' \
+            2>/dev/null)
+        proxy_ips+=" $ip"
+    done
+    [[ -n "${proxy_ips// /}" ]] || return 1
+
+    # Only consider bans since the container last started; a restart clears
+    # Stalwart's in-memory ban list.
+    local recent
+    recent=$(docker logs --since 24h stalwart 2>&1 \
+        | grep -E "security.scan-ban|security.ip-blocked" | tail -50)
+    [[ -n "$recent" ]] || return 1
+
+    for ip in $proxy_ips; do
+        [[ -n "$ip" ]] || continue
+        echo "$recent" | grep -q "$ip" && return 0
+    done
+    return 1
+}
+
+# ── _stalwart_bootstrap_mode ──────────────────────────────────────────────────
+# Return 0 if Stalwart is still in bootstrap mode, meaning initial setup was
+# never completed and nothing is persisted. A bootstrap-mode server answers
+# HTTP and looks healthy but cannot send or receive mail.
+_stalwart_bootstrap_mode() {
+    container_running "stalwart" || return 1
+    docker logs stalwart 2>&1 | grep -q "server.bootstrap-mode"
+}
+
 stalwart_status() {
-    if container_running "stalwart"; then echo "HEALTHY"
-    elif container_exists "stalwart"; then echo "UNHEALTHY"
-    else echo "MISSING"; fi
+    if ! container_running "stalwart"; then
+        if container_exists "stalwart"; then echo "UNHEALTHY"; else echo "MISSING"; fi
+        return 0
+    fi
+    # A running container is not enough. Both conditions below leave mail
+    # completely unusable while `docker ps` shows it up.
+    if _stalwart_proxy_banned; then echo "UNHEALTHY"; return 0; fi
+    if _stalwart_bootstrap_mode; then echo "UNHEALTHY"; return 0; fi
+    echo "HEALTHY"
 }
 
 stalwart_repair() {
@@ -143,12 +198,27 @@ stalwart_repair() {
     local dir="${DOCKER_ROOT}/stalwart"
     [[ -f "${dir}/docker-compose.yml" ]] && \
         docker compose -f "${dir}/docker-compose.yml" up -d --force-recreate
+
+    # Recreating the container clears Stalwart's in-memory ban list, which is
+    # the only remedy available until the proxy settings can be persisted.
+    if _stalwart_proxy_banned; then
+        log_warning "Stalwart had banned a reverse proxy IP — cleared by this restart"
+        log_warning "  It will recur until proxyTrustedNetworks / useXForwarded are set"
+        log_warning "  in Stalwart's own settings (see CLAUDE.md gotcha #23)"
+    fi
+    if _stalwart_bootstrap_mode; then
+        log_warning "Stalwart is in bootstrap mode — initial setup is not finished"
+        log_warning "  Finish it at https://mail.${DOMAIN:-your-domain} before relying on mail"
+    fi
 }
 
 stalwart_credentials() {
     echo "Stalwart Mail: https://mail.${DOMAIN}"
     echo "  Admin user: admin"
-    echo "  Admin user: admin"
     echo "  Admin pass: ${STALWART_ADMIN_PASS:-see ${DOCKER_ROOT}/stalwart/.admin-password}"
     echo "    (also kept at ${DOCKER_ROOT}/stalwart/.admin-password, mode 600)"
+    echo "  After finishing initial setup, set these two in Stalwart's settings"
+    echo "  or external mail dies whenever a bot scans the hostname:"
+    echo "    Network > Proxy  -> proxyTrustedNetworks = 172.16.0.0/12"
+    echo "    HTTP settings    -> useXForwarded = true"
 }

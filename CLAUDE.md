@@ -781,6 +781,64 @@ echo | openssl s_client -connect SERVER_IP:443 -servername sub.DOMAIN 2>/dev/nul
 # "CN=TRAEFIK DEFAULT CERT" => the default cert store is not loading
 ```
 
+### 23. Stalwart bans the reverse proxy, not the scanner
+
+Stalwart auto-bans an IP that probes scanner paths. Behind a proxy it sees the
+**proxy's container IP**, so one bot request is enough to kill external access
+entirely:
+
+```
+Banned due to scan (security.scan-ban) remoteIp=172.18.0.11 path="//wp-content/.env"
+```
+
+`172.18.0.11` was cloudflared. Every subsequent tunnel request was refused with
+`EOF`, Cloudflare returned 502, and the failure looked like a routing problem:
+the ingress rule was correct, the container was `Up (healthy)`, and the **LAN
+path kept working** because Traefik had a different container IP
+(`172.18.0.5`). Diagnosing it from the tunnel side is impossible — only
+`docker logs stalwart` names the cause.
+
+Two settings fix it properly, and both need a configured store, so they can
+only be applied **after** initial setup:
+
+| Setting | Value | Why |
+|---|---|---|
+| `proxyTrustedNetworks` | `172.16.0.0/12` | trust the Docker network as a proxy |
+| `useXForwarded` | `true` | ban the real client, not the proxy |
+
+Do not try to set these through environment variables — `stalwart-cli` is not
+in the image and the settings live in the store, not in env (the same trap as
+gotcha #3). Restarting the container clears the in-memory ban list, which is
+the only interim remedy; `corex manage repair stalwart` does that and says so.
+
+**Also: a running Stalwart container proves nothing.** It reported `HEALTHY`
+throughout the outage above. `stalwart_status` now returns `UNHEALTHY` when a
+proxy IP is banned or when the server is still in bootstrap mode
+(`server.bootstrap-mode` in the log — no config file was ever written, so
+nothing persists and mail cannot flow).
+
+### 24. state.json must never hold a credential
+
+`state.json` is mode 0644 and bind-mounted read-only into the dashboard
+container, so anything in it is readable by a web-facing service. It held
+`cloudflare_tunnel_token` for several releases.
+
+The mode is not optional: the dashboard runs as `nobody`, and at 0600 it read
+nothing and rendered **"No services installed" on a box running 36
+containers** — because `loadState` discarded the read error. Two rules follow:
+
+- `state_set` refuses secret-looking keys (`token`, `secret`, `password`,
+  `key`, `credential`) rather than trusting callers. Secrets go in a 0600
+  dotfile beside the service, the way `.admin-password` and `.tunnel-token` do.
+- Every write site re-applies 0644. `mv` from `mktemp` preserves 0600, so a
+  single `state_set` silently re-broke the dashboard.
+
+Related trap: `cloudflared_deploy` ran `docker rm -f cloudflared` **before**
+checking for a token, so a repair on a box whose `state.json` had been rebuilt
+destroyed the live tunnel and returned only a warning. Resolve credentials
+before touching a running container, and never tear one down on a path that
+can fail.
+
 ---
 
 ## What NOT to Do
