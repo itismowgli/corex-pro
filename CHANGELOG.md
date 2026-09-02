@@ -8,6 +8,51 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ## [Unreleased]
 
+### Added — Resilience & self-healing
+
+The goal is a mini server that tolerates its own failure modes instead of
+needing a human. All of the following came out of diagnosing a real crash loop
+where a Ryzen 9 5900HX thermal-tripped every ~5 minutes.
+
+- **Thermal guardian** (`lib/thermal.sh`). Mini servers run mobile-class CPUs in
+  chassis with marginal cooling; at TjMax the CPU fires THERMTRIP, an instant
+  hardware power cut that logs nothing and flushes nothing. The guardian samples
+  temperature every 30s and sheds container load progressively instead:
+  unmanaged containers first (Coolify apps etc., which carry no resource
+  limits and are the usual cause), then `ai`, then
+  `monitoring`/`productivity`/`storage`/`backup`. `core`, `security` and
+  `communication` are never shed, so the box stays reachable. Shed containers
+  restart automatically once temperature drops below the recovery threshold.
+  At 97°C it performs a graceful shutdown rather than waiting for THERMTRIP.
+  Shed order derives from the existing `SERVICE_CATEGORY`, so no service module
+  needed changing. Thresholds and the enable flag live in
+  `/etc/corex/thermal.conf`; `THERMAL_NEVER_SHED` protects `ups` regardless of
+  category. 3-sample hysteresis prevents a transient spike from shedding load.
+- **Boot self-repair** (`lib/selfheal.sh`). Ubuntu does not repair a dpkg
+  database left broken by an interrupted transaction — it stays broken until
+  someone runs `dpkg --configure -a` by hand, while every unattended-upgrade
+  run fails or worsens it. `corex-boot-repair.service` now runs before the apt
+  timers, detects an unclean shutdown via a marker file (far more reliable than
+  grepping a journal that an unclean shutdown truncates), repairs dpkg,
+  flags kernel packages needing reinstall, and checks the data pool's
+  filesystem state.
+- **`corex manage health`** — host hardware health, which service checks never
+  covered: CPU temperature with verdict, thermal guardian state and what it has
+  shed, whether the last shutdown was clean, dpkg integrity, per-disk SMART
+  (including `-d sat` fallback for USB bridges), and swap pressure.
+- **`corex manage os-upgrade`** — supervised OS upgrade that refuses to start
+  when an interrupted dpkg transaction is likely: CPU at or above 85°C, dpkg
+  already dirty (it repairs first, then re-checks), or uptime under 15 minutes.
+  Overridable with `--force`. Always reconciles with `dpkg --configure -a`
+  afterwards regardless of the upgrade's exit status.
+- **Docker start delayed 15s** so ~38 containers no longer start while the
+  kernel, SSD mount and journald compete for CPU. This does not stagger
+  individual containers; the thermal guardian handles the residual surge, and
+  now begins sampling at 45s so it is watching while the surge happens.
+- `test/unit/test_thermal.bats` — 15 tests covering the now load-bearing
+  `SERVICE_CATEGORY` contract, shed-tier partitioning, threshold ordering and
+  hysteresis, and bash-validity of both generated helper scripts.
+
 ### Fixed
 - **UFW silently dropped and logged all Docker Swarm / Coolify overlay traffic.**
   `lib/security.sh` allowed only `docker0` and `172.16.0.0/12`, but Swarm-based
@@ -48,6 +93,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
   before/after free space per filesystem. Docker volumes remain deliberately
   un-pruned. `apt-get autoremove --purge` is reported but not executed, since a
   dpkg transaction interrupted by a crash can remove a running kernel.
+- **Unattended-upgrades no longer performs kernel upgrades.** Restricting
+  `Allowed-Origins` to `-security` is not sufficient protection: Ubuntu ships
+  kernel updates *through* the security origin. An unattended kernel upgrade is
+  the most dangerous unsupervised operation on a mini server — it raises CPU
+  load, and an interruption leaves `systemd` and `libc-bin` unconfigured, which
+  can render the machine unbootable. `linux-*`, `libc6`, `libc-bin`, `systemd`
+  and `udev` are now explicitly blacklisted and applied only via
+  `corex manage os-upgrade`. `Remove-Unused-Kernel-Packages` is also now
+  `false`, since removing a kernel is itself a dpkg transaction and a
+  known-good fallback kernel is worth the disk space.
 
 ---
 

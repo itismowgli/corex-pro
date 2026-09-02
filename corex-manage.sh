@@ -569,8 +569,210 @@ cmd_replace() {
 
 cmd_doctor() {
     cmd_status
+    cmd_health
     echo -e "${CYAN}Running auto-repair on unhealthy services...${NC}"
     cmd_repair
+}
+
+# ── health (hardware) ─────────────────────────────────────────────────────────
+# Service health was already covered; this covers the HOST. A mini server dies
+# of physical causes — heat, a failing SSD, an unclean shutdown that broke dpkg
+# — and none of those show up in "is the container running?".
+
+_health_read_temp() {
+    local t=""
+    if command -v sensors &>/dev/null; then
+        t=$(sensors -u 2>/dev/null \
+            | awk '/^(Tctl|Tdie|Package id 0):/{getline; print $2; exit}')
+    fi
+    if [[ -z "$t" ]]; then
+        local best=0 v
+        for z in /sys/class/thermal/thermal_zone*/temp; do
+            [[ -r "$z" ]] || continue
+            v=$(( $(cat "$z" 2>/dev/null || echo 0) / 1000 ))
+            (( v > best )) && best=$v
+        done
+        (( best > 0 )) && t=$best
+    fi
+    [[ -z "$t" ]] && { echo ""; return 1; }
+    printf '%.0f' "$t" 2>/dev/null || echo ""
+}
+
+cmd_health() {
+    echo ""
+    echo -e "${CYAN}${BOLD}Host Hardware Health${NC}"
+    echo "─────────────────────────────────────────────────────────"
+    echo ""
+
+    # ── CPU temperature ──────────────────────────────────────────────────────
+    local temp
+    temp=$(_health_read_temp)
+    if [[ -z "$temp" ]]; then
+        log_warning "No temperature sensor readable — install lm-sensors and run sensors-detect"
+    else
+        local verdict="${GREEN}OK${NC}"
+        if   (( temp >= 95 )); then verdict="${RED}CRITICAL — thermal trip imminent${NC}"
+        elif (( temp >= 90 )); then verdict="${RED}TOO HOT — clean the heatsink${NC}"
+        elif (( temp >= 80 )); then verdict="${YELLOW}HOT${NC}"
+        fi
+        echo -e "  ${BOLD}CPU temperature:${NC} ${temp}°C — ${verdict}"
+        if (( temp >= 90 )); then
+            echo "    A sustained 90°C+ means cooling cannot keep up. The CPU will"
+            echo "    eventually THERMTRIP: an instant power cut with no warning,"
+            echo "    which risks database and dpkg corruption."
+        fi
+    fi
+
+    # ── Thermal guardian ─────────────────────────────────────────────────────
+    if systemctl is-active --quiet corex-thermal.timer 2>/dev/null; then
+        local shed_n=0
+        [[ -r /var/lib/corex/thermal-shed.list ]] && \
+            shed_n=$(grep -c . /var/lib/corex/thermal-shed.list 2>/dev/null || echo 0)
+        if (( shed_n > 0 )); then
+            log_warning "Thermal guardian has shed ${shed_n} container(s) to stay cool"
+            sed 's/^/      /' /var/lib/corex/thermal-shed.list 2>/dev/null | head -8
+            echo "      They restart automatically once temperature drops."
+        else
+            echo -e "  ${BOLD}Thermal guardian:${NC} active, nothing shed"
+        fi
+    else
+        log_warning "Thermal guardian NOT running — no protection against overheating"
+    fi
+
+    # ── Previous shutdown ────────────────────────────────────────────────────
+    echo -en "  ${BOLD}Last shutdown:${NC} "
+    local markers
+    markers=$(journalctl -b -1 --no-pager 2>/dev/null \
+        | grep -cE "systemd-shutdown|Reached target Shutdown|Powering off" || echo 0)
+    if [[ "$markers" == "0" ]]; then
+        echo -e "${RED}UNCLEAN${NC} (power loss, thermal trip, or hang)"
+        echo "      Last health sample before it died:"
+        grep -E 'temp=' /mnt/corex-data/blackbox.log 2>/dev/null | tail -1 | sed 's/^/        /'
+    else
+        echo -e "${GREEN}clean${NC}"
+    fi
+
+    # ── dpkg integrity ───────────────────────────────────────────────────────
+    local unconf
+    unconf=$(awk '/^Status: install ok unpacked/{c++} END{print c+0}' \
+        /var/lib/dpkg/status 2>/dev/null)
+    if (( unconf > 0 )); then
+        log_warning "dpkg: ${unconf} package(s) unpacked but NOT configured"
+        echo "      An apt run was interrupted. Repair with: dpkg --configure -a"
+    else
+        echo -e "  ${BOLD}dpkg integrity:${NC} ${GREEN}clean${NC}"
+    fi
+
+    # ── Disk health ──────────────────────────────────────────────────────────
+    if command -v smartctl &>/dev/null; then
+        local d h
+        while read -r d; do
+            [[ -b "/dev/$d" ]] || continue
+            h=$(smartctl -H "/dev/$d" 2>/dev/null \
+                | grep -iE "overall-health|SMART Health Status" | awk -F: '{print $2}' | xargs)
+            [[ -z "$h" ]] && h=$(smartctl -H -d sat "/dev/$d" 2>/dev/null \
+                | grep -iE "overall-health" | awk -F: '{print $2}' | xargs)
+            [[ -z "$h" ]] && h="not reported (USB bridge may not pass SMART through)"
+            echo -e "  ${BOLD}/dev/${d}:${NC} ${h}"
+        done < <(lsblk -dno NAME,TYPE 2>/dev/null | awk '$2=="disk"{print $1}')
+    else
+        log_warning "smartmontools not installed — no disk health visibility"
+    fi
+
+    # ── Memory pressure ──────────────────────────────────────────────────────
+    local swap_used
+    swap_used=$(free -m | awk '/^Swap:/{print $3}')
+    if [[ -n "$swap_used" ]] && (( swap_used > 512 )); then
+        log_warning "Swap in use: ${swap_used}MB — memory pressure may be throttling I/O"
+    fi
+    echo ""
+}
+
+# ── os-upgrade ────────────────────────────────────────────────────────────────
+# A supervised OS package upgrade that REFUSES to start when conditions make an
+# interrupted dpkg transaction likely. Kernel/libc/systemd are excluded from
+# unattended runs (see lib/security.sh), so this is where they get applied —
+# deliberately, with the preconditions actually checked.
+
+cmd_os_upgrade() {
+    local force=false
+    [[ "${1:-}" == "--force" ]] && force=true
+
+    echo ""
+    echo -e "${CYAN}${BOLD}CoreX Supervised OS Upgrade${NC}"
+    echo "─────────────────────────────────────────────────────────"
+    echo ""
+
+    local blocked=false
+
+    # ── Gate 1: thermal headroom ─────────────────────────────────────────────
+    local temp
+    temp=$(_health_read_temp)
+    if [[ -n "$temp" ]]; then
+        echo -e "  CPU temperature: ${temp}°C"
+        if (( temp >= 85 )); then
+            log_warning "BLOCKED: ${temp}°C is too hot to start a dpkg transaction."
+            echo "    An upgrade raises CPU load further. If the box thermal-trips"
+            echo "    mid-transaction you can be left with an unbootable system."
+            echo "    Cool it first (clean the heatsink, or reduce container load)."
+            blocked=true
+        fi
+    else
+        log_warning "No temperature sensor — cannot verify thermal headroom"
+    fi
+
+    # ── Gate 2: dpkg must be clean before adding more work ───────────────────
+    local unconf
+    unconf=$(awk '/^Status: install ok unpacked/{c++} END{print c+0}' \
+        /var/lib/dpkg/status 2>/dev/null)
+    if (( unconf > 0 )); then
+        log_warning "dpkg has ${unconf} unconfigured package(s) — repairing first"
+        dpkg --configure -a || log_warning "Repair incomplete"
+        unconf=$(awk '/^Status: install ok unpacked/{c++} END{print c+0}' \
+            /var/lib/dpkg/status 2>/dev/null)
+        (( unconf > 0 )) && { log_warning "BLOCKED: dpkg still broken"; blocked=true; }
+    fi
+
+    # ── Gate 3: enough uptime to trust the box ───────────────────────────────
+    local up_s
+    up_s=$(cut -d. -f1 /proc/uptime 2>/dev/null || echo 0)
+    if (( up_s < 900 )); then
+        log_warning "Uptime is only $(( up_s / 60 ))m. On a box with a history of"
+        echo "    crashing, 15+ minutes of stability is a reasonable bar before"
+        echo "    starting a kernel or libc upgrade."
+        blocked=true
+    fi
+
+    if [[ "$blocked" == "true" && "$force" != "true" ]]; then
+        echo ""
+        log_warning "Upgrade NOT started. Fix the above, or re-run with --force"
+        echo "    if you have console access and accept the risk."
+        return 1
+    fi
+    [[ "$blocked" == "true" ]] && log_warning "Proceeding anyway (--force given)"
+
+    echo ""
+    log_step "Updating package lists..."
+    apt-get update -qq || log_warning "apt-get update reported problems"
+
+    echo "  Pending: $(apt list --upgradable 2>/dev/null | grep -c upgradable) package(s)"
+    echo ""
+    log_step "Upgrading (MinimalSteps so an interruption leaves less broken)..."
+    DEBIAN_FRONTEND=noninteractive apt-get -y \
+        -o Dpkg::Options::=--force-confdef \
+        -o Dpkg::Options::=--force-confold \
+        upgrade || log_warning "Upgrade reported problems — checking dpkg state"
+
+    # Always reconcile afterwards, whether or not the upgrade claimed success.
+    dpkg --configure -a 2>/dev/null || true
+
+    echo ""
+    if [[ -f /var/run/reboot-required ]]; then
+        log_warning "Reboot required to activate the new kernel."
+        echo "    Reboot deliberately, when you can watch it come back up."
+    else
+        log_success "Upgrade complete, no reboot required."
+    fi
 }
 
 # ── lan-setup ─────────────────────────────────────────────────────────────────
@@ -1316,6 +1518,8 @@ Commands:
   repair [service]    Force-recreate unhealthy service(s) (no data loss)
   replace <old> <new> Remove one service, install another
   doctor              Full health check + auto-repair
+  health              Host hardware health (temp, SMART, dpkg, last shutdown)
+  os-upgrade          Supervised OS package upgrade (refuses if too hot/unstable)
   storage             Show disk usage breakdown (OS disk, SSD, per-service)
   cleanup [--dry-run] Remove stale Docker images and build cache safely
   lan-setup           Configure LAN fast-path for direct local network access
@@ -1330,6 +1534,8 @@ Examples:
   sudo bash corex-manage.sh lan-setup
   sudo bash corex-manage.sh network-tune
   sudo bash corex-manage.sh network-check
+  sudo bash corex-manage.sh health
+  sudo bash corex-manage.sh os-upgrade
 
 HELPEOF
 }
@@ -1354,6 +1560,8 @@ main() {
         repair)       cmd_repair "$@" ;;
         replace)      cmd_replace "$@" ;;
         doctor)       cmd_doctor ;;
+        health)       cmd_health ;;
+        os-upgrade)   cmd_os_upgrade "$@" ;;
         storage)      cmd_storage ;;
         cleanup)      cmd_cleanup "$@" ;;
         lan-setup)    cmd_lan_setup ;;

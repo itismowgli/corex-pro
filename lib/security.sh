@@ -104,8 +104,43 @@ Unattended-Upgrade::Allowed-Origins {
 };
 // Do NOT automatically reboot — server stays up, admin reboots deliberately
 Unattended-Upgrade::Automatic-Reboot "false";
-Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
-Unattended-Upgrade::Remove-Unused-Dependencies "true";
+
+// Kernel, libc and systemd upgrades are EXCLUDED from unattended runs.
+//
+// "Security-only" is not sufficient protection: Ubuntu ships kernel updates
+// through the -security origin, so an unattended run will happily upgrade the
+// kernel. On a mini server that is the single most dangerous thing it can do
+// unsupervised — the upgrade drives CPU load up, and if the box then loses
+// power or thermal-trips mid-transaction, dpkg is left with systemd and
+// libc-bin unpacked-but-unconfigured, which can leave the machine unbootable.
+//
+// These three package families are the ones where an interrupted transaction
+// is unrecoverable without physical console access. They still get upgraded,
+// just deliberately, by an operator who is watching:
+//     sudo apt-get install --only-upgrade linux-generic
+// or simply:  corex manage os-upgrade
+Unattended-Upgrade::Package-Blacklist {
+    "linux-generic";
+    "linux-image-";
+    "linux-headers-";
+    "linux-modules-";
+    "linux-firmware";
+    "libc6";
+    "libc-bin";
+    "systemd";
+    "udev";
+};
+
+// Leave old kernels alone during unattended runs — removing a kernel is also
+// a dpkg transaction, and a known-good fallback kernel is worth the disk.
+Unattended-Upgrade::Remove-Unused-Kernel-Packages "false";
+Unattended-Upgrade::Remove-Unused-Dependencies "false";
+
+// If an unattended run is interrupted, let the next one repair rather than
+// refuse to proceed.
+Unattended-Upgrade::AutoFixInterruptedDpkg "true";
+// Never hold the lock during a shutdown — that is how dpkg gets killed.
+Unattended-Upgrade::MinimalSteps "true";
 Unattended-Upgrade::Mail "";
 UUEOF
     log_success "Unattended security upgrades configured (security-only, no auto-reboot)"

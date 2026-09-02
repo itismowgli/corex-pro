@@ -31,6 +31,8 @@ source "${SCRIPT_DIR}/lib/wizard.sh"
 source "${SCRIPT_DIR}/lib/preflight.sh"
 source "${SCRIPT_DIR}/lib/drive.sh"
 source "${SCRIPT_DIR}/lib/security.sh"
+source "${SCRIPT_DIR}/lib/thermal.sh"
+source "${SCRIPT_DIR}/lib/selfheal.sh"
 source "${SCRIPT_DIR}/lib/docker.sh"
 source "${SCRIPT_DIR}/lib/directories.sh"
 source "${SCRIPT_DIR}/lib/backup.sh"
@@ -201,6 +203,14 @@ main() {
     for svc in "${SELECTED_SERVICES[@]}"; do
         _deploy_service "$svc"
     done
+
+    # ── Phase 5b: Resilience ─────────────────────────────────────────────────
+    # Runs after services exist so the thermal guardian can enumerate them,
+    # and after Docker so the delay drop-in applies on the next boot.
+    log_step "═══ PHASE 5b: Resilience & Self-Healing ═══"
+    thermal_install
+    selfheal_install
+    selfheal_delay_docker_start
 
     # ── Phase 6: Backup ───────────────────────────────────────────────────────
     log_step "═══ PHASE 6: Backup Configuration ═══"

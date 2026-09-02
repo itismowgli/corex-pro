@@ -59,6 +59,8 @@ corex-pro/
 │   ├── directories.sh        # Phase 4, service-aware
 │   ├── backup.sh             # Phase 6 extracted
 │   ├── summary.sh            # Phase 7 extracted
+│   ├── thermal.sh            # Thermal guardian — sheds load before TjMax (#17)
+│   ├── selfheal.sh           # Boot self-repair: dpkg + unclean shutdown (#16)
 │   └── services/             # One file per service (auto-discovered)
 │       ├── traefik.sh
 │       ├── adguard.sh
@@ -593,6 +595,61 @@ impossible. Two things make it tractable:
 is the only crash evidence; `corex manage cleanup` vacuums it. Archive
 `journalctl -b -1` first.
 
+### 17. Mini servers thermal-trip — shed load, never let TjMax decide
+
+CoreX targets small-form-factor hardware, which frequently means a mobile CPU
+(Ryzen HX, Intel NUC) in a chassis with marginal cooling. Under sustained
+container load these reach TjMax and fire **THERMTRIP**: an instant,
+hardware-level power cut. This is the worst possible failure mode because:
+
+- The kernel logs **nothing** — no critical-temp warning, no panic. The journal
+  simply stops mid-line, so it looks exactly like someone pulled the plug.
+  Diagnosing it without `lm-sensors` installed is close to impossible.
+- Nothing is flushed, so you risk both database corruption *and* a broken dpkg
+  database if it lands mid-`apt`.
+
+A real measurement from the field: a Ryzen 9 5900HX sat at **Tctl 95.6°C** three
+minutes after boot with 38 containers running, and tripped after ~5 minutes.
+With the four heaviest containers stopped it still read **91.1°C** — so the
+cooling was independently inadequate, not merely overloaded.
+
+**Three rules follow:**
+
+1. **`lm-sensors` and `smartmontools` are mandatory**, not optional. Without
+   them the most common hardware failure is invisible. Check with
+   `corex manage health`.
+2. **Shed load before the hardware decides.** `lib/thermal.sh` installs a
+   guardian that stops containers progressively as temperature climbs and
+   restarts them when it falls. Pausing Ollama beats an unplanned power cut.
+3. **`SERVICE_CATEGORY` is load-bearing.** The guardian derives shed order from
+   it, so choosing the wrong category for a new service means it gets shed at
+   the wrong time. Order: containers CoreX did not deploy (no resource limits,
+   usually the culprit) → `ai` → `monitoring`/`productivity`/`storage`/`backup`.
+   Never shed: `core`, `security`, `communication`.
+
+Thresholds live in `/etc/corex/thermal.conf`; set `THERMAL_ENABLED=false` to
+disable. Shed containers are tracked in `/var/lib/corex/thermal-shed.list`.
+
+### 18. "Security-only" unattended-upgrades still upgrades the kernel
+
+Ubuntu ships kernel updates through the `-security` origin, so restricting
+`Unattended-Upgrade::Allowed-Origins` to `-security` does **not** stop
+unattended kernel upgrades. This is how a CoreX box ended up with `systemd` and
+`libc-bin` unpacked-but-unconfigured: unattended-upgrades began a kernel
+upgrade, CPU load rose, the box thermal-tripped mid-transaction, and every
+subsequent boot retried and re-broke it.
+
+`lib/security.sh` therefore sets an explicit `Package-Blacklist` for
+`linux-*`, `libc6`, `libc-bin`, `systemd` and `udev`. Those still get upgraded,
+but only through `corex manage os-upgrade`, which refuses to start when the CPU
+is above 85°C, when dpkg is already dirty, or when uptime is under 15 minutes.
+
+`Remove-Unused-Kernel-Packages` is also set to `false` — removing a kernel is
+itself a dpkg transaction, and a known-good fallback kernel is worth the disk.
+
+Detect the damage with `corex manage health`; `lib/selfheal.sh` repairs it
+automatically on the next boot via `dpkg --configure -a`.
+
 ---
 
 ## What NOT to Do
@@ -723,6 +780,7 @@ Every `lib/services/<name>.sh` must export:
 SERVICE_NAME="gitea"
 SERVICE_LABEL="Gitea — Self-hosted Git (replaces GitHub)"
 SERVICE_CATEGORY="productivity"    # core|storage|security|productivity|ai|monitoring|communication|backup
+                                   # NOTE: also drives thermal shed order — see gotcha #17
 SERVICE_REQUIRED=false             # true = always installed, not user-selectable
 SERVICE_NEEDS_DOMAIN=true          # false = works in local-only mode too
 SERVICE_NEEDS_EMAIL=false
