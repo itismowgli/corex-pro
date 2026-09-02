@@ -40,7 +40,45 @@ state_init() {
             services: {}
         }' > "$COREX_STATE_FILE"
 
-    chmod 600 "$COREX_STATE_FILE"
+    chmod 644 "$COREX_STATE_FILE"
+}
+
+# ── The no-secrets invariant ──────────────────────────────────────────────────
+# state.json is mode 0644 and is bind-mounted read-only into the dashboard
+# container, so it MUST NOT hold credentials. It once held
+# cloudflare_tunnel_token, which put a live tunnel credential inside a
+# web-facing container; the token now lives in a 0600 dotfile beside the
+# service that needs it, the way every other CoreX secret does.
+#
+# state_set enforces this rather than trusting callers to remember.
+_COREX_STATE_SECRET_KEYS="token secret password passwd pass key credential"
+
+_state_is_secret_key() {
+    local key="$1" pat
+    for pat in $_COREX_STATE_SECRET_KEYS; do
+        [[ "$key" == *"$pat"* ]] && return 0
+    done
+    return 1
+}
+
+# ── state_strip_secrets ───────────────────────────────────────────────────────
+# Remove any secret-looking key left in an existing state.json by a CoreX
+# version that predates the invariant above. Callers migrate the value
+# somewhere safe first; this only deletes.
+state_strip_secrets() {
+    [[ -f "$COREX_STATE_FILE" ]] || return 0
+    local key found=0
+    for key in $(jq -r 'keys[]' "$COREX_STATE_FILE" 2>/dev/null); do
+        _state_is_secret_key "$key" || continue
+        local tmp
+        tmp="$(mktemp)"
+        jq --arg k "$key" 'del(.[$k])' "$COREX_STATE_FILE" > "$tmp" \
+            && mv "$tmp" "$COREX_STATE_FILE" && chmod 644 "$COREX_STATE_FILE"
+        rm -f "$tmp"
+        found=1
+    done
+    [[ "$found" == "1" ]] && return 0
+    return 0
 }
 
 # ── state_get ─────────────────────────────────────────────────────────────────
@@ -65,11 +103,21 @@ state_set() {
     set -- "$1" "${2//\"/}"
     local key="$1"
     local value="$2"
+
+    # Refuse to write a credential. See the no-secrets invariant above.
+    if _state_is_secret_key "$key"; then
+        echo "state_set: refusing to write secret-looking key '$key' to state.json" >&2
+        return 1
+    fi
+
     local tmp
     tmp="$(mktemp)"
     trap 'rm -f "${tmp:-}"' RETURN
+    # mv preserves mktemp's 0600, which would make state.json unreadable to
+    # the dashboard container on the next write. Restore the mode explicitly.
     jq --arg k "$key" --arg v "$value" '.[$k] = $v' "$COREX_STATE_FILE" > "$tmp" \
-        && mv "$tmp" "$COREX_STATE_FILE"
+        && mv "$tmp" "$COREX_STATE_FILE" \
+        && chmod 644 "$COREX_STATE_FILE"
 }
 
 # ── state_service_installed ───────────────────────────────────────────────────
@@ -85,7 +133,8 @@ state_service_installed() {
     jq --arg svc "$svc" \
         --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         '.services[$svc] = { installed: true, enabled: true, installed_at: $ts }' \
-        "$COREX_STATE_FILE" > "$tmp" && mv "$tmp" "$COREX_STATE_FILE"
+        "$COREX_STATE_FILE" > "$tmp" && mv "$tmp" "$COREX_STATE_FILE" \
+        && chmod 644 "$COREX_STATE_FILE"
 }
 
 # ── state_service_removed ─────────────────────────────────────────────────────
@@ -99,7 +148,8 @@ state_service_removed() {
     trap 'rm -f "${tmp:-}"' RETURN
     jq --arg svc "$svc" \
         '.services[$svc] = { installed: false, enabled: false }' \
-        "$COREX_STATE_FILE" > "$tmp" && mv "$tmp" "$COREX_STATE_FILE"
+        "$COREX_STATE_FILE" > "$tmp" && mv "$tmp" "$COREX_STATE_FILE" \
+        && chmod 644 "$COREX_STATE_FILE"
 }
 
 # ── state_service_is_installed ────────────────────────────────────────────────
@@ -130,7 +180,8 @@ state_service_enable() {
     tmp="$(mktemp)"
     trap 'rm -f "${tmp:-}"' RETURN
     jq --arg svc "$svc" '.services[$svc].enabled = true' "$COREX_STATE_FILE" > "$tmp" \
-        && mv "$tmp" "$COREX_STATE_FILE"
+        && mv "$tmp" "$COREX_STATE_FILE" \
+        && chmod 644 "$COREX_STATE_FILE"
 }
 
 state_service_disable() {
@@ -139,5 +190,6 @@ state_service_disable() {
     tmp="$(mktemp)"
     trap 'rm -f "${tmp:-}"' RETURN
     jq --arg svc "$svc" '.services[$svc].enabled = false' "$COREX_STATE_FILE" > "$tmp" \
-        && mv "$tmp" "$COREX_STATE_FILE"
+        && mv "$tmp" "$COREX_STATE_FILE" \
+        && chmod 644 "$COREX_STATE_FILE"
 }

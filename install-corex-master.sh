@@ -196,7 +196,9 @@ main() {
     state_set "timezone"  "$TIMEZONE"
     if [[ "${CLOUDFLARE_TUNNEL_TOKEN:-}" != "PASTE_YOUR_TUNNEL_TOKEN_HERE" && -n "${CLOUDFLARE_TUNNEL_TOKEN:-}" ]]; then
         state_set "cloudflare_tunnel_configured" "true"
-        state_set "cloudflare_tunnel_token" "$CLOUDFLARE_TUNNEL_TOKEN"
+        # The token is a credential and never goes in state.json, which is
+        # 0644 and bind-mounted into the dashboard container. cloudflared_deploy
+        # persists it to ${DOCKER_ROOT}/cloudflared/.tunnel-token (0600).
     fi
 
     local svc

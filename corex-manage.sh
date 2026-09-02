@@ -123,7 +123,15 @@ _load_config() {
     EMAIL=$(state_get "email")
     TIMEZONE=$(state_get "timezone")
     SSH_PORT=$(state_get "ssh_port")
-    CLOUDFLARE_TUNNEL_TOKEN=$(state_get "cloudflare_tunnel_token")
+    # Tunnel token: 0600 dotfile first, legacy state.json only as a fallback
+    # for boxes installed before the token was moved out of state.json.
+    CLOUDFLARE_TUNNEL_TOKEN=""
+    if [[ -s "${DOCKER_ROOT:-/mnt/corex-data/docker-configs}/cloudflared/.tunnel-token" ]]; then
+        CLOUDFLARE_TUNNEL_TOKEN=$(cat "${DOCKER_ROOT:-/mnt/corex-data/docker-configs}/cloudflared/.tunnel-token")
+    else
+        CLOUDFLARE_TUNNEL_TOKEN=$(state_get "cloudflare_tunnel_token")
+        [[ "$CLOUDFLARE_TUNNEL_TOKEN" == "null" ]] && CLOUDFLARE_TUNNEL_TOKEN=""
+    fi
 
     # Resolve SSH_PORT: state.json may be missing it on v1 migrated installs.
     # Fall back to the actual running sshd configuration so repair operations

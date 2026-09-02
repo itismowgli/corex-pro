@@ -87,9 +87,12 @@ services:
     group_add:
       - "${docker_gid}"
     volumes:
+      # /root/corex-credentials.txt was mounted here and never read by the
+      # dashboard. It is 0600 root and the container runs as nobody, so the
+      # mount only ever exposed every service password to a web-facing
+      # container without granting it anything.
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /etc/corex:/etc/corex:ro
-      - /root/corex-credentials.txt:/root/corex-credentials.txt:ro
       - ${SCRIPT_DIR:-/opt/corex-pro}:/opt/corex-pro:ro
     environment:
       COREX_MANAGE: "/opt/corex-pro/corex-manage.sh"

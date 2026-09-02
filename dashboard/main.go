@@ -139,8 +139,15 @@ func main() {
 func loadState() CoreXState {
 	var s CoreXState
 	data, err := os.ReadFile("/etc/corex/state.json")
-	if err == nil {
-		_ = json.Unmarshal(data, &s)
+	if err != nil {
+		// Silence here is how the dashboard came to report "No services
+		// installed" on a box running 36 containers: state.json was mode
+		// 0600 root, the container runs as nobody, and the read error was
+		// discarded. An unreadable state file is a deployment fault and has
+		// to say so.
+		log.Printf("loadState: cannot read /etc/corex/state.json: %v", err)
+	} else if err := json.Unmarshal(data, &s); err != nil {
+		log.Printf("loadState: cannot parse /etc/corex/state.json: %v", err)
 	}
 	if s.Domain == "" {
 		s.Domain = getenv("DOMAIN", "")

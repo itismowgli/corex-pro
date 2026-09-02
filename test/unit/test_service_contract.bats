@@ -142,3 +142,101 @@ _repair_body() {
     [ "$output" = "0" ]
     grep -qE 'image: nextcloud:[0-9]+' "$f"
 }
+
+# ─── state.json holds no credentials ─────────────────────────────────────────
+
+@test "state_set refuses to write secret-looking keys" {
+    # state.json is 0644 and bind-mounted into the dashboard container, so a
+    # credential written there lands inside a web-facing service. It really
+    # happened: cloudflare_tunnel_token lived in state.json for several
+    # releases.
+    export COREX_STATE_FILE="${BATS_TEST_TMPDIR}/state.json"
+    # shellcheck disable=SC1090
+    source "${REPO_ROOT}/lib/state.sh"
+    state_init
+
+    run state_set "cloudflare_tunnel_token" "secret-value"
+    [ "$status" -ne 0 ]
+    run grep -c "secret-value" "$COREX_STATE_FILE"
+    [ "$output" = "0" ]
+
+    # A non-secret key still writes normally.
+    run state_set "domain" "example.com"
+    [ "$status" -eq 0 ]
+    grep -q "example.com" "$COREX_STATE_FILE"
+}
+
+@test "state.json stays readable by the dashboard container after a write" {
+    # mv from mktemp preserves 0600, which silently made state.json
+    # unreadable to the dashboard on the next write.
+    export COREX_STATE_FILE="${BATS_TEST_TMPDIR}/state2.json"
+    # shellcheck disable=SC1090
+    source "${REPO_ROOT}/lib/state.sh"
+    state_init
+    state_set "domain" "example.com"
+    state_service_installed "nextcloud"
+    run stat -c "%a" "$COREX_STATE_FILE"
+    [ "$output" = "644" ]
+}
+
+@test "state_strip_secrets removes a legacy token from an existing state file" {
+    export COREX_STATE_FILE="${BATS_TEST_TMPDIR}/state3.json"
+    # shellcheck disable=SC1090
+    source "${REPO_ROOT}/lib/state.sh"
+    state_init
+    # Simulate a state file written by an older CoreX.
+    jq '.cloudflare_tunnel_token = "legacy-token"' "$COREX_STATE_FILE" > "$COREX_STATE_FILE.t"
+    mv "$COREX_STATE_FILE.t" "$COREX_STATE_FILE"
+    grep -q "legacy-token" "$COREX_STATE_FILE"
+
+    state_strip_secrets
+    run grep -c "legacy-token" "$COREX_STATE_FILE"
+    [ "$output" = "0" ]
+}
+
+@test "no module writes a credential into state.json" {
+    run grep -rhoE 'state_set "[a-z_]+"' --include='*.sh' "$REPO_ROOT"
+    for key in $(echo "$output" | sed 's/state_set "//;s/"//' | sort -u); do
+        case "$key" in
+            *token*|*secret*|*password*|*passwd*|*key*|*credential*)
+                echo "state_set writes secret-looking key: $key"
+                false
+                ;;
+        esac
+    done
+}
+
+# ─── Secrets must not be mounted into the web-facing dashboard ───────────────
+
+@test "dashboard does not mount the credentials file" {
+    run grep -c 'corex-credentials.txt:/root/corex-credentials.txt' \
+        "${REPO_ROOT}/lib/services/dashboard.sh"
+    [ "$output" = "0" ]
+}
+
+# ─── A repair with no token must not destroy a working tunnel ────────────────
+
+@test "cloudflared resolves its token before removing the container" {
+    # The old order was `docker rm -f cloudflared` and then the token check,
+    # so a repair on a box whose state.json lacked the token tore down the
+    # live tunnel and returned only a warning.
+    local f="${REPO_ROOT}/lib/services/cloudflared.sh"
+    local body
+    body=$(awk '/^cloudflared_deploy\(\)/,/^}/' "$f")
+    local rm_line token_line
+    token_line=$(echo "$body" | grep -n '_cloudflared_token' | head -1 | cut -d: -f1)
+    rm_line=$(echo "$body" | grep -n 'docker rm -f cloudflared' | head -1 | cut -d: -f1)
+    [ -n "$token_line" ]
+    [ -n "$rm_line" ]
+    [ "$token_line" -lt "$rm_line" ]
+}
+
+@test "cloudflared persists its token to a 0600 dotfile" {
+    grep -q 'chmod 600 "\$token_file"' "${REPO_ROOT}/lib/services/cloudflared.sh"
+    grep -q '.tunnel-token' "${REPO_ROOT}/lib/services/cloudflared.sh"
+}
+
+@test "cloudflared compose is not world-readable (it embeds the token)" {
+    grep -q 'chmod 600 "\${dir}/docker-compose.yml"' \
+        "${REPO_ROOT}/lib/services/cloudflared.sh"
+}

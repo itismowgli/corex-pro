@@ -29,19 +29,76 @@ cloudflared_firewall() {
     : # Cloudflared makes outbound connections only; no inbound ports needed
 }
 
+# ── _cloudflared_token ────────────────────────────────────────────────────────
+# Resolve the tunnel token, in order of preference:
+#
+#   1. $CLOUDFLARE_TUNNEL_TOKEN from the environment (a fresh token wins)
+#   2. ${DOCKER_ROOT}/cloudflared/.tunnel-token — the persisted copy
+#   3. cloudflare_tunnel_token in state.json — legacy location, migrated out
+#   4. the --token argument in an existing docker-compose.yml — last resort
+#
+# The token used to live in state.json, which is mode 0644 and bind-mounted
+# into the dashboard container: a live tunnel credential inside a web-facing
+# service. It now lives in a 0600 dotfile next to the service that needs it,
+# matching every other CoreX secret. Sources 3 and 4 exist only so upgrading
+# an installed box does not lose the token, and both migrate it forward.
+_cloudflared_token() {
+    local dir="${DOCKER_ROOT}/cloudflared"
+    local token_file="${dir}/.tunnel-token"
+    local token=""
+
+    if [[ -n "${CLOUDFLARE_TUNNEL_TOKEN:-}" ]] \
+        && [[ "$CLOUDFLARE_TUNNEL_TOKEN" != "PASTE_YOUR_TUNNEL_TOKEN_HERE" ]]; then
+        token="$CLOUDFLARE_TUNNEL_TOKEN"
+    elif [[ -s "$token_file" ]]; then
+        token=$(cat "$token_file")
+    elif declare -f state_get >/dev/null 2>&1; then
+        token=$(state_get "cloudflare_tunnel_token" 2>/dev/null)
+        [[ "$token" == "null" ]] && token=""
+    fi
+
+    # Recover from the running compose file if nothing else has it. Without
+    # this, a repair on a box whose state.json was rebuilt would find no token
+    # and tear the tunnel down.
+    if [[ -z "$token" && -f "${dir}/docker-compose.yml" ]]; then
+        token=$(grep -m1 -oE -- '--token[[:space:]]+[^[:space:]]+' \
+            "${dir}/docker-compose.yml" 2>/dev/null | awk '{print $2}')
+    fi
+
+    [[ -z "$token" || "$token" == "PASTE_YOUR_TUNNEL_TOKEN_HERE" ]] && return 1
+
+    # Persist forward, then remove the legacy copy from state.json.
+    mkdir -p "$dir"
+    if [[ ! -s "$token_file" ]] || [[ "$(cat "$token_file")" != "$token" ]]; then
+        printf '%s\n' "$token" > "$token_file"
+        chmod 600 "$token_file"
+    fi
+    declare -f state_strip_secrets >/dev/null 2>&1 && state_strip_secrets
+
+    printf '%s' "$token"
+}
+
 cloudflared_deploy() {
     cloudflared_dirs
     local dir="${DOCKER_ROOT}/cloudflared"
 
-    # Clean up any old container
-    docker rm -f cloudflared 2>/dev/null || true
-
-    if [[ "${CLOUDFLARE_TUNNEL_TOKEN:-}" == "PASTE_YOUR_TUNNEL_TOKEN_HERE" ]] \
-        || [[ -z "${CLOUDFLARE_TUNNEL_TOKEN:-}" ]]; then
+    # Resolve the token BEFORE touching the running container. The old order
+    # was `docker rm -f cloudflared` and then the token check, so a repair on
+    # a box with no token in state.json destroyed the live tunnel and then
+    # returned a warning — one repair took all external access down.
+    local token
+    if ! token=$(_cloudflared_token); then
         log_warning "Cloudflare Tunnel skipped (no token configured)"
         log_warning "  Add your token later: corex-manage add cloudflared"
+        if container_running "cloudflared"; then
+            log_warning "  Existing tunnel left running — not touching it"
+        fi
         return 0
     fi
+    CLOUDFLARE_TUNNEL_TOKEN="$token"
+
+    # Clean up any old container
+    docker rm -f cloudflared 2>/dev/null || true
 
     cat > "${dir}/docker-compose.yml" << DCEOF
 services:
@@ -62,6 +119,9 @@ services:
 networks:
   proxy-net: { external: true }
 DCEOF
+    # The compose file embeds the tunnel token on the command line, so it is
+    # a credential file and must not be world-readable.
+    chmod 600 "${dir}/docker-compose.yml"
 
     docker compose -f "${dir}/docker-compose.yml" up -d \
         || log_warning "Cloudflared may not have started — check: docker ps"
