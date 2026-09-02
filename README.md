@@ -566,8 +566,12 @@ This command:
 
 ### 🖥 CoreX Dashboard — Web GUI
 
-A lightweight web GUI (Go + HTMX, ~15MB image, container `corex-dashboard`) for
+A lightweight web GUI (Go + HTMX, ~20MB image, container `corex-dashboard`) for
 day-to-day operations without SSH.
+
+> **Built from source, not pulled.** The image is compiled on your server from
+> `dashboard/` on first install, so there is no registry dependency. Expect
+> `corex manage add dashboard` to take 1–2 minutes the first time.
 
 #### How to log in
 

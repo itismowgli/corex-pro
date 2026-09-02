@@ -60,7 +60,20 @@ dashboard_deploy() {
     cat > "${dir}/docker-compose.yml" << DCEOF
 services:
   dashboard:
-    image: ghcr.io/itismowgli/corex-dashboard:latest
+    # Built from source in this repo rather than pulled.
+    #
+    # ghcr.io/itismowgli/corex-dashboard:latest was never published — pulling
+    # it fails with "error from registry: denied", which meant the dashboard
+    # documented as auto-installed since v3.0.0 had in fact never started for
+    # anyone. All the sources are in dashboard/ (main.go plus templates and
+    # static embedded via //go:embed), so building locally removes the
+    # registry dependency entirely. pull_policy: build stops Compose trying
+    # the registry first. First install spends ~1-2 min compiling.
+    image: corex-dashboard:local
+    build:
+      context: ${SCRIPT_DIR:-/opt/corex-pro}/dashboard
+      dockerfile: Dockerfile
+    pull_policy: build
     container_name: corex-dashboard
     restart: unless-stopped
     volumes:
@@ -93,10 +106,29 @@ networks:
   proxy-net: { external: true }
 DCEOF
 
-    docker compose -f "${dir}/docker-compose.yml" up -d \
-        || log_warning "Dashboard may not have started — image may not exist yet (v3.0.0)"
+    # Build + start. The build can take a couple of minutes on first install.
+    log_info "Building the dashboard image (first run takes 1-2 minutes)..."
+    docker compose -f "${dir}/docker-compose.yml" up -d --build 2>&1 | tail -5
+
+    # Verify it is ACTUALLY running before claiming success. The previous
+    # version logged "deployed" even when the image pull had failed, so a
+    # completely absent dashboard reported as installed — which is how this
+    # went unnoticed from v3.0.0 onwards.
+    local up=false i
+    for i in $(seq 1 12); do
+        if container_running "corex-dashboard"; then up=true; break; fi
+        sleep 5
+    done
+
     state_service_installed "dashboard"
-    log_success "CoreX Dashboard deployed (dashboard.${DOMAIN})"
+    if [[ "$up" == "true" ]]; then
+        log_success "CoreX Dashboard deployed (https://dashboard.${DOMAIN})"
+        log_info "  Login: admin / $(cat "${dir}/.dashboard-password" 2>/dev/null)"
+    else
+        log_warning "Dashboard container did not start. Check:"
+        echo "    docker compose -f ${dir}/docker-compose.yml logs"
+        echo "    docker compose -f ${dir}/docker-compose.yml build"
+    fi
 }
 
 dashboard_destroy() {

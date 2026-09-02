@@ -68,6 +68,20 @@ inside a longer script is easy to miss, the repository silently stopped
 updating while deployments appeared to succeed. It now records the repo
 directory's owner and restores it on every exit path.
 
+### Fixed — the CoreX Dashboard had never actually run
+`ghcr.io/itismowgli/corex-dashboard:latest` was never published. Pulling it
+fails with `error from registry: denied`, so the web GUI documented as
+auto-installed since v3.0.0 had never started for anyone. Worse,
+`dashboard_deploy` logged `CoreX Dashboard deployed` and marked the service
+installed **even when the pull failed**, so a completely absent dashboard
+reported as healthy — which is how this went unnoticed across two releases.
+
+It is now built from source on the server (all of `main.go`, `templates/` and
+`static/` are in the repo, embedded via `//go:embed`), with
+`pull_policy: build` so Compose does not consult the registry at all. Deploy
+now waits for the container to actually be running and reports a real failure
+with the commands to diagnose it if not.
+
 ### Added — documentation for things that had none
 
 - **CoreX Dashboard — Web GUI**: the GUI shipped in v3.0.0 with no documented
