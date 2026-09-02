@@ -196,6 +196,28 @@ def record(job_id, **fields):
                     _jobs.pop(stale, None)
 
 
+def _outcome_lines(output, rc):
+    """The lines worth putting in a notification.
+
+    On success that is the summary corex-manage already prints, which says what
+    actually changed ("vaultwarden stopped and set not to restart"). Reporting
+    only "finished in 6s" makes every job look identical and tells the reader
+    nothing. On failure it is the tail, because that is where the error is.
+    """
+    lines = [ln.strip() for ln in (output or "").splitlines() if ln.strip()]
+    if not lines:
+        return []
+    if rc != 0:
+        return lines[-4:]
+    # Prefer the last [  OK] line; fall back to the last line of any kind.
+    ok_lines = [ln for ln in lines if ln.startswith("[  OK]")]
+    chosen = ok_lines[-1] if ok_lines else lines[-1]
+    for prefix in ("[  OK] ", "[INFO] ", "[STEP] "):
+        if chosen.startswith(prefix):
+            chosen = chosen[len(prefix):]
+    return [chosen]
+
+
 def announce(action, service, rc, elapsed, output):
     """Tell Telegram the job finished.
 
@@ -210,16 +232,16 @@ def announce(action, service, rc, elapsed, output):
     token, chat = cc.telegram_creds(CONF)
     if not token or not chat:
         return
+
     ok = rc == 0
-    head = "%s  *%s*" % ("✅ Done" if ok else "\U0001f6a8 Failed",
-                         cc.md_escape("%s %s" % (action, service or "")).strip())
-    tail = ""
-    if not ok:
-        last = [ln for ln in output.splitlines() if ln.strip()][-4:]
-        if last:
-            tail = "\n\n" + cc.md_escape("\n".join(last))
-    body = "%s\n\n%s%s" % (head, cc.md_escape("finished in %ds" % elapsed), tail)
-    cc.telegram_send(token, chat, body)
+    title = ("%s %s" % (action, service or "")).strip()
+    when = "Done in %ds." % elapsed if ok else "Failed after %ds." % elapsed
+    parts = ["%s *%s*" % ("✅" if ok else "\U0001f6a8", cc.md_escape(title)),
+             cc.md_escape(when)]
+    detail = _outcome_lines(output, rc)
+    if detail:
+        parts.append(cc.md_escape("\n".join(detail)))
+    cc.telegram_send(token, chat, "\n".join(parts))
 
 
 def worker(job_id, action, service):

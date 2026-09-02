@@ -632,7 +632,13 @@ health
 ```
 
 The bot replies straight away, and sends a second message when the job
-finishes. Send `help` for the full list.
+finishes, saying what changed rather than just that it is done. Send `help` for
+the full list.
+
+Replies are reshaped for a phone rather than forwarded from the terminal.
+`status` groups services by state and names only the ones needing attention.
+`health` and `storage` keep their numbers as wrapping text and put only their
+tables in monospace, which is the one place alignment matters.
 
 It takes its bot token and chat id from the Telegram notification you set up in
 Uptime Kuma, so there is nothing extra to configure. Commands from any other

@@ -30,6 +30,7 @@ TRUST MODEL, WHICH IS THE IMPORTANT PART
 
 import json
 import os
+import re
 import socket
 import sys
 import time
@@ -67,24 +68,34 @@ ACTION_WORDS = {
 }
 INFO_WORDS = {"status", "list", "health", "storage", "cleanup"}
 
-HELP = """*CoreX control*
-
-`status` services and health
-`health` host: temperature, disks, dpkg
-`storage` disk usage by service
-`list` every available service
-
-`start <service>`
-`stop <service>`
-`restart <service>`
-`repair <service>` regenerate config and recreate
-`update <service>` or `update all`
-`logs <service> [lines]`
-`cleanup` reclaim Docker space
-
-Long jobs reply straight away and send a second message when they finish.
-Removing services, changing the domain and uninstalling are not available
-here on purpose."""
+# MarkdownV2 reserves . ! - ( ) [ ] and more, and Telegram rejects the entire
+# message with HTTP 400 if one is unescaped, so `help` silently sent nothing.
+# Escapes here are deliberate. Inside a `code span` the reserved characters are
+# literal, which is why <service> and [lines] need none.
+HELP = (
+    "\U0001f6e0 *CoreX control*\n"
+    "\n"
+    "*Look*\n"
+    "`status` every service and its state\n"
+    "`health` temperature, disks, dpkg, last shutdown\n"
+    "`storage` disk usage by service\n"
+    "`list` what is installed and what is not\n"
+    "`logs <service> [lines]`\n"
+    "\n"
+    "*Act*\n"
+    "`start <service>`\n"
+    "`stop <service>`\n"
+    "`restart <service>` its containers only\n"
+    "`repair <service>` regenerate config and recreate\n"
+    "`update <service>` or `update all`\n"
+    "`cleanup` reclaim Docker space\n"
+    "\n"
+    "Long jobs reply at once, then send a second message when they finish\\.\n"
+    "\n"
+    "Removing a service, adding one, changing the domain and uninstalling are "
+    "not reachable from here on purpose, so a lost phone cannot destroy "
+    "anything\\. Those stay on SSH\\."
+)
 
 
 def say(msg):
@@ -146,19 +157,213 @@ def api(method, params=None, timeout=70):
 
 
 def reply(text):
+    """Send one message, keeping it inside Telegram's 4096-character limit.
+
+    Truncating blindly can cut a message in the middle of a code fence, which
+    leaves MarkdownV2 unbalanced and makes Telegram reject the whole thing, so
+    an unclosed fence is closed after the cut.
+    """
+    limit = 3900
+    if len(text) > limit:
+        text = text[:limit].rstrip() + "\n\n... truncated ..."
+        if text.count("```") % 2:
+            text += "\n```"
     cc.telegram_send(BOT_TOKEN, CHAT_ID, text)
 
 
-def code_block(text, limit=3200):
-    """Wrap command output for Telegram, truncating from the top.
+def code_block(text, limit=3000):
+    """Wrap terminal output for Telegram, keeping the end.
 
     The tail is what matters in command output: the error and the summary line
-    are at the end, so a message that must be cut keeps the end and says so.
+    are both at the bottom, so a message that has to be cut keeps the end.
+    Backticks are replaced rather than escaped because a stray one inside a
+    fenced block still terminates it.
     """
     text = (text or "").strip() or "(no output)"
     if len(text) > limit:
         text = "... truncated ...\n" + text[-limit:]
     return "```\n%s\n```" % text.replace("\\", "\\\\").replace("`", "'")
+
+
+# ── Reply formatting ────────────────────────────────────────────────────────
+#
+# corex-manage.sh writes for an 80-column terminal: box-drawing rules, aligned
+# columns, and lines well over 60 characters. Telegram renders none of that
+# well. A code block does not wrap, so a wide line becomes a horizontal
+# scrollbar on a phone, and the rules turn into a row of dashes carrying no
+# information. So each command's output is reshaped here rather than forwarded.
+#
+# Only genuine terminal output stays in a code block: `logs`, where alignment
+# is the point and monospace is correct.
+
+# Box-drawing rules and the report titles, which are redundant once the reply
+# has its own heading.
+_NOISE = re.compile(r"^[\s\u2500\u2501\u2502\u2508=_-]*$")
+
+
+def wrap_names(names, per_line=4):
+    """Comma-joined names, wrapped so no line overflows a phone screen."""
+    out, row = [], []
+    for name in names:
+        row.append(name)
+        if len(row) == per_line:
+            out.append(", ".join(row))
+            row = []
+    if row:
+        out.append(", ".join(row))
+    return cc.md_escape(",\n".join(out))
+
+
+def fmt_status(output):
+    """`status --plain` is tab separated, so it can be grouped properly."""
+    groups = {}
+    for line in (output or "").splitlines():
+        parts = line.split("\t")
+        if len(parts) != 2:
+            continue
+        groups.setdefault(parts[1].strip(), []).append(parts[0].strip())
+
+    if not groups:
+        return "\U0001f4ca *Services*\n\nNothing reported\\."
+
+    healthy = sorted(groups.pop("HEALTHY", []))
+    disabled = sorted(groups.pop("DISABLED", []))
+    summary = []
+    if healthy:
+        summary.append("%d healthy" % len(healthy))
+    problems = sum(len(v) for v in groups.values())
+    if problems:
+        summary.append("%d needing attention" % problems)
+    if disabled:
+        summary.append("%d disabled" % len(disabled))
+
+    lines = ["\U0001f4ca *Services*", cc.md_escape(", ".join(summary))]
+
+    # Problems first and named individually, because those are the ones worth
+    # reading. Everything healthy is collapsed into one block.
+    for state in sorted(groups):
+        lines += ["", "\U0001f6a8 *%s*" % cc.md_escape(state.title()),
+                  wrap_names(sorted(groups[state]))]
+    if disabled:
+        lines += ["", "\u23f8 *Disabled*", wrap_names(disabled)]
+    if healthy:
+        lines += ["", "✅ *Healthy*", wrap_names(healthy)]
+    return "\n".join(lines)
+
+
+_LIST_RE = re.compile(r"^\s*(\S+)\s+(\S+)\s+\[(installed|available)\]\s+(.*)$")
+
+
+def fmt_list(output):
+    installed, available = [], []
+    for line in (output or "").splitlines():
+        m = _LIST_RE.match(line)
+        if not m:
+            continue
+        (installed if m.group(3) == "installed" else available).append(m.group(1))
+
+    if not installed and not available:
+        return "\U0001f4e6 *Services*\n\nCould not read the service list\\."
+
+    lines = ["\U0001f4e6 *Services*"]
+    if installed:
+        lines += ["", "✅ *Installed* \\(%d\\)" % len(installed),
+                  wrap_names(sorted(installed))]
+    if available:
+        lines += ["", "\u25ab *Not installed* \\(%d\\)" % len(available),
+                  wrap_names(sorted(available))]
+    # Installing a service is not one of the actions the agent will perform, so
+    # say where it is done rather than leaving the reader to try `add` and be
+    # told it is unknown.
+    lines += ["", cc.md_escape("Installing one is an SSH job: "
+                               "sudo bash corex-manage.sh add <service>")]
+    return "\n".join(lines)
+
+
+def fmt_report(heading, output):
+    """Reflow a terminal report for a phone.
+
+    Two kinds of content arrive mixed together. Labelled prose lines
+    ("CPU temperature: 66C, OK") read best as text, because Telegram wraps
+    text and a code block does not. Tables ("Service Data:", "Docker Usage:")
+    only make sense with their columns intact, so those go in a code block.
+    The rule is the line ending in a colon: it starts a table, and everything
+    indented under it belongs to that table.
+
+    The report's own title and its box-drawing rules are dropped, since the
+    reply already has a heading and a rule carries no information here.
+    """
+    parts = [heading]
+    prose, table = [], []
+    table_indent = None
+
+    def flush_prose():
+        if prose:
+            parts.append(cc.md_escape("\n".join(prose)))
+            prose.clear()
+
+    def flush_table():
+        if table:
+            parts.append(code_block("\n".join(table), 1500))
+            table.clear()
+
+    seen_content = False
+    for raw in (output or "").splitlines():
+        if not raw.strip() or _NOISE.match(raw):
+            continue
+        body = raw.rstrip()
+        text = body.strip()
+        indent = len(body) - len(body.lstrip())
+
+        # The first line is the report's own title when it carries no label.
+        if not seen_content and ":" not in text:
+            continue
+        seen_content = True
+
+        # A table continues while its rows are indented under the header, or
+        # sit at column zero. The second case is not a quirk to tolerate but
+        # the normal shape of a piped-in table: corex-manage inserts
+        # `docker system df` output verbatim, so those rows are unindented
+        # while the header above them is not.
+        if table_indent is not None and (indent > table_indent or indent == 0):
+            # Trim the common prefix rather than stripping, or the columns
+            # collapse. Only trim what is actually there.
+            prefix = " " * (table_indent + 2)
+            table.append(body[len(prefix):] if body.startswith(prefix) else body)
+            continue
+
+        table_indent = None
+        flush_table()
+
+        if text.endswith(":"):
+            flush_prose()
+            parts.append("*%s*" % cc.md_escape(text[:-1]))
+            table_indent = indent
+            continue
+
+        prose.append(text)
+
+    flush_prose()
+    flush_table()
+    if len(parts) == 1:
+        parts.append(cc.md_escape("(no output)"))
+    return "\n\n".join(parts)
+
+
+def fmt_logs(service, output):
+    """Container logs stay monospace, but each container gets its own block."""
+    chunks = (output or "").split("=== ")
+    parts = ["\U0001f4c4 *logs %s*" % cc.md_escape(service)]
+    for chunk in chunks:
+        if not chunk.strip():
+            continue
+        head, _, body = chunk.partition(" ===\n")
+        if not head:
+            parts.append(code_block(chunk, 1200))
+            continue
+        parts.append("*%s*" % cc.md_escape(head.strip()))
+        parts.append(code_block(body, 1200))
+    return "\n".join(parts)
 
 
 # ── Offset persistence ──────────────────────────────────────────────────────
@@ -222,10 +427,28 @@ def handle_command(text):
 
     if verb in INFO_WORDS:
         res = agent_call({"action": verb})
-        if verb == "cleanup":
-            reply("\U0001f9f9 *cleanup started*" if res.get("ok")
-                  else "\U0001f6a8 " + cc.md_escape(res.get("error", "failed")))
+        if not res.get("ok") and verb != "cleanup":
+            reply("\U0001f6a8 " + cc.md_escape(res.get("error", "failed")))
             return
+        out = res.get("output", "")
+        # Each of these is reshaped rather than forwarded, because the
+        # terminal report it comes from is 80 columns of aligned text and
+        # box-drawing rules that a phone cannot render usefully.
+        if verb == "status":
+            reply(fmt_status(out))
+        elif verb == "list":
+            reply(fmt_list(out))
+        elif verb == "health":
+            reply(fmt_report("\U0001fa7a *Host health*", out))
+        elif verb == "storage":
+            reply(fmt_report("\U0001f4be *Storage*", out))
+        elif verb == "cleanup":
+            if res.get("ok"):
+                reply("\U0001f9f9 *cleanup*\n" + cc.md_escape(
+                    "Started. I will message you when it finishes."))
+            else:
+                reply("\U0001f6a8 " + cc.md_escape(res.get("error", "failed")))
+        return
         if res.get("ok"):
             reply("*%s*\n%s" % (cc.md_escape(verb), code_block(res.get("output"))))
         else:
@@ -233,8 +456,8 @@ def handle_command(text):
         return
 
     if verb not in ACTION_WORDS:
-        reply("Unknown command: " + cc.md_escape(words[0]) +
-              "\nSend `help` for the list\\.")
+        reply("\U0001f937 " + cc.md_escape('I do not know "%s".' % words[0])
+              + "\n\nSend `help` for the list\\.")
         return
 
     action = ACTION_WORDS[verb]
@@ -245,20 +468,23 @@ def handle_command(text):
     if action == "logs":
         tail = 40
         if len(words) > 2 and words[2].isdigit():
-            tail = int(words[2])
+            tail = min(200, int(words[2]))
         res = agent_call({"action": "logs", "service": arg, "tail": tail})
         if res.get("ok"):
-            reply("*logs %s*\n%s" % (cc.md_escape(arg), code_block(res.get("output"))))
+            reply(fmt_logs(arg, res.get("output")))
         else:
             reply("\U0001f6a8 " + cc.md_escape(res.get("error", "failed")))
         return
 
     res = agent_call({"action": action, "service": arg})
     if res.get("ok"):
-        reply("⏳ *%s* started\nA second message follows when it finishes\\."
-              % cc.md_escape("%s %s" % (action, arg)))
+        reply("⏳ *%s*\n%s" % (
+            cc.md_escape("%s %s" % (action, arg)),
+            cc.md_escape("Started. I will message you when it finishes.")))
     else:
-        reply("\U0001f6a8 " + cc.md_escape(res.get("error", "failed")))
+        reply("\U0001f6a8 *%s*\n%s" % (
+            cc.md_escape("%s %s" % (action, arg)),
+            cc.md_escape(res.get("error", "failed"))))
 
 
 def main():

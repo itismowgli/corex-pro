@@ -59,7 +59,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 - **`corex manage restart <service>`**, distinct from `repair`: it restarts
   containers and changes nothing else.
 
+- **Formatted Telegram replies.** `corex-manage.sh` writes for an 80-column
+  terminal: box-drawing rules, aligned columns and lines well past 60
+  characters. Telegram renders none of that well, and a code block does not
+  wrap, so a wide line becomes a horizontal scrollbar on a phone. Each
+  command's output is reshaped rather than forwarded.
+
+  `status` groups services by state, naming the ones needing attention
+  individually and collapsing the healthy ones into a block. `list` splits
+  installed from available and says where to install one, since that is not an
+  action the agent will perform. `health` and `storage` keep their labelled
+  lines as wrapping text and put only their tables in a code block, which is
+  the one place monospace is the point. `logs` gives each container its own
+  block.
+
 ### Fixed
+- **`help` replied with nothing at all.** Its text contained unescaped `.`,
+  `-` and `(`, which MarkdownV2 reserves, so Telegram rejected the entire
+  message with HTTP 400 and no reply ever arrived. Every reply is now checked
+  by sending it and reading the API's answer, rather than by looking at it.
+
 - **`corex manage restart` resurrected disabled components on its first run.**
   `docker restart` starts a stopped container, so operating on the full
   container list started Prometheus, Grafana, cAdvisor and node-exporter, all
