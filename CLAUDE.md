@@ -737,6 +737,50 @@ image update, `needsDbUpgrade: true` until `occ upgrade` runs, and occ refuses
 most commands meanwhile. `corex manage update` does not run it, so a plain
 image update leaves the instance in a degraded, quietly-limited state.
 
+### 21. TLS-ALPN-01 cannot work behind a residential ISP — use DNS-01
+
+CoreX's premise is "no router configuration" via Cloudflare Tunnel, but Traefik
+was configured with `tlsChallenge: {}` (TLS-ALPN-01), which **requires Let's
+Encrypt to reach port 443 from the internet**. Most residential ISPs block
+80/443 inbound, and CGNAT makes it impossible regardless. Measured on a real
+line: both 80 and 443 blocked inbound, so ACME could never succeed.
+
+The failure is confusing rather than obvious:
+
+1. No certificate is ever issued, so `acme.json` stays empty.
+2. Traefik falls back to its built-in `CN=TRAEFIK DEFAULT CERT` placeholder and
+   every browser shows `ERR_CERT_AUTHORITY_INVALID`.
+3. Retries burn Let's Encrypt's limit of **5 failed authorizations per hostname
+   per hour**, after which it returns `429 rateLimited` — which reads like a
+   completely different problem.
+
+**DNS-01 needs no inbound connectivity**: Traefik proves domain control by
+writing a TXT record through the Cloudflare API. It also supports wildcards.
+Set `CLOUDFLARE_DNS_API_TOKEN` (Cloudflare → My Profile → API Tokens → "Edit
+zone DNS" template, scoped to the zone) and `_traefik_write_configs` selects
+`dnsChallenge` automatically; the token reaches Traefik as `CF_DNS_API_TOKEN`.
+
+### 22. Generated config files must be regenerated on repair, not "if missing"
+
+`traefik.yml` was written only by deploy, and `dynamic.yml` only when absent,
+so neither ever changed on an existing install. A months-old `dynamic.yml` was
+found still pointing `defaultCertificate` at `/certs/${DOMAIN}.crt` from an
+earlier naming scheme. That file no longer existed, so Traefik silently ignored
+the store and served its placeholder cert — the CoreX CA wildcard was never
+presented at all, despite being generated correctly.
+
+The same trap as gotcha #19 for compose files. **Anything CoreX generates is
+not user data — regenerate it unconditionally on repair.** Guard with
+`if [[ ! -f ... ]]` only for genuine user state.
+
+Diagnose with:
+
+```bash
+echo | openssl s_client -connect SERVER_IP:443 -servername sub.DOMAIN 2>/dev/null \
+  | openssl x509 -noout -issuer
+# "CN=TRAEFIK DEFAULT CERT" => the default cert store is not loading
+```
+
 ---
 
 ## What NOT to Do

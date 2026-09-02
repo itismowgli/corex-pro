@@ -125,47 +125,51 @@ traefik_firewall() {
     # Port 8080 (Traefik dashboard) is bound to localhost only — no UFW rule needed
 }
 
-_traefik_write_compose() {
-    local dir="${DOCKER_ROOT}/traefik"
-    cat > "${dir}/docker-compose.yml" << DCEOF
-services:
-  traefik:
-    image: traefik:v3.6
-    container_name: traefik
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-      - "127.0.0.1:8080:8080"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ./traefik.yml:/traefik.yml:ro
-      - ./dynamic.yml:/dynamic.yml:ro
-      - ./acme.json:/acme.json
-      - ./certs:/certs:ro
-    networks: [proxy-net]
-    security_opt: ["no-new-privileges:true"]
-    deploy:
-      resources:
-        limits:
-          memory: 256m
-          cpus: "0.5"
-        reservations:
-          memory: 64m
-networks:
-  proxy-net: { external: true }
-DCEOF
-}
-
-traefik_deploy() {
-    traefik_dirs
+# ── Generated Traefik configuration ───────────────────────────────────────────
+# Writes traefik.yml and dynamic.yml. Called UNCONDITIONALLY from both deploy
+# and repair.
+#
+# Previously traefik.yml was written only by deploy and dynamic.yml only when
+# missing, so neither ever changed on an existing install. Observed in the
+# field: a months-old dynamic.yml still pointed defaultCertificate at
+# "/certs/${DOMAIN}.crt" from an earlier naming scheme. That file no longer
+# exists, so Traefik silently fell back to its built-in "TRAEFIK DEFAULT CERT"
+# placeholder and every LAN browser showed ERR_CERT_AUTHORITY_INVALID. Both
+# files are generated, not user-edited, so regenerating them is always correct.
+_traefik_write_configs() {
     local dir="${DOCKER_ROOT}/traefik"
 
-    # acme.json must exist with chmod 600 before container starts
-    touch "${dir}/acme.json" && chmod 600 "${dir}/acme.json"
-
-    # Generate self-signed CA + wildcard cert for LAN HTTPS
-    _traefik_generate_lan_certs
+    # ── ACME challenge selection ─────────────────────────────────────────
+    # TLS-ALPN-01 (tlsChallenge) requires Let's Encrypt to reach port 443
+    # from the internet. Most residential ISPs block 80/443 inbound, and
+    # CGNAT makes it impossible regardless — so for a large share of CoreX's
+    # target users it can never succeed. It then burns through Let's
+    # Encrypt's "5 failed authorizations per hostname per hour" limit and
+    # starts returning 429, which looks like a different problem entirely.
+    #
+    # DNS-01 needs no inbound connectivity at all: Traefik proves control by
+    # writing a TXT record through the Cloudflare API. It also supports
+    # wildcards. So when a Cloudflare DNS token is available, prefer it.
+    local acme_challenge
+    if [[ -n "${CLOUDFLARE_DNS_API_TOKEN:-}" ]]; then
+        acme_challenge=$(cat << 'ACMEEOF'
+      dnsChallenge:
+        provider: cloudflare
+        resolvers:
+          - "1.1.1.1:53"
+          - "8.8.8.8:53"
+ACMEEOF
+)
+        log_info "ACME: DNS-01 via Cloudflare (works behind blocked ports/CGNAT)"
+    else
+        acme_challenge="      tlsChallenge: {}"
+        log_warning "ACME: TLS-ALPN-01 — requires inbound port 443 from the internet."
+        echo "    If your ISP blocks 443 or you are behind CGNAT, Let's Encrypt"
+        echo "    cannot validate and browsers will warn about the fallback cert."
+        echo "    Set CLOUDFLARE_DNS_API_TOKEN to use DNS-01 instead:"
+        echo "      dash.cloudflare.com → My Profile → API Tokens → Create Token"
+        echo "      Template 'Edit zone DNS', scoped to your zone."
+    fi
 
     # ── Static config: entrypoints, providers, certificate resolvers ───
     cat > "${dir}/traefik.yml" << TEOF
@@ -202,7 +206,7 @@ providers:
 certificatesResolvers:
   myresolver:
     acme:
-      tlsChallenge: {}
+${acme_challenge}
       email: "${EMAIL}"
       storage: /acme.json
 TEOF
@@ -219,6 +223,55 @@ tls:
         certFile: /certs/wildcard.crt
         keyFile: /certs/wildcard.key
 DYEOF
+}
+
+_traefik_write_compose() {
+    local dir="${DOCKER_ROOT}/traefik"
+    cat > "${dir}/docker-compose.yml" << DCEOF
+services:
+  traefik:
+    image: traefik:v3.6
+    container_name: traefik
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik.yml:/traefik.yml:ro
+      - ./dynamic.yml:/dynamic.yml:ro
+      - ./acme.json:/acme.json
+      - ./certs:/certs:ro
+    environment:
+      # Traefik's Cloudflare DNS-01 provider reads this. Empty when no token
+      # is configured, in which case tlsChallenge is used instead.
+      CF_DNS_API_TOKEN: "${CLOUDFLARE_DNS_API_TOKEN:-}"
+    networks: [proxy-net]
+    security_opt: ["no-new-privileges:true"]
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.5"
+        reservations:
+          memory: 64m
+networks:
+  proxy-net: { external: true }
+DCEOF
+}
+
+traefik_deploy() {
+    traefik_dirs
+    local dir="${DOCKER_ROOT}/traefik"
+
+    # acme.json must exist with chmod 600 before container starts
+    touch "${dir}/acme.json" && chmod 600 "${dir}/acme.json"
+
+    # Generate self-signed CA + wildcard cert for LAN HTTPS
+    _traefik_generate_lan_certs
+
+    _traefik_write_configs
 
     _traefik_write_compose
 
@@ -256,17 +309,10 @@ traefik_repair() {
     # Regenerate LAN certs if missing (e.g. after manual cleanup)
     _traefik_generate_lan_certs
 
-    # Regenerate dynamic.yml if missing
-    if [[ ! -f "${dir}/dynamic.yml" ]]; then
-        cat > "${dir}/dynamic.yml" << DYEOF
-tls:
-  stores:
-    default:
-      defaultCertificate:
-        certFile: /certs/wildcard.crt
-        keyFile: /certs/wildcard.key
-DYEOF
-    fi
+    # Always regenerate traefik.yml and dynamic.yml. Doing this only when the
+    # file was missing meant a stale config survived forever — which is how an
+    # install ended up serving Traefik's placeholder certificate.
+    _traefik_write_configs
 
     [[ -f "${dir}/docker-compose.yml" ]] && \
         docker compose -f "${dir}/docker-compose.yml" up -d --force-recreate
