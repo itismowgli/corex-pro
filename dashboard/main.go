@@ -328,11 +328,10 @@ func renderTabContent(tab string, state CoreXState) (template.HTML, error) {
 			// and the "Run as root" message went straight into the void.
 			log.Printf("storage tab: corex-manage storage failed: %v (output: %q)", err, out)
 		}
-		err := tmpl.ExecuteTemplate(&buf, "storage.html", struct {
+		if err = tmpl.ExecuteTemplate(&buf, "storage.html", struct {
 			Output string
 			State  CoreXState
-		}{out, state})
-		if err != nil {
+		}{out, state}); err != nil {
 			return "", err
 		}
 
