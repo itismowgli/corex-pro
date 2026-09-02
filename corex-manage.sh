@@ -851,6 +851,24 @@ cmd_health() {
         log_warning "Thermal guardian NOT running — no protection against overheating"
     fi
 
+    # ── Resource watchdog ────────────────────────────────────────────────────
+    # Reported separately from the guardian: the guardian acts on heat, the
+    # watchdog tells you about heat, RAM, disk and container faults. A silent
+    # phone means one of two very different things and this says which.
+    if [[ -r "${SCRIPT_DIR}/lib/watchdog.sh" ]]; then
+        source "${SCRIPT_DIR}/lib/watchdog.sh"
+        case "$(watchdog_status)" in
+            ACTIVE)
+                local wd_down
+                wd_down=$(grep -c ' DOWN: ' /var/log/corex-watchdog.log 2>/dev/null) || wd_down=0
+                echo -e "  ${BOLD}Resource watchdog:${NC} active, ${wd_down} finding(s) logged"
+                ;;
+            DISABLED)     log_warning "Resource watchdog disabled in /etc/corex/watchdog.conf" ;;
+            UNREGISTERED) log_warning "Resource watchdog has no Kuma monitors. Run: corex manage watchdog setup" ;;
+            *)            log_warning "Resource watchdog NOT running: you will not be told about RAM, disk or crash-loop faults" ;;
+        esac
+    fi
+
     # ── Previous shutdown ────────────────────────────────────────────────────
     echo -en "  ${BOLD}Last shutdown:${NC} "
     local markers
@@ -1950,6 +1968,95 @@ RTEOF
     esac
 }
 
+# ── corex manage watchdog ─────────────────────────────────────────────────────
+# The watchdog answers "what is degrading this box", which is the half of
+# monitoring the HTTP checks cannot cover. See lib/watchdog.sh for why it
+# pushes to Kuma rather than running a Prometheus stack.
+cmd_watchdog() {
+    source "${SCRIPT_DIR}/lib/watchdog.sh"
+    local sub="${1:-show}"
+
+    case "$sub" in
+        setup)
+            check_root
+            watchdog_install
+            echo ""
+            echo "  Verify with: corex manage watchdog test"
+            ;;
+
+        run)
+            check_root
+            [[ -x /usr/local/bin/corex-watchdog.sh ]] \
+                || log_error "Watchdog not installed. Run: corex manage watchdog setup"
+            log_info "Running one watchdog cycle..."
+            /usr/local/bin/corex-watchdog.sh
+            log_success "Cycle complete"
+            echo ""
+            tail -12 /var/log/corex-watchdog.log 2>/dev/null | sed 's/^/  /'
+            ;;
+
+        test)
+            check_root
+            # Forces one real DOWN beat so the whole chain gets exercised:
+            # threshold, push, Kuma retry logic, notifier, phone. Testing the
+            # notifier alone from the Kuma UI proves only the last hop.
+            local conf=/etc/corex/watchdog.conf
+            [[ -r "$conf" ]] || log_error "No ${conf}. Run: corex manage watchdog setup"
+            # shellcheck source=/dev/null
+            source "$conf"
+            local token="${WATCHDOG_TOKEN_SHED:-}"
+            [[ -n "$token" ]] || log_error "No push token registered. Run: corex manage watchdog setup"
+
+            log_warning "Sending a deliberate DOWN beat to 'Thermal Shedding'."
+            echo "  It takes two beats to alert (one retry), so expect Telegram in ~2-4 min,"
+            echo "  then a recovery message on the next real cycle."
+            curl -fsS -G -o /dev/null --max-time 10 \
+                --data-urlencode "status=down" \
+                --data-urlencode "msg=test alert from corex manage watchdog test, ignore" \
+                "${WATCHDOG_KUMA_URL:-http://127.0.0.1:3001}/api/push/${token}" \
+                && log_success "Test beat accepted by Kuma" \
+                || log_error "Kuma rejected the push. Is uptime-kuma running?"
+            ;;
+
+        show|status)
+            local st; st=$(watchdog_status)
+            echo ""
+            echo -e "${BOLD}Resource watchdog${NC}"
+            case "$st" in
+                ACTIVE)       echo -e "  State: ${GREEN}active${NC}, pushing every 60s" ;;
+                DISABLED)     echo -e "  State: ${YELLOW}disabled${NC} in /etc/corex/watchdog.conf" ;;
+                UNREGISTERED) echo -e "  State: ${YELLOW}no Kuma monitors${NC}, run: corex manage watchdog setup" ;;
+                *)            echo -e "  State: ${RED}not running${NC}, run: corex manage watchdog setup" ;;
+            esac
+
+            if [[ -r /etc/corex/watchdog.conf ]]; then
+                echo ""
+                echo "  Thresholds:"
+                grep -E '^WATCHDOG_(TEMP_C|LOAD_RATIO|MEM_AVAIL_PCT|SWAP_USED_PCT|OS_FREE_PCT|SSD_FREE_PCT)=' \
+                    /etc/corex/watchdog.conf 2>/dev/null | sed 's/^/    /'
+                echo ""
+                echo "  Registered checks:"
+                grep -c '^WATCHDOG_TOKEN_' /etc/corex/watchdog.conf 2>/dev/null \
+                    | sed 's/^/    /;s/$/ of 6/'
+            fi
+
+            if [[ -r /var/log/corex-watchdog.log ]]; then
+                echo ""
+                echo "  Recent findings (DOWN beats only):"
+                grep ' DOWN: ' /var/log/corex-watchdog.log 2>/dev/null \
+                    | tail -8 | sed 's/^/    /'
+                grep -q ' DOWN: ' /var/log/corex-watchdog.log 2>/dev/null \
+                    || echo "    none recorded"
+            fi
+            echo ""
+            ;;
+
+        *)
+            log_error "Usage: corex manage watchdog [show|setup|run|test]"
+            ;;
+    esac
+}
+
 cmd_help() {
     echo ""
     echo -e "${BOLD}CoreX Pro v2 — Service Manager${NC}"
@@ -1977,6 +2084,11 @@ Commands:
   lan-setup           Configure LAN fast-path for direct local network access
   network-tune        Diagnose and optimize network for high-speed file transfers
   network-check       Test HTTPS reachability, SSL expiry, and DNS for all services
+  watchdog [sub]      Resource alerting: temp, load, RAM, disk, container health
+                        watchdog          show state, thresholds, recent findings
+                        watchdog setup    install it and register Kuma monitors
+                        watchdog run      run one cycle now and print the result
+                        watchdog test     send a real alert to prove the chain works
   disable <svc>[:<component>]  Stop a service, or one container inside it
   enable  <svc>[:<component>]  Start it again, restoring its restart policy
   route               Traefik routes for containers CoreX did not deploy:
@@ -2045,6 +2157,7 @@ main() {
         lan-setup)    cmd_lan_setup ;;
         network-tune)  cmd_network_tune ;;
         network-check) cmd_network_check ;;
+        watchdog)     cmd_watchdog "$@" ;;
         route)        cmd_route "$@" ;;
         help|--help|-h) cmd_help ;;
         *) echo "Unknown command: ${cmd}"; cmd_help; exit 1 ;;

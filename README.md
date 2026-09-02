@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://img.shields.io/badge/CoreX_Pro-v3.10.2-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
+  <img src="https://img.shields.io/badge/CoreX_Pro-v3.11.0-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
   <img src="https://img.shields.io/badge/Ubuntu-24.04_LTS-E95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Ubuntu">
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
 </div>
@@ -30,6 +30,7 @@ curl -fsSL https://raw.githubusercontent.com/itismowgli/corex-pro/main/corex.sh 
 - [Cloudflare Tunnel](#cloudflare-tunnel)
 - [LAN fast path](#lan-fast-path)
 - [Outbound email](#outbound-email)
+- [Monitoring and alerting](#monitoring-and-alerting)
 - [Thermal protection](#thermal-protection)
 - [UPS monitoring](#ups-monitoring)
 - [Backups](#backups)
@@ -181,6 +182,7 @@ sudo bash corex-manage.sh mail-setup    # configure Nextcloud outbound email
 sudo bash corex-manage.sh lan-setup     # route LAN traffic locally, not via Cloudflare
 sudo bash corex-manage.sh network-tune  # kernel tuning for gigabit transfers
 sudo bash corex-manage.sh network-check # test HTTPS, certificate expiry, and DNS
+sudo bash corex-manage.sh watchdog      # resource alerting: what is degrading the box
 ```
 
 `repair` regenerates a service's compose file before recreating the container,
@@ -538,6 +540,63 @@ record, which in practice means a small VPS. On a home line it can still serve
 mailboxes over IMAP on your LAN, but it will not exchange mail with the
 internet.
 
+## Monitoring and alerting
+
+There are two layers, and they answer different questions.
+
+Uptime Kuma answers "is the service reachable". It checks each service over
+HTTPS every 60 seconds and notifies you when one stops answering. Set up a
+notification channel in Kuma first, at `https://status.yourdomain`, then the
+monitors use it.
+
+One thing to get right: Kuma accepts only HTTP 200 to 299 by default, and
+several services legitimately answer something else. Nextcloud and AdGuard
+redirect to a login page (302), and the dashboard returns 401 because it sits
+behind basic auth. Left at the default those three report permanently down,
+which is worse than no monitoring because it teaches you to ignore the alerts.
+Add the code each service actually returns under Accepted Status Codes.
+
+The watchdog answers "what is degrading the box". Reachability checks miss most
+of what goes wrong on small hardware: a container that is OOM-killed and
+restart-looping, a disk filling up, load shedding in progress, or one
+background container consuming five cores. None of that changes a 200 OK. Nor
+can an HTTP check cover a container that has no URL, such as a database, a
+Redis cache, or Nextcloud's cron.
+
+Six checks run every 60 seconds:
+
+| Check | Alerts when |
+|---|---|
+| CPU temperature | at or above 80C, or no sensor is installed |
+| CPU load | 5-minute load average above 1.5 per core |
+| Memory pressure | under 15% RAM available, or swap above 25% |
+| Disk space | under 10% free on the OS disk, or 15% on the SSD |
+| Container health | a container is stopped while set to restart, is unhealthy, was OOM-killed, or is restart-looping |
+| Thermal shedding | the guardian currently has services stopped |
+
+Every alert names the containers responsible. "The box is hot" is not
+actionable; "88C, top CPU: immich-ml 190%, nextcloud 52%" is.
+
+The container check reads restart policy as intent, so a service switched off
+with `corex-manage.sh disable` does not alert. That is what makes it safe to
+leave running on a box where some services are deliberately stopped.
+
+Results are delivered through Uptime Kuma, using whatever notification channel
+you already configured there. Set it up with:
+
+```bash
+sudo bash corex-manage.sh watchdog setup   # install and register the monitors
+sudo bash corex-manage.sh watchdog         # state, thresholds, recent findings
+sudo bash corex-manage.sh watchdog run     # one cycle now, printed
+sudo bash corex-manage.sh watchdog test    # send a real alert, end to end
+```
+
+Thresholds live in `/etc/corex/watchdog.conf`. Set `WATCHDOG_ENABLED=false`
+there to stop it without uninstalling.
+
+Kuma cannot alert on its own unavailability, so nothing here covers Kuma being
+down. If that matters, add an external check from outside the machine.
+
 ## Thermal protection
 
 Small machines often use mobile CPUs in cases with limited cooling. Under
@@ -806,7 +865,9 @@ resource limits. v3.0.0 introduced the web dashboard, a working CrowdSec
 bouncer, and `network-check`. v3.1.0 added thermal load shedding, boot-time
 package repair, and UPS monitoring. v3.2.x made `repair` regenerate compose
 files so fixes reach existing installs, fixed certificate issuance behind
-blocked ports, and documented the dashboard and Cloudflare setup.
+blocked ports, and documented the dashboard and Cloudflare setup. v3.11.0 added
+the resource watchdog, so alerts cover memory, disk, heat and container faults
+rather than only reachability, and fixed a Time Machine crash loop it found.
 
 See [CHANGELOG.md](CHANGELOG.md) for the detail.
 

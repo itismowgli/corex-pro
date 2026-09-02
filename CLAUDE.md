@@ -28,7 +28,7 @@ learning nginx, SSL, Docker networking, or Linux hardening.
 - Re-run on existing server = health-check + repair broken services only
 - No live server required for testing (Docker-in-Docker + bats)
 
-**Current version:** v3.2.0
+**Current version:** v3.11.0
 **Current service modules:** 16 (Traefik, AdGuard, Portainer, Nextcloud,
 Immich, Vaultwarden, Stalwart Mail, Coolify, n8n, Time Machine,
 Uptime Kuma + Grafana + Prometheus (monitoring), Ollama + OpenWebUI +
@@ -123,6 +123,7 @@ corex-pro/
 │   ├── backup.sh             # Phase 6 extracted
 │   ├── summary.sh            # Phase 7 extracted
 │   ├── thermal.sh            # Thermal guardian — sheds load before TjMax (#17)
+│   ├── watchdog.sh           # Resource alerting via Kuma push monitors (#29)
 │   ├── selfheal.sh           # Boot self-repair: dpkg + unclean shutdown (#16)
 │   └── services/             # One file per service (auto-discovered)
 │       ├── traefik.sh
@@ -148,6 +149,9 @@ corex-pro/
 | `/root/corex-credentials.txt` | Auto-generated service passwords (chmod 600) |
 | `/root/CoreX_Dashboard_Credentials.md` | Full dashboard and post-install guide |
 | `/etc/corex/state.json` | [v2] Tracks installed services and configuration |
+| `/etc/corex/watchdog.conf` | Watchdog thresholds and Kuma push tokens (0640) |
+| `/usr/local/bin/corex-watchdog.sh` | Resource watchdog, run every 60s by timer |
+| `/var/log/corex-watchdog.log` | Watchdog findings (DOWN beats and push failures) |
 | `/usr/local/bin/corex-backup.sh` | Daily Restic backup script |
 | `/usr/local/bin/corex-restore.sh` | Interactive restore script |
 | `/var/log/corex-backup.log` | Backup log |
@@ -1045,6 +1049,56 @@ checking for a token, so a repair on a box whose `state.json` had been rebuilt
 destroyed the live tunnel and returned only a warning. Resolve credentials
 before touching a running container, and never tear one down on a path that
 can fail.
+
+### 29. A config mounted at a path the image does not read is worse than none
+
+`CUSTOM_SMB_CONF=true` in `mbentley/timemachine` means "the operator supplies
+the whole of `/etc/samba/smb.conf`". The image then generates nothing and exits
+1 if that exact path is not mounted. CoreX set the flag while bind-mounting a
+partial overlay at `/etc/samba/smb-performance.conf`, which the image never
+reads:
+
+```
+ERROR: CUSTOM_SMB_CONF=true but you did not bind mount a config to /etc/samba/smb.conf; exiting.
+```
+
+The container crash-looped 60 times over several hours. Three things made that
+invisible:
+
+- `restart: unless-stopped` kept restarting it, so `docker ps` showed it
+  briefly `Up 12 seconds` on almost every look, which reads as healthy.
+- Time Machine uses host networking and has no HTTP endpoint, so no Uptime
+  Kuma monitor covered it.
+- The SMB3 tuning the overlay was meant to apply had never once been in
+  effect, so there was no performance regression to notice either. It looked
+  like it had always worked.
+
+Two rules follow. **An "overlay" only exists if the image documents an include
+mechanism**; Samba has none, so a custom `smb.conf` has to reproduce the
+image's own `[global]` block in full, including the `fruit:` settings without
+which macOS does not offer the share as a backup target. And **validate
+generated config against the image that will load it**, rather than assuming:
+
+```bash
+docker run --rm -v ./smb.conf:/etc/samba/smb.conf:ro \
+  --entrypoint sh <image> -c "testparm -s /etc/samba/smb.conf"
+```
+
+That check also caught `socket options = ... SO_RCVBUF=2097152`, which Samba
+warns about by name: setting it disables Linux TCP buffer autotuning and pins
+the window, overriding the 64MB buffers `corex manage network-tune` sets.
+
+**The general form: a restart loop on a service with no HTTP monitor is
+silent.** `corex manage watchdog` exists for this class of fault. It reports a
+container that is stopped while its restart policy says otherwise, one whose
+restart count is climbing, and one that was OOM-killed, none of which changes
+an HTTP response.
+
+Note that both of those states are sticky and must be read as transitions, not
+levels. Docker keeps the last health verdict on a stopped container forever, so
+checking `Health.Status` unconditionally reported ten deliberately-stopped
+Coolify containers as `unhealthy`; and `State.OOMKilled` stays true until the
+container is recreated, so alerting on the flag itself alerts forever.
 
 ---
 

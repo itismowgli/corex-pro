@@ -8,7 +8,8 @@
 #   - Env var is PASSWORD (not TM_PASSWORD) for mbentley/timemachine image
 #   - Data stored on corex-data pool (not dedicated partition) for flexibility
 #   - macOS discovers via Bonjour automatically; manual: smb://SERVER_IP/CoreX_Backup
-#   - Custom smb.conf overlay enables SMB3 multichannel + large MTU for Gbps transfers
+#   - CoreX supplies the complete /etc/samba/smb.conf (CUSTOM_SMB_CONF=true), so it
+#     must include the image's own fruit: settings, not only the CoreX tuning
 
 # ── Metadata ──────────────────────────────────────────────────────────────────
 SERVICE_NAME="timemachine"
@@ -45,45 +46,88 @@ timemachine_deploy() {
     timemachine_dirs
     local dir="${DOCKER_ROOT}/timemachine"
 
-    # ── High-performance SMB3 configuration ──────────────────────────────────
-    # This overlay is bind-mounted into the container and merged with the
-    # default smb.conf. It enables SMB3 multichannel, large read/write sizes,
-    # and async I/O for multi-gigabit LAN transfer speeds.
-    cat > "${dir}/smb-performance.conf" << 'SMBEOF'
+    # ── Complete smb.conf ────────────────────────────────────────────────────
+    # CUSTOM_SMB_CONF=true tells mbentley/timemachine "the operator supplies
+    # the whole of /etc/samba/smb.conf", so the image generates nothing at all
+    # and exits 1 if that exact path is not mounted. CoreX previously set the
+    # flag while mounting a partial overlay at /etc/samba/smb-performance.conf,
+    # a path the image never reads, so the container crash-looped indefinitely
+    # with "you did not bind mount a config to /etc/samba/smb.conf". None of
+    # the performance tuning below was ever in effect. See gotcha #29.
+    #
+    # The [global] block therefore has to reproduce what the image's own
+    # entrypoint would have generated, not just the parts CoreX wants to
+    # change. Anything omitted here is simply absent, including the fruit:
+    # settings that make Time Machine work at all.
+    local tm_share="CoreX_Backup" tm_user="timemachine"
+    cat > "${dir}/smb.conf" << SMBEOF
 [global]
-# ── Protocol: force SMB3 minimum (disables insecure SMB1/SMB2) ───────────────
-server min protocol = SMB3_00
-client min protocol = SMB3_00
+   access based share enum = no
+   hide unreadable = no
+   inherit permissions = no
+   load printers = no
+   log file = /var/log/samba/log.%m
+   logging = file
+   max log size = 1000
+   security = user
+   server role = standalone server
+   ntlm auth = no
+   smb ports = 445
+   workgroup = WORKGROUP
+   vfs objects = fruit streams_xattr
 
-# ── Multichannel: use all available NICs simultaneously ──────────────────────
-server multi channel support = yes
+# Apple extensions. Without fruit:aapl macOS does not offer the share as a
+# Time Machine target, and without streams_xattr the sparsebundle metadata has
+# nowhere to live.
+   fruit:aapl = yes
+   fruit:nfs_aces = no
+   fruit:model = TimeCapsule8,119
+   fruit:metadata = stream
+   fruit:veto_appledouble = no
+   fruit:posix_rename = yes
+   fruit:zero_file_id = yes
+   fruit:wipe_intentionally_left_blank_rfork = yes
+   fruit:delete_empty_adfiles = yes
 
-# ── I/O performance: large buffers + async operations ────────────────────────
-# max xmit = max read/write chunk size per SMB request (8MB)
-# These directly control throughput per TCP stream
-socket options = TCP_NODELAY IPTOS_LOWDELAY SO_RCVBUF=2097152 SO_SNDBUF=2097152
-read raw = yes
-write raw = yes
-max xmit = 8388608
-getwd cache = yes
-use sendfile = yes
-aio read size = 1
-aio write size = 1
-min receivefile size = 16384
+# SMB3 minimum, which also rules out SMB1 and SMB2. The image would otherwise
+# default to SMB2.
+   server min protocol = SMB3_00
+   client min protocol = SMB3_00
+   server multi channel support = yes
 
-# ── Caching + oplocks (let client cache aggressively) ────────────────────────
-oplocks = yes
-level2 oplocks = yes
-kernel oplocks = no
-strict locking = no
+# Throughput. Note what is deliberately absent: SO_RCVBUF and SO_SNDBUF.
+# Setting either disables Linux TCP buffer autotuning and pins the window at
+# the value given, which on this box would override the 64MB buffers
+# "corex manage network-tune" configures. Samba's own testparm warns about
+# exactly this. TCP_NODELAY and IPTOS_LOWDELAY carry no such cost.
+   socket options = TCP_NODELAY IPTOS_LOWDELAY
+   max xmit = 8388608
+   use sendfile = yes
+   aio read size = 1
+   aio write size = 1
+   min receivefile size = 16384
 
-# ── Security: signing optional on LAN (performance), required on WAN ─────────
-server signing = default
-client signing = default
+# Let the client cache aggressively. A Time Machine share has exactly one
+# writer, so contention is not a concern.
+   oplocks = yes
+   level2 oplocks = yes
+   kernel oplocks = no
+   strict locking = no
+   log level = 1
 
-# ── Logging: minimal to avoid I/O overhead ───────────────────────────────────
-log level = 1
+[${tm_share}]
+   path = /opt/${tm_user}
+   inherit permissions = no
+   read only = no
+   valid users = ${tm_user}
+   vfs objects = fruit streams_xattr
+   fruit:time machine = yes
+   fruit:time machine max size = 0
 SMBEOF
+
+    # The old overlay is dead weight and its filename implies it does
+    # something. Remove it so nobody edits it expecting an effect.
+    rm -f "${dir}/smb-performance.conf"
 
     cat > "${dir}/docker-compose.yml" << DCEOF
 services:
@@ -108,7 +152,7 @@ services:
       SMB_INHERIT_PERMISSIONS: "no"
     volumes:
       - ${MOUNT_POOL}/timemachine-data:/opt/timemachine
-      - ${DOCKER_ROOT}/timemachine/smb-performance.conf:/etc/samba/smb-performance.conf:ro
+      - ${DOCKER_ROOT}/timemachine/smb.conf:/etc/samba/smb.conf:ro
 volumes: {}
 DCEOF
 

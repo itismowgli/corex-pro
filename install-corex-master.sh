@@ -32,6 +32,7 @@ source "${SCRIPT_DIR}/lib/preflight.sh"
 source "${SCRIPT_DIR}/lib/drive.sh"
 source "${SCRIPT_DIR}/lib/security.sh"
 source "${SCRIPT_DIR}/lib/thermal.sh"
+source "${SCRIPT_DIR}/lib/watchdog.sh"
 source "${SCRIPT_DIR}/lib/selfheal.sh"
 source "${SCRIPT_DIR}/lib/docker.sh"
 source "${SCRIPT_DIR}/lib/directories.sh"
@@ -211,6 +212,9 @@ main() {
     # and after Docker so the delay drop-in applies on the next boot.
     log_step "═══ PHASE 5b: Resilience & Self-Healing ═══"
     thermal_install
+    # After thermal_install, so the watchdog can report on the shed list the
+    # guardian owns, and after services, so its first run sees the real set.
+    watchdog_install
     selfheal_install
     selfheal_install_blackbox
     selfheal_delay_docker_start

@@ -6,6 +6,63 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.11.0] - 2026-09-03
+
+### Added
+- **`lib/watchdog.sh`, resource alerting for the faults an HTTP check cannot
+  see.** The nine Uptime Kuma monitors added previously answer one question:
+  does the URL respond. On this hardware that misses most of what goes wrong.
+  A container OOM-killed and restart-looping, a disk filling, the thermal
+  guardian shedding services, one background container pinning five cores:
+  none of it changes a 200 OK. It also cannot cover a container with no URL at
+  all, so an HTTP-only setup reported a healthy Nextcloud while its cron
+  container had been dead for a week.
+
+  Six checks run every 60 seconds and push to Kuma, which already owns retry,
+  dedupe, re-notify and Telegram delivery: CPU temperature, load per core,
+  memory and swap, free space on both disks, container health, and whether the
+  thermal guardian currently has anything shed. Every alert names the
+  containers responsible, because "the box is hot" is not actionable and
+  "immich-ml at 190%" is. `docker stats` is the expensive call, so it runs only
+  after a threshold has tripped, never on the healthy path.
+
+  Not Prometheus and Grafana, which is the textbook answer and the wrong one
+  here: that stack was measured holding 13GB of TSDB and burning 49% of a core
+  on a box that thermal-trips, so the observability was itself a load source,
+  and its alerting still needed a separate route to reach a phone.
+
+- **`corex manage watchdog`**, with `setup` to install and register the Kuma
+  monitors, `run` to execute one cycle and print what it found, `test` to send
+  a real alert through the whole chain, and no argument to show state,
+  thresholds and recent findings. `corex manage health` now reports whether
+  the watchdog is running, so a silent phone can be told apart from nothing
+  measuring.
+
+- **Log rotation for CoreX logs.** Nothing rotated them before. The blackbox
+  log gets its own longer schedule because it is crash evidence rather than
+  operational noise (gotcha #16), and rotation needs an `su root syslog`
+  directive or logrotate skips every entry, since Ubuntu ships `/var/log`
+  group-writable.
+
+### Fixed
+- **Time Machine had been crash-looping 60 times and nothing reported it.**
+  `CUSTOM_SMB_CONF=true` tells `mbentley/timemachine` that the operator
+  supplies the whole of `/etc/samba/smb.conf`, so the image generates nothing
+  and exits 1 when that exact path is missing. CoreX set the flag while
+  mounting a partial overlay at `/etc/samba/smb-performance.conf`, a path the
+  image never reads, so the container never started and none of the SMB3
+  tuning added in v2.2.0 was ever in effect. The module now writes a complete
+  `smb.conf`, including the `fruit:` settings the image would have generated,
+  without which macOS does not offer the share as a backup target at all.
+
+  Found by the watchdog on its first run. See gotcha #29.
+
+- **`SO_RCVBUF` and `SO_SNDBUF` removed from the Samba socket options.**
+  Setting either disables Linux TCP buffer autotuning and pins the window at
+  the value given, which would have overridden the 64MB buffers
+  `corex manage network-tune` configures. Samba's own `testparm` warns about
+  exactly this. They never applied, since the config was never loaded.
+
 ## [v3.10.2] - 2026-09-02
 
 ### Fixed
