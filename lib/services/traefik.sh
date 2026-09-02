@@ -126,6 +126,50 @@ traefik_firewall() {
     # Port 8080 (Traefik dashboard) is bound to localhost only — no UFW rule needed
 }
 
+# ── _traefik_cf_token ─────────────────────────────────────────────────────────
+# Resolve the Cloudflare DNS API token, in order of preference:
+#
+#   1. $CLOUDFLARE_DNS_API_TOKEN from the environment (a fresh token wins)
+#   2. ${DOCKER_ROOT}/traefik/.cf-dns-token, the persisted copy
+#   3. CF_DNS_API_TOKEN in an existing docker-compose.yml
+#
+# The token used to live only in the environment of whoever ran the command.
+# Since repair regenerates traefik.yml unconditionally, a repair run without
+# that variable exported rewrote the resolver back to tlsChallenge and restored
+# the wildcard defaultCertificate, undoing the DNS-01 setup entirely.
+#
+# The regression is close to invisible. Certificates already in acme.json keep
+# being served, so nothing appears broken until a NEW hostname is added: that
+# one gets the self-signed CoreX CA wildcard and a browser warning while every
+# other service still shows a valid certificate. That is exactly what happened
+# when coolify.DOMAIN was added.
+#
+# Printing nothing means there is no token, which is a real state: without one,
+# tlsChallenge is the only challenge available.
+_traefik_cf_token() {
+    local dir="${DOCKER_ROOT}/traefik"
+    local token_file="${dir}/.cf-dns-token"
+    local token=""
+
+    if [[ -n "${CLOUDFLARE_DNS_API_TOKEN:-}" ]]; then
+        token="$CLOUDFLARE_DNS_API_TOKEN"
+    elif [[ -s "$token_file" ]]; then
+        token=$(cat "$token_file")
+    elif [[ -f "${dir}/docker-compose.yml" ]]; then
+        token=$(grep -m1 -oE 'CF_DNS_API_TOKEN: *"[^"]+"' "${dir}/docker-compose.yml" 2>/dev/null \
+            | sed 's/.*: *"//;s/"$//')
+    fi
+
+    [[ -z "$token" ]] && return 0
+
+    mkdir -p "$dir"
+    if [[ ! -s "$token_file" ]] || [[ "$(cat "$token_file")" != "$token" ]]; then
+        printf '%s\n' "$token" > "$token_file"
+        chmod 600 "$token_file"
+    fi
+    printf '%s' "$token"
+}
+
 # ── Generated Traefik configuration ───────────────────────────────────────────
 # Writes traefik.yml and dynamic.yml. Called UNCONDITIONALLY from both deploy
 # and repair.
@@ -176,8 +220,13 @@ _traefik_write_configs() {
     # DNS-01 needs no inbound connectivity at all: Traefik proves control by
     # writing a TXT record through the Cloudflare API. It also supports
     # wildcards. So when a Cloudflare DNS token is available, prefer it.
+    # Resolve once. Both the challenge type and the default certificate store
+    # depend on whether a token exists.
+    local cf_token
+    cf_token=$(_traefik_cf_token)
+
     local acme_challenge
-    if [[ -n "${CLOUDFLARE_DNS_API_TOKEN:-}" ]]; then
+    if [[ -n "$cf_token" ]]; then
         acme_challenge=$(cat << 'ACMEEOF'
       dnsChallenge:
         provider: cloudflare
@@ -268,7 +317,7 @@ TEOF
     # can work, publicly-valid certificates are strictly better: no per-device
     # CA trust, and they work on phones and for shared links.
     local tls_default_block
-    if [[ -n "${CLOUDFLARE_DNS_API_TOKEN:-}" ]]; then
+    if [[ -n "$cf_token" ]]; then
         tls_default_block="tls:
   options:
     default:
@@ -326,6 +375,8 @@ DYEOF
 
 _traefik_write_compose() {
     local dir="${DOCKER_ROOT}/traefik"
+    local cf_token
+    cf_token=$(_traefik_cf_token)
     cat > "${dir}/docker-compose.yml" << DCEOF
 services:
   traefik:
@@ -345,7 +396,7 @@ services:
     environment:
       # Traefik's Cloudflare DNS-01 provider reads this. Empty when no token
       # is configured, in which case tlsChallenge is used instead.
-      CF_DNS_API_TOKEN: "${CLOUDFLARE_DNS_API_TOKEN:-}"
+      CF_DNS_API_TOKEN: "${cf_token}"
     networks: [proxy-net]
     security_opt: ["no-new-privileges:true"]
     deploy:

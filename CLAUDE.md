@@ -818,6 +818,17 @@ Set `CLOUDFLARE_DNS_API_TOKEN` (Cloudflare → My Profile → API Tokens → "Ed
 zone DNS" template, scoped to the zone) and `_traefik_write_configs` selects
 `dnsChallenge` automatically; the token reaches Traefik as `CF_DNS_API_TOKEN`.
 
+**The token has to be persisted, or repair undoes all of this.** It used to
+live only in the environment of whoever ran the command, and repair
+regenerates `traefik.yml` unconditionally (gotcha #22), so a repair without
+`CLOUDFLARE_DNS_API_TOKEN` exported rewrote the resolver back to
+`tlsChallenge` and restored the wildcard `defaultCertificate`. Certificates
+already in `acme.json` carry on being served, so nothing looks wrong until a
+**new** hostname is added: that one alone gets the self-signed CoreX CA and a
+browser warning. `_traefik_cf_token` now resolves from the environment, then
+`${DOCKER_ROOT}/traefik/.cf-dns-token` (0600), then the running compose file,
+persisting forward each time, the same way `_cloudflared_token` does.
+
 ### 22. Generated config files must be regenerated on repair, not "if missing"
 
 `traefik.yml` was written only by deploy, and `dynamic.yml` only when absent,

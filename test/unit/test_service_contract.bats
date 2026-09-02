@@ -420,3 +420,45 @@ _repair_body() {
         false
     }
 }
+
+@test "traefik persists the Cloudflare DNS token so repair cannot downgrade ACME" {
+    # The token lived only in the environment of whoever ran the command.
+    # repair regenerates traefik.yml unconditionally, so a repair without the
+    # variable exported rewrote the resolver back to tlsChallenge and restored
+    # the wildcard defaultCertificate, undoing DNS-01. Certificates already in
+    # acme.json kept working, so the only symptom was that a newly added
+    # hostname got the self-signed CA.
+    local f="${REPO_ROOT}/lib/services/traefik.sh"
+    grep -q '_traefik_cf_token' "$f"
+    grep -q '.cf-dns-token' "$f"
+    grep -q 'chmod 600 "$token_file"' "$f"
+
+    # The challenge choice must consult the resolved token, not the raw env
+    # var, or the persistence is bypassed.
+    local body
+    body=$(awk '/^_traefik_write_configs\(\)/,/^}/' "$f")
+    echo "$body" | grep -q 'cf_token=\$(_traefik_cf_token)'
+    run bash -c "echo '$body' | grep -c 'if \[\[ -n \"\\\${CLOUDFLARE_DNS_API_TOKEN:-}\" \]\]'"
+    [ "$output" = "0" ]
+}
+
+@test "traefik file provider reads a directory so services can add routes" {
+    # A single dynamic.yml cannot be extended, which left no way to route a
+    # backend Traefik cannot discover by label (Coolify sits on its own
+    # network with no interface on proxy-net).
+    local f="${REPO_ROOT}/lib/services/traefik.sh"
+    grep -q 'directory: /dynamic' "$f"
+    run grep -c 'filename: /dynamic.yml' "$f"
+    [ "$output" = "0" ]
+    grep -q './dynamic:/dynamic:ro' "$f"
+    # Coolify must write into that directory from deploy and from repair.
+    local c="${REPO_ROOT}/lib/services/coolify.sh"
+    grep -q '_coolify_write_route' "$c"
+    for fn in coolify_deploy coolify_repair; do
+        awk "/^${fn}\(\)/,/^}/" "$c" | grep -q '_coolify_write_route' || {
+            echo "$fn does not write the Traefik route"
+            false
+        }
+    done
+    awk '/^coolify_destroy\(\)/,/^}/' "$c" | grep -q 'rm -f.*coolify.yml'
+}
