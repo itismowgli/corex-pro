@@ -6,6 +6,46 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.9.0] - 2026-09-02
+
+### Fixed
+- **A disabled service started itself again on the next doctor run.**
+  `corex manage disable` recorded `enabled=false` in `state.json` and nothing
+  ever read that flag, so doctor saw a stopped container, called it UNHEALTHY
+  and started it back up. A service could not be turned off and left off.
+  `state_service_is_enabled` now exists; repair skips a disabled service
+  rather than treating it as a fault, update skips it since `up -d` would
+  start it, and status reports DISABLED with the action column pointing at
+  enable. Absent means enabled, so older state files behave as before.
+- **The first version of that reader always returned true.** Written as
+  `.enabled // true`, it could not work: jq's alternative operator treats
+  `false` as absent, so `false // true` evaluates to `true`. Both boolean
+  readers now test for null explicitly, and a test fails the build if `//`
+  reappears on a boolean field.
+- **Removing a service left its firewall rules open forever.** No
+  `<svc>_destroy` revoked anything, across ten modules and twenty-two rules.
+  Uninstalling Stalwart left ports 25, 143, 465, 587 and 993 allowed from
+  Anywhere with nothing listening behind them. Each module now declares
+  `SERVICE_FIREWALL_SPECS` and `cmd_remove` revokes them after destroy. Full
+  `ufw allow` specs rather than bare ports, because a scoped rule can only be
+  deleted by repeating the spec it was added with.
+- **`enable` and `disable` could not touch a service that installs its own
+  stack.** Both hard-failed with "No compose file", so Coolify could not be
+  switched off through CoreX at all. They now resolve containers from the
+  compose file when there is one and from the container name prefix when there
+  is not. `disable` also sets `restart=no` before stopping, because a
+  container on `restart=always` returns when the daemon restarts even though
+  it was stopped deliberately, and `enable` restores `unless-stopped`.
+
+### Notes
+- `docker builder prune` failed with a permission error on a root-owned
+  `~/.docker/buildx` lock, left behind by an earlier `sudo docker compose
+  build`. The same class of problem as the root-owned `.git` directory fixed
+  in v3.3.0: running a user-scoped tool under sudo leaves state the user can
+  no longer write.
+
+---
+
 ## [v3.8.0] - 2026-09-02
 
 ### Added
