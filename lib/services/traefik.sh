@@ -225,6 +225,35 @@ _traefik_write_configs() {
     local cf_token
     cf_token=$(_traefik_cf_token)
 
+    # One wildcard certificate for every route, when DNS-01 is available.
+    #
+    # Let's Encrypt publishes every certificate it issues to the public
+    # Certificate Transparency logs, so a per-hostname certificate announces
+    # that hostname to anyone reading crt.sh. Eleven certificates meant eleven
+    # names advertised. A wildcard names only *.DOMAIN, so the individual
+    # subdomains never appear.
+    #
+    # It removes two other problems as a side effect. A newly added hostname is
+    # covered immediately with no ACME round trip, which is what left Coolify
+    # on the self-signed CA when it was added. And there is one certificate to
+    # renew rather than one per service, so a per-hostname rate limit cannot be
+    # reached.
+    #
+    # Only possible with DNS-01: proving control of *.DOMAIN requires writing a
+    # TXT record, and tlsChallenge cannot do it. Without a token this stays
+    # empty and per-hostname issuance continues.
+    local wildcard_block=""
+    if [[ -n "$cf_token" && -n "${DOMAIN:-}" ]]; then
+        wildcard_block="      tls:
+        certResolver: myresolver
+        domains:
+          - main: \"${DOMAIN}\"
+            sans:
+              - \"*.${DOMAIN}\"
+"
+        log_info "TLS: one wildcard certificate for *.${DOMAIN} (keeps subdomains out of CT logs)"
+    fi
+
     local acme_challenge
     if [[ -n "$cf_token" ]]; then
         acme_challenge=$(cat << 'ACMEEOF'
@@ -279,7 +308,13 @@ entryPoints:
           scheme: https
   websecure:
     address: ":443"
-    transport:
+    http:
+      middlewares:
+        # Applied to every router on this entrypoint, including services added
+        # later, which is the point: a per-service opt-in would be one
+        # forgotten label away from a hostname being indexable.
+        - noindex@file
+${wildcard_block}    transport:
       respondingTimeouts:
         readTimeout: "0s"
         writeTimeout: "0s"
@@ -366,6 +401,30 @@ http:
   serversTransports:
     insecure-backend:
       insecureSkipVerify: true
+  middlewares:
+    # Keep every hostname out of search results.
+    #
+    # X-Robots-Tag is the directive that actually prevents indexing, and it is
+    # attached to the websecure entrypoint so it covers every route without a
+    # per-service label to forget. robots.txt is a weaker control and not a
+    # substitute: it asks a crawler not to fetch a URL, but a URL it never
+    # fetched can still be indexed from an external link, listed with no
+    # snippet. noindex is the instruction that removes it.
+    #
+    #   noindex        do not list this URL
+    #   nofollow       do not follow links found here
+    #   noarchive      no cached copy
+    #   nosnippet      no text excerpt
+    #   noimageindex   images here are not indexed either
+    #   notranslate    no "translate this page" offer
+    #
+    # Honoured by Google and Bing. It is a request, not enforcement: a crawler
+    # that ignores it is unaffected, so this is not a substitute for
+    # authentication on anything private.
+    noindex:
+      headers:
+        customResponseHeaders:
+          X-Robots-Tag: "noindex, nofollow, noarchive, nosnippet, noimageindex, notranslate"
 DYEOF
 
     # The provider reads the directory now, so a leftover single file is dead

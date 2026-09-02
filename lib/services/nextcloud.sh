@@ -271,7 +271,10 @@ services:
       - "traefik.http.middlewares.nc-headers.headers.stsSeconds=15552000"
       - "traefik.http.middlewares.nc-headers.headers.stsIncludeSubdomains=true"
       - "traefik.http.middlewares.nc-headers.headers.stsPreload=true"
-      - "traefik.http.middlewares.nc-headers.headers.customResponseHeaders.X-Robots-Tag=noindex,nofollow"
+      # X-Robots-Tag is set once, globally, by the noindex middleware attached
+      # to Traefik's websecure entrypoint. Setting it here too would win,
+      # because router middlewares run after entrypoint middlewares, and would
+      # replace the full directive set with a weaker "noindex,nofollow".
       - "traefik.http.middlewares.nc-headers.headers.customResponseHeaders.Permissions-Policy=interest-cohort=()"
       # ── Apply middleware chain ──────────────────────────────────────
       - "traefik.http.routers.nextcloud.middlewares=nc-caldav,nc-headers"

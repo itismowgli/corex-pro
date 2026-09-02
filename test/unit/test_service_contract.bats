@@ -567,3 +567,29 @@ _repair_body() {
     echo "$body" | grep -q 'failed+=" \$svc"'
     echo "$body" | grep -q 'Services that did not update'
 }
+
+# ─── Nothing gets indexed ────────────────────────────────────────────────────
+
+@test "X-Robots-Tag is applied at the entrypoint, not per service" {
+    # A per-service label is one forgotten label away from a hostname being
+    # indexable, and a service that sets its own value wins over the global
+    # one because router middlewares run after entrypoint middlewares.
+    local f="${REPO_ROOT}/lib/services/traefik.sh"
+    grep -q 'noindex@file' "$f"
+    grep -q 'X-Robots-Tag: "noindex, nofollow, noarchive, nosnippet, noimageindex, notranslate"' "$f"
+
+    # The entrypoint carries it.
+    awk '/^  websecure:/,/^providers:/' "$f" | grep -q 'noindex@file'
+
+    # No service may set X-Robots-Tag itself.
+    local offenders=""
+    for m in "${REPO_ROOT}"/lib/services/*.sh; do
+        [ "$(basename "$m")" = "traefik.sh" ] && continue
+        grep -q 'X-Robots-Tag=' "$m" && offenders+=" $(basename "$m")"
+    done
+    [ -z "$offenders" ] || {
+        echo "services setting X-Robots-Tag themselves:$offenders"
+        echo "It is set once on the websecure entrypoint."
+        false
+    }
+}
