@@ -686,3 +686,53 @@ _repair_body() {
     body=$(awk '/^cmd_route\(\)/,/^}/' "${REPO_ROOT}/corex-manage.sh")
     echo "$body" | grep -q 'serversTransport: insecure-backend'
 }
+
+# ─── A disabled service must stay disabled ───────────────────────────────────
+
+@test "state_service_is_enabled distinguishes false from absent" {
+    # jq's alternative operator treats false as absent, so `.enabled // true`
+    # evaluates to true for a disabled service and the flag read back as
+    # enabled no matter what was written.
+    export COREX_STATE_FILE="${BATS_TEST_TMPDIR}/enabled.json"
+    # shellcheck disable=SC1090
+    source "${REPO_ROOT}/lib/state.sh"
+    state_init
+    state_service_installed grafana
+    state_service_installed n8n
+
+    state_service_is_enabled grafana          # absent or true means enabled
+    state_service_disable grafana
+    run state_service_is_enabled grafana
+    [ "$status" -ne 0 ]                        # now disabled
+    state_service_is_enabled n8n               # unaffected
+    state_service_enable grafana
+    state_service_is_enabled grafana           # re-enabled
+    state_service_is_enabled never-installed   # unknown defaults to enabled
+}
+
+@test "the enabled flag is read, not just written" {
+    # It was written by `corex manage disable` and read by nothing, so
+    # disabling a service stopped it and the next doctor run saw a stopped
+    # container, called it UNHEALTHY and started it again.
+    grep -q 'state_service_is_enabled' "${REPO_ROOT}/lib/state.sh"
+    local m="${REPO_ROOT}/corex-manage.sh"
+    # repair must skip it, or nothing stays off.
+    awk '/^cmd_repair\(\)/,/^}/' "$m" | grep -q 'state_service_is_enabled'
+    # update must skip it too, since `up -d` would start it.
+    awk '/^cmd_update\(\)/,/^}/' "$m" | grep -q 'state_service_is_enabled'
+    # and status must say DISABLED rather than UNHEALTHY.
+    grep -q 'DISABLED' "$m"
+}
+
+@test "no jq alternative operator on a boolean field" {
+    # `.bool // default` is a trap: false takes the default.
+    local offenders=""
+    for f in "${REPO_ROOT}"/lib/*.sh "${REPO_ROOT}"/*.sh; do
+        [ -f "$f" ] || continue
+        grep -qE '\.(enabled|installed)[[:space:]]*//' "$f" && offenders+=" $(basename "$f")"
+    done
+    [ -z "$offenders" ] || {
+        echo "jq // used on a boolean field in:$offenders"
+        false
+    }
+}

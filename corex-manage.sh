@@ -234,7 +234,10 @@ cmd_status_plain() {
         # shellcheck disable=SC1090
         source "$module"
         status_fn="${svc}_status"
-        if declare -f "$status_fn" &>/dev/null; then
+        if ! state_service_is_enabled "$svc"; then
+            # Not UNHEALTHY: it is off because someone turned it off.
+            status="DISABLED"
+        elif declare -f "$status_fn" &>/dev/null; then
             status=$("$status_fn" 2>/dev/null || echo UNKNOWN)
         else
             status="UNKNOWN"
@@ -273,7 +276,11 @@ cmd_status() {
         # shellcheck disable=SC1090
         source "$module"
         local status_fn="${svc}_status"
-        if declare -f "$status_fn" &>/dev/null; then
+        if ! state_service_is_enabled "$svc"; then
+            # Not UNHEALTHY: it is off because someone turned it off, and
+            # calling that a fault is what made doctor start it again.
+            status="DISABLED"
+        elif declare -f "$status_fn" &>/dev/null; then
             status=$("$status_fn")
         else
             status="UNKNOWN"
@@ -284,6 +291,7 @@ cmd_status() {
             HEALTHY)   color="${GREEN}"; action="" ;;
             UNHEALTHY) color="${RED}";   action="→ corex-manage repair ${svc}" ;;
             MISSING)   color="${YELLOW}"; action="→ corex-manage add ${svc}" ;;
+            DISABLED)  color="${CYAN}";  action="→ corex-manage enable ${svc}" ;;
             *)         color="${NC}";    action="" ;;
         esac
 
@@ -401,6 +409,12 @@ cmd_update() {
         local svc failed=""
         while IFS= read -r svc; do
             [[ -z "$svc" ]] && continue
+            # No point pulling images for something deliberately switched off,
+            # and `up -d` afterwards would start it.
+            if ! state_service_is_enabled "$svc"; then
+                log_info "${svc}: disabled, skipping"
+                continue
+            fi
             _update_single "$svc" || failed+=" $svc"
         done < <(state_list_installed)
         echo ""
@@ -626,6 +640,13 @@ cmd_repair() {
             [[ -f "$module" ]] || continue
             # shellcheck disable=SC1090
             source "$module"
+            # A deliberately disabled service is not a fault to fix. Without
+            # this check, disabling one stopped it and the next doctor run
+            # started it straight back up.
+            if ! state_service_is_enabled "$sv"; then
+                log_info "${sv}: disabled, leaving it stopped"
+                continue
+            fi
             local status_fn="${sv}_status"
             declare -f "$status_fn" &>/dev/null || continue
             local status

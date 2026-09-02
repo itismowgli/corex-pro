@@ -159,8 +159,35 @@ state_service_removed() {
 state_service_is_installed() {
     local svc="$1"
     local val
-    val=$(jq -r ".services[\"$svc\"].installed // false" "$COREX_STATE_FILE" 2>/dev/null)
+    # Explicit null test rather than `// false`. That form happens to be right
+    # here only because the default matches the falsy value; jq's alternative
+    # operator treats false as absent, so it is the wrong tool for a boolean
+    # and would silently break if the default ever changed.
+    val=$(jq -r ".services[\"$svc\"].installed | if . == null then false else . end" \
+        "$COREX_STATE_FILE" 2>/dev/null)
     [[ "$val" == "true" ]]
+}
+
+# ── state_service_is_enabled ──────────────────────────────────────────────────
+# Returns 0 unless the service has been explicitly disabled.
+#
+# The enabled flag was written by `corex manage disable` and read by nothing,
+# so disabling a service stopped it and then `corex doctor` saw a stopped
+# container, called it UNHEALTHY, and started it again. A service could not be
+# turned off and left off, which is the whole point of disabling one.
+#
+# Absent means enabled, so an older state file and a service installed before
+# this existed both behave as before.
+#
+# Usage: if state_service_is_enabled "grafana"; then ...
+state_service_is_enabled() {
+    local svc="$1" val
+    # Not `// true`. jq's alternative operator treats false as absent, so
+    # `false // true` evaluates to true and a disabled service read back as
+    # enabled. Test for null explicitly instead.
+    val=$(jq -r ".services[\"$svc\"].enabled | if . == null then true else . end" \
+        "$COREX_STATE_FILE" 2>/dev/null)
+    [[ "$val" != "false" ]]
 }
 
 # ── state_list_installed ──────────────────────────────────────────────────────
