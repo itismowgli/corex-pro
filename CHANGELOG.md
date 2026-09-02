@@ -6,6 +6,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.1.1] - 2026-09-02
+
+### Fixed
+- **`corex manage health` reported "clean" for unclean shutdowns.** `grep -c`
+  prints `0` *and* exits non-zero when nothing matches, so the trailing
+  `|| echo 0` fired as well and the variable became the two-line string
+  `"0\n0"`. That compares unequal to `"0"`, so the unclean-shutdown branch was
+  never taken — the one check specifically meant to detect a thermal trip or
+  power loss silently claimed the last shutdown was fine. The same pattern also
+  produced a visible `((: syntax error` on the thermal shed count, and affected
+  the pending-package count in `os-upgrade` and the container count in
+  `network-check`. All four now assign the fallback with `|| var=0` so the
+  fallback replaces the value instead of appending to it.
+
 ## [v3.1.0] - 2026-09-02
 
 ### Fixed — `corex update` reported "already up to date" while behind

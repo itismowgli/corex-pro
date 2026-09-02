@@ -627,7 +627,8 @@ cmd_health() {
     if systemctl is-active --quiet corex-thermal.timer 2>/dev/null; then
         local shed_n=0
         [[ -r /var/lib/corex/thermal-shed.list ]] && \
-            shed_n=$(grep -c . /var/lib/corex/thermal-shed.list 2>/dev/null || echo 0)
+            shed_n=$(grep -c . /var/lib/corex/thermal-shed.list 2>/dev/null) \
+                || shed_n=0
         if (( shed_n > 0 )); then
             log_warning "Thermal guardian has shed ${shed_n} container(s) to stay cool"
             sed 's/^/      /' /var/lib/corex/thermal-shed.list 2>/dev/null | head -8
@@ -643,7 +644,8 @@ cmd_health() {
     echo -en "  ${BOLD}Last shutdown:${NC} "
     local markers
     markers=$(journalctl -b -1 --no-pager 2>/dev/null \
-        | grep -cE "systemd-shutdown|Reached target Shutdown|Powering off" || echo 0)
+        | grep -cE "systemd-shutdown|Reached target Shutdown|Powering off") \
+        || markers=0
     if [[ "$markers" == "0" ]]; then
         echo -e "${RED}UNCLEAN${NC} (power loss, thermal trip, or hang)"
         echo "      Last health sample before it died:"
@@ -755,7 +757,9 @@ cmd_os_upgrade() {
     log_step "Updating package lists..."
     apt-get update -qq || log_warning "apt-get update reported problems"
 
-    echo "  Pending: $(apt list --upgradable 2>/dev/null | grep -c upgradable) package(s)"
+    local pending
+    pending=$(apt list --upgradable 2>/dev/null | grep -c upgradable) || pending=0
+    echo "  Pending: ${pending} package(s)"
     echo ""
     log_step "Upgrading (MinimalSteps so an interruption leaves less broken)..."
     DEBIAN_FRONTEND=noninteractive apt-get -y \
@@ -1489,7 +1493,7 @@ _check_docker_networks() {
             local containers
             containers=$(docker network inspect "$net" \
                 --format '{{range $k,$v := .Containers}}{{$v.Name}} {{end}}' 2>/dev/null \
-                | tr ' ' '\n' | grep -c '[^[:space:]]' || echo 0)
+                | tr ' ' '\n' | grep -c '[^[:space:]]') || containers=0
             log_success "${net}: ${containers} container(s) connected"
         else
             log_warning "${net}: network not found"
