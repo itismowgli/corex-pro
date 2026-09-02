@@ -781,14 +781,14 @@ retry loop around an unsatisfiable command turns a warning into an outage.
 ### 28. An entrypoint default TLS domain does not override a router's resolver
 
 `entryPoints.websecure.http.tls.domains` was set to request one
-`vyom.cloud` + `*.vyom.cloud` certificate for every route, so that individual
+`DOMAIN` + `*.DOMAIN` certificate for every route, so that individual
 subdomains would stop appearing in the Certificate Transparency logs.
 
 It does not take effect. Every CoreX service sets
 `traefik.http.routers.<name>.tls.certresolver=myresolver` on its own router,
 and a router's own TLS configuration wins over the entrypoint default. Measured
 after deploying it: `acme.json` held 13 certificates, all per hostname, none
-carrying a SAN, and a hostname added afterwards (`flows.vyom.cloud`) still got
+carrying a SAN, and a hostname added afterwards (a new subdomain) still got
 its own certificate rather than being covered by a wildcard.
 
 So the block is inert unless each router also declares the domains:

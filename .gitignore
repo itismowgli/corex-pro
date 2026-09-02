@@ -22,3 +22,17 @@ Thumbs.db
 # Python bytecode from agent/ syntax checks
 __pycache__/
 *.pyc
+
+# Never commit anything that holds a credential. Nothing in this repo should
+# contain one (the agent, bot and service secrets all live under /etc/corex or
+# beside the service on the data mount), so these patterns exist to catch a
+# file copied here by accident rather than to ignore a file we expect.
+*.token
+*.key
+*.pem
+agent.conf
+telegram.conf
+watchdog.conf
+corex-credentials.txt
+.env
+.env.*
