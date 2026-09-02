@@ -301,8 +301,11 @@ _repair_body() {
     # links: immich answers on photos, adguard has no router at all, the
     # Traefik dashboard is loopback-only, and coolify runs its own stack on a
     # port. A hostname only resolves if a Host rule declares it.
+    # Both forms count: a Docker label, and a rule written into Traefik's
+    # file-provider directory for a backend Traefik cannot discover.
     local rules
-    rules=$(grep -rhoE 'rule=Host\(\\`[a-z0-9-]+\.' "${REPO_ROOT}"/lib/services/*.sh \
+    rules=$(grep -rhoE 'rule: "Host\(\\`[a-z0-9-]+\.|rule=Host\(\\`[a-z0-9-]+\.' \
+        "${REPO_ROOT}"/lib/services/*.sh \
         | sed 's/.*Host(\\`//;s/\.$//' | sort -u)
     [ -n "$rules" ]
 
@@ -325,7 +328,8 @@ _repair_body() {
     # whiteboard is a Nextcloud websocket backend, not a page a user opens.
     local skip="whiteboard"
     local rules missing=""
-    rules=$(grep -rhoE 'rule=Host\(\\`[a-z0-9-]+\.' "${REPO_ROOT}"/lib/services/*.sh \
+    rules=$(grep -rhoE 'rule: "Host\(\\`[a-z0-9-]+\.|rule=Host\(\\`[a-z0-9-]+\.' \
+        "${REPO_ROOT}"/lib/services/*.sh \
         | sed 's/.*Host(\\`//;s/\.$//' | sort -u)
     for r in $rules; do
         [[ " $skip " == *" $r "* ]] && continue

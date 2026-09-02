@@ -16,7 +16,8 @@
 #   - Traefik serves the wildcard cert as the default TLS certificate
 #   - LAN clients that trust the CA get valid HTTPS without Let's Encrypt
 #   - Let's Encrypt (ACME) still works for internet-facing access
-#   - File provider loads dynamic.yml for the default cert store
+#   - File provider loads the dynamic/ directory: TLS defaults plus any
+#     route a service contributes for a backend Traefik cannot discover
 
 # ── Metadata (auto-discovered by wizard) ──────────────────────────────────────
 SERVICE_NAME="traefik"
@@ -37,7 +38,7 @@ SERVICE_DESCRIPTION="Automatic HTTPS for all your services. Manages SSL certific
 # from the internet — often blocked by NAT/ISP on residential connections).
 #
 # The wildcard cert is loaded as Traefik's DEFAULT TLS certificate via the
-# file provider (dynamic.yml). Let's Encrypt certs take priority when
+# file provider (dynamic/00-tls.yml). Let's Encrypt certs take priority when
 # available (ACME resolver is still configured).
 _traefik_generate_lan_certs() {
     local dir="${DOCKER_ROOT}/traefik"
@@ -240,7 +241,12 @@ providers:
     exposedByDefault: false
     network: proxy-net
   file:
-    filename: /dynamic.yml
+    # A directory, not a single file, so a service that Traefik cannot
+    # discover through Docker labels can contribute its own route. Coolify is
+    # the case in point: it runs on its own Docker network with no route to
+    # proxy-net, so it is reachable only by address, which a label cannot
+    # express. Each such service drops one file in here.
+    directory: /dynamic
     watch: true
 certificatesResolvers:
   myresolver:
@@ -303,7 +309,8 @@ TEOF
     #
     # Scoped deliberately: setting serversTransport.insecureSkipVerify in
     # traefik.yml would disable backend verification for every route.
-    cat > "${dir}/dynamic.yml" << DYEOF
+    mkdir -p "${dir}/dynamic"
+    cat > "${dir}/dynamic/00-tls.yml" << DYEOF
 ${tls_default_block}
 
 http:
@@ -311,6 +318,10 @@ http:
     insecure-backend:
       insecureSkipVerify: true
 DYEOF
+
+    # The provider reads the directory now, so a leftover single file is dead
+    # weight that still looks authoritative to anyone reading the config.
+    rm -f "${dir}/dynamic.yml"
 }
 
 _traefik_write_compose() {
@@ -328,7 +339,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./traefik.yml:/traefik.yml:ro
-      - ./dynamic.yml:/dynamic.yml:ro
+      - ./dynamic:/dynamic:ro
       - ./acme.json:/acme.json
       - ./certs:/certs:ro
     environment:

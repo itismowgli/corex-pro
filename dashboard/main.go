@@ -76,8 +76,9 @@ var serviceLabels = map[string]string{
 // serviceURLs lists the addresses each service module actually answers on.
 // {DOMAIN} and {IP} are substituted from state.json.
 //
-// These must match the Traefik Host rules in lib/services/*.sh, which are the
-// only thing that makes a hostname resolvable. Guessing "<service>.DOMAIN"
+// These must match the Traefik Host rules in lib/services/*.sh, whether
+// declared as a Docker label or written into Traefik's file-provider
+// directory. A Host rule is the only thing that makes a hostname resolvable. Guessing "<service>.DOMAIN"
 // produced four dead links: immich answers on photos, not immich; adguard has
 // no Traefik router and is reached on its own port; the Traefik dashboard is
 // bound to loopback; and coolify installs its own stack on port 8000. The
@@ -89,7 +90,10 @@ var serviceLabels = map[string]string{
 var serviceURLs = map[string][]string{
 	"adguard":     {"http://{IP}:3000"},
 	"ai":          {"https://ai.{DOMAIN}"},
-	"coolify":     {"http://{IP}:8000"},
+	// Routed by a Traefik file-provider rule rather than a Docker label,
+	// because Coolify sits on its own network. Port 8000 stays listed as the
+	// LAN way in and the address the route itself connects to.
+	"coolify":     {"https://coolify.{DOMAIN}", "http://{IP}:8000"},
 	"dashboard":   {"https://dashboard.{DOMAIN}"},
 	"immich":      {"https://photos.{DOMAIN}"},
 	"monitoring":  {"https://grafana.{DOMAIN}", "https://status.{DOMAIN}"},

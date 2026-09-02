@@ -97,7 +97,7 @@ than one container: `monitoring` and `ai` each start three.
 | `vaultwarden` | Password manager, works with every Bitwarden client | 1Password, LastPass |
 | `stalwart` | Mail server with SMTP, IMAP, and JMAP | see the email section first |
 | `n8n` | Workflow automation with several hundred integrations | Zapier |
-| `coolify` | Deploy apps from Git, installed manually | Heroku, Vercel |
+| `coolify` | Deploy apps from Git, installed manually, routed by address | Heroku, Vercel |
 | `timemachine` | Time Machine target over SMB for Macs | Time Capsule |
 | `monitoring` | Uptime Kuma, Grafana, and Prometheus | Datadog |
 | `ai` | Ollama, Open WebUI, and Browserless | ChatGPT subscription |
@@ -134,13 +134,23 @@ only works if a Traefik Host rule declares it. The rules live in
 | `dashboard` | `https://dashboard.DOMAIN` | Let's Encrypt |
 | `nextcloud` whiteboard | `https://whiteboard.DOMAIN` | Let's Encrypt |
 | `adguard` | `http://SERVER_IP:3000` | none, plain HTTP on the LAN |
-| `coolify` | `http://SERVER_IP:8000` | none, it runs its own stack |
+| `coolify` | `https://coolify.DOMAIN`, and `http://SERVER_IP:8000` | Let's Encrypt |
 | `traefik` | `http://127.0.0.1:8080`, reachable only through an SSH tunnel | none |
 | `timemachine` | `smb://SERVER_IP/CoreX_Backup` | not applicable |
 | `crowdsec`, `cloudflared`, `ups` | no browsable address | not applicable |
 
+Coolify is the one exception to how routes are declared. It installs its own
+stack on its own Docker network with no interface on `proxy-net`, so
+`coolify:8080` does not resolve from Traefik and a Docker label cannot describe
+the backend. Traefik reaches it by address instead, through a rule written into
+its file-provider directory at
+`docker-configs/traefik/dynamic/coolify.yml`. That file lives outside
+Coolify's own compose, which Coolify rewrites on upgrade. Set the same URL as
+Coolify's Instance FQDN in its settings, or it keeps generating links back to
+port 8000.
+
 Every Traefik router uses the same entrypoint and the same resolver
-(`websecure` and `myresolver`), so all ten hostnames present a Let's Encrypt
+(`websecure` and `myresolver`), so all eleven hostnames present a Let's Encrypt
 certificate. If one of them shows a certificate warning while the others do
 not, the router exists but ACME has not issued for that name yet. Check
 `docker logs traefik 2>&1 | grep -i acme`.
@@ -381,9 +391,22 @@ Cloudflare creates the DNS records for you.
 
 ### What to leave off the internet
 
-Publish only what you need. AdGuard's admin panel, Portainer, and the CoreX
-Dashboard can all take control of the machine, so keep them on the LAN or put
-Cloudflare Access in front of them.
+Publish only what you need. AdGuard's admin panel, Portainer, n8n, Coolify and
+the CoreX Dashboard can all take control of the machine, so keep them on the
+LAN or put Cloudflare Access in front of them. n8n runs arbitrary code in a
+workflow node, Portainer holds the Docker socket, and Coolify deploys to the
+host, so each one is equivalent to a shell.
+
+Chrome gives a second, more surprising reason. Google Safe Browsing flagged
+both `portainer.` and `n8n.` on a working install as a **"Dangerous site"**,
+with a full red interstitial. Neither was compromised: one workflow, no
+CrowdSec decisions, nothing in the logs. A generic admin login form on a
+domain with no reputation history matches its phishing heuristics, and
+Nextcloud and Vaultwarden escape only because their login pages are
+recognisable. Publishing an admin panel therefore costs you a browser warning
+as well as the exposure. Removing the Public Hostname clears both. If you need
+it from outside, request a review at Google Search Console after verifying the
+domain, and put Cloudflare Access in front.
 
 ## LAN fast path
 
