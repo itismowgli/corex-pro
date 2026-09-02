@@ -521,3 +521,35 @@ _repair_body() {
     echo "$branch" | grep -q 'shift'
     echo "$branch" | grep -qE 'do_update "\$@"'
 }
+
+# ─── update must look at every image in a stack ──────────────────────────────
+
+@test "update does not decide a whole stack from one image" {
+    # The digest shortcut read `config --images | head -1`, so one current
+    # image was enough to skip the rest. monitoring ships five and ai three,
+    # and the one it always checked (node-exporter) rarely changes, so
+    # uptime-kuma sat ten months behind while every run reported success.
+    local body
+    body=$(awk '/^_update_single\(\)/,/^}/' "${REPO_ROOT}/corex-manage.sh")
+    run bash -c "echo '$body' | grep -c 'config --images 2>/dev/null | head -1'"
+    [ "$output" = "0" ]
+    # It must iterate the images.
+    echo "$body" | grep -q 'while IFS= read -r img'
+}
+
+@test "update fails when the pull or the restart fails" {
+    # pull ran unchecked and success was logged either way, so a rate limit or
+    # an expired tag was indistinguishable from an update.
+    local body
+    body=$(awk '/^_update_single\(\)/,/^}/' "${REPO_ROOT}/corex-manage.sh")
+    echo "$body" | grep -qE 'if ! docker compose .* pull'
+    echo "$body" | grep -qE 'if ! docker compose .* up -d'
+    echo "$body" | grep -q 'return 1'
+}
+
+@test "update --all names the services that failed" {
+    local body
+    body=$(awk '/^cmd_update\(\)/,/^}/' "${REPO_ROOT}/corex-manage.sh")
+    echo "$body" | grep -q 'failed+=" \$svc"'
+    echo "$body" | grep -q 'Services that did not update'
+}

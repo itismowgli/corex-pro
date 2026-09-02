@@ -764,6 +764,46 @@ elif command -v setpriv >/dev/null 2>&1; then ...
 when privilege-dropping is impossible rather than retrying 30s per call, a
 retry loop around an unsatisfiable command turns a warning into an outage.
 
+### 26. A moving tag can stop moving, which is worse than moving too fast
+
+Gotcha #19 is about `:release` and `:stable` carrying a major upgrade in
+unannounced. The opposite happens too, and it is quieter: upstream starts a new
+release line under a new tag and leaves the old tag frozen.
+
+Two images on a working install:
+
+| Image | `:latest` last built | Current line |
+|---|---|---|
+| `louislam/uptime-kuma` | 2025-10-20 | 2.x, as `:2` / `:2.5.3` |
+| `browserless/chrome` | 2024-02-16 | moved to `ghcr.io/browserless/chromium` v2 |
+
+Uptime Kuma therefore sat ten months behind and Browserless ran a
+two-and-a-half-year-old browser engine, while `corex manage update --all`
+reported success every time. `docker pull` is not lying when it says "Image is
+up to date": the tag really does resolve to that image. Nothing below the tag
+can detect this, which is the argument for pinning a version rather than
+tracking a name.
+
+Check with the registry, not the daemon:
+
+```bash
+curl -s https://hub.docker.com/v2/repositories/<repo>/tags/latest \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["last_updated"])'
+```
+
+**Two update bugs kept it invisible**, both since fixed, both worth
+recognising elsewhere in the codebase:
+
+- The digest shortcut read `config --images | head -1`, one image out of a
+  stack. `monitoring` ships five and `ai` ships three, so a single current
+  image returned early and skipped the rest, always deciding on the same one
+  (`node-exporter`, which rarely changes). It also compared a `RepoDigest`
+  against a per-platform entry from `docker manifest inspect`, which are
+  different digests by construction.
+- `docker compose pull` ran without its exit code being checked, and success
+  was logged either way, so a rate limit or an expired tag looked exactly like
+  an update.
+
 ### 20. Nextcloud gets stuck in maintenance mode, serving HTTP 503
 
 `occ upgrade` finishes by printing **"Maintenance mode is kept active"** and

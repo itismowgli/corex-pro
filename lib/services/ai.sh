@@ -117,13 +117,24 @@ services:
       - "traefik.http.services.ai.loadbalancer.server.port=8080"
 
   browserless:
-    image: browserless/chrome:latest
+    # browserless/chrome on Docker Hub was last built in February 2024 and is
+    # abandoned; upstream moved to ghcr.io/browserless/chromium for v2. Because
+    # the old image was tracked as :latest, a tag that had stopped moving, the
+    # install quietly ran a two-and-a-half-year-old browser engine while every
+    # update reported success. Pinned, so the next major move is a decision.
+    image: ghcr.io/browserless/chromium:v2.38.1
     container_name: browserless
     restart: unless-stopped
-    ports: ["3005:3000"]
+    # Loopback, not the LAN. Open WebUI reaches this over ai-net by container
+    # name, so a published port is only needed for local debugging, and what
+    # it exposed was a scriptable browser behind a single token.
+    ports: ["127.0.0.1:3005:3000"]
     environment:
       TOKEN: "${BROWSERLESS_TOKEN}"
-      MAX_CONCURRENT_SESSIONS: "5"
+      # v2 renamed the concurrency limit. MAX_CONCURRENT_SESSIONS is v1 and is
+      # ignored, which would have left the default in force.
+      CONCURRENT: "5"
+      TIMEOUT: "60000"
     networks: [ai-net]
     security_opt: ["no-new-privileges:true"]
     deploy:
