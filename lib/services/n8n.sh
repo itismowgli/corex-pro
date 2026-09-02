@@ -29,9 +29,43 @@ n8n_firewall() {
     ufw allow 5678/tcp comment 'n8n Workflow Automation' 2>/dev/null || true
 }
 
+# ── _n8n_subdomain ────────────────────────────────────────────────────────────
+# The hostname n8n answers on, "n8n" unless overridden.
+#
+# A hostname can become unusable through no fault of the service. Google Safe
+# Browsing flagged n8n.DOMAIN as a "Dangerous site" on a clean install, and
+# once a name is flagged it is blocked in Chrome everywhere, including over the
+# LAN, because the block is on the name and not on the address serving it. The
+# service kept returning HTTP 200 the whole time.
+#
+# A review request through Google Search Console takes days and can recur, so
+# the practical escape is a different name. Order of preference:
+#
+#   1. $N8N_SUBDOMAIN from the environment
+#   2. n8n_subdomain in state.json, so it survives a repair
+#   3. "n8n"
+#
+# Set it once and every generated file follows: the Traefik router, N8N_HOST
+# and WEBHOOK_URL. Add the new name in Cloudflare if the service is published.
+_n8n_subdomain() {
+    local sub="${N8N_SUBDOMAIN:-}"
+    if [[ -z "$sub" ]] && declare -f state_get >/dev/null 2>&1; then
+        sub=$(state_get "n8n_subdomain" 2>/dev/null)
+        [[ "$sub" == "null" ]] && sub=""
+    fi
+    printf '%s' "${sub:-n8n}"
+}
+
 n8n_deploy() {
     n8n_dirs
     local dir="${DOCKER_ROOT}/n8n"
+    local sub
+    sub=$(_n8n_subdomain)
+    # Persist it, so a later repair regenerates the same hostname rather than
+    # silently reverting to the default and breaking the URL again.
+    if [[ "$sub" != "n8n" ]] && declare -f state_set >/dev/null 2>&1; then
+        state_set "n8n_subdomain" "$sub" 2>/dev/null || true
+    fi
 
     cat > "${dir}/docker-compose.yml" << DCEOF
 services:
@@ -42,10 +76,10 @@ services:
     ports: ["5678:5678"]
     user: "1000:1000"
     environment:
-      N8N_HOST: "n8n.${DOMAIN}"
+      N8N_HOST: "${sub}.${DOMAIN}"
       N8N_PORT: "5678"
       N8N_PROTOCOL: https
-      WEBHOOK_URL: "https://n8n.${DOMAIN}"
+      WEBHOOK_URL: "https://${sub}.${DOMAIN}"
       N8N_ENCRYPTION_KEY: "${N8N_ENCRYPTION_KEY}"
       GENERIC_TIMEZONE: "${TIMEZONE}"
     volumes:
@@ -60,7 +94,7 @@ services:
           memory: 128m
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.n8n.rule=Host(\`n8n.${DOMAIN}\`)"
+      - "traefik.http.routers.n8n.rule=Host(\`${sub}.${DOMAIN}\`)"
       - "traefik.http.routers.n8n.entrypoints=websecure"
       - "traefik.http.routers.n8n.tls.certresolver=myresolver"
       - "traefik.http.services.n8n.loadbalancer.server.port=5678"
@@ -101,6 +135,6 @@ n8n_repair() {
 }
 
 n8n_credentials() {
-    echo "n8n: https://n8n.${DOMAIN} (create owner on first visit)"
+    echo "n8n: https://$(_n8n_subdomain).${DOMAIN} (create owner on first visit)"
     echo "  Encryption key: ${N8N_ENCRYPTION_KEY}"
 }

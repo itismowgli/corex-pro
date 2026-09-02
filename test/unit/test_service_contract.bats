@@ -23,6 +23,24 @@ setup() {
     export NO_COMPOSE
 }
 
+# Every hostname a Traefik Host rule can produce, one per line.
+#
+# A rule may be literal (Host(`photos.${DOMAIN}`)), written into the file
+# provider for a backend Traefik cannot discover (Coolify), or built from a
+# variable when the subdomain is overridable (n8n, because a name can be
+# blocked by something outside the service). For the variable form the default
+# is what ships, so that is what the dashboard must link to.
+_host_rules() {
+    {
+        grep -rhoE 'rule: "Host\(\\`[a-z0-9-]+\.|rule=Host\(\\`[a-z0-9-]+\.' \
+            "${REPO_ROOT}"/lib/services/*.sh \
+            | sed 's/.*Host(\\`//;s/\.$//'
+        # Variable subdomains: take the default out of ${sub:-default}.
+        grep -rhoE '\$\{sub:-[a-z0-9-]+\}' "${REPO_ROOT}"/lib/services/*.sh \
+            | sed 's/.*:-//;s/}//'
+    } | sort -u
+}
+
 _repair_body() {
     local svc="$1"
     awk "/^${svc}_repair\(\)/,/^}/" "${REPO_ROOT}/lib/services/${svc}.sh"
@@ -304,9 +322,7 @@ _repair_body() {
     # Both forms count: a Docker label, and a rule written into Traefik's
     # file-provider directory for a backend Traefik cannot discover.
     local rules
-    rules=$(grep -rhoE 'rule: "Host\(\\`[a-z0-9-]+\.|rule=Host\(\\`[a-z0-9-]+\.' \
-        "${REPO_ROOT}"/lib/services/*.sh \
-        | sed 's/.*Host(\\`//;s/\.$//' | sort -u)
+    rules=$(_host_rules)
     [ -n "$rules" ]
 
     local subs offenders=""
@@ -328,9 +344,7 @@ _repair_body() {
     # whiteboard is a Nextcloud websocket backend, not a page a user opens.
     local skip="whiteboard"
     local rules missing=""
-    rules=$(grep -rhoE 'rule: "Host\(\\`[a-z0-9-]+\.|rule=Host\(\\`[a-z0-9-]+\.' \
-        "${REPO_ROOT}"/lib/services/*.sh \
-        | sed 's/.*Host(\\`//;s/\.$//' | sort -u)
+    rules=$(_host_rules)
     for r in $rules; do
         [[ " $skip " == *" $r "* ]] && continue
         grep -q "https://${r}\.{DOMAIN}" "${REPO_ROOT}/dashboard/main.go" \

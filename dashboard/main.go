@@ -27,6 +27,12 @@ type CoreXState struct {
 	SSHPort  string                  `json:"ssh_port"`
 	Timezone string                  `json:"timezone"`
 	Services map[string]ServiceEntry `json:"services"`
+
+	// n8n's hostname is overridable, because a name can be blocked by
+	// something outside the service: Google Safe Browsing flagged
+	// n8n.DOMAIN while n8n itself kept returning HTTP 200. Empty means the
+	// default, "n8n".
+	N8nSubdomain string `json:"n8n_subdomain"`
 }
 
 type ServiceEntry struct {
@@ -300,6 +306,12 @@ func getServices(state CoreXState) []ServiceInfo {
 				u = strings.ReplaceAll(u, "{IP}", state.ServerIP)
 			}
 			urls = append(urls, u)
+		}
+
+		// Follow an overridden hostname, or the dashboard would keep linking
+		// to the name the user moved away from.
+		if name == "n8n" && state.N8nSubdomain != "" && state.Domain != "" {
+			urls = []string{"https://" + strings.Trim(state.N8nSubdomain, "\"'") + "." + state.Domain}
 		}
 
 		label := serviceLabels[name]
