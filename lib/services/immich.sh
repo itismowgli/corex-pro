@@ -37,7 +37,12 @@ immich_deploy() {
     cat > "${dir}/docker-compose.yml" << DCEOF
 services:
   immich-server:
-    image: ghcr.io/immich-app/immich-server:release
+    # Pinned, not :release. That tag moved this deployment from Immich 1.x to
+    # 3.1.0 on a routine update, and 3.x dropped the pgvecto.rs extension the
+    # database provided, so every start failed with "No vector extension
+    # found" and the photo library was down. Bump this deliberately, checking
+    # the release notes for database requirements. See CLAUDE.md gotcha #19.
+    image: ghcr.io/immich-app/immich-server:v3.1.0
     container_name: immich-server
     restart: unless-stopped
     ports: ["2283:2283"]
@@ -71,7 +76,8 @@ services:
       - "traefik.http.services.immich.loadbalancer.server.port=2283"
 
   immich-machine-learning:
-    image: ghcr.io/immich-app/immich-machine-learning:release
+    # Must track the server version exactly.
+    image: ghcr.io/immich-app/immich-machine-learning:v3.1.0
     container_name: immich-ml
     restart: unless-stopped
     volumes: ["model-cache:/cache"]
@@ -98,9 +104,18 @@ services:
           memory: 32m
 
   immich-db:
-    image: tensorchord/pgvecto-rs:pg14-v0.2.0
+    # Immich's own Postgres image, carrying both VectorChord and pgvecto.rs.
+    # Immich 3.x supports only vchord or pgvector, while existing CoreX
+    # installs hold their embeddings in pgvecto.rs "vectors" columns. This
+    # transitional image has both, so Immich migrates the embeddings itself on
+    # first start. Once migrated, ghcr.io/immich-app/postgres:14-vectorchord0.4.3
+    # is the leaner image to move to.
+    image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0
     container_name: immich-db
     restart: unless-stopped
+    # VectorChord builds its index in shared memory; the 64MB Docker default
+    # is not enough.
+    shm_size: 128mb
     environment:
       POSTGRES_PASSWORD: "${IMMICH_DB_PASS}"
       POSTGRES_USER: postgres

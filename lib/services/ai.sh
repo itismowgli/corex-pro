@@ -83,7 +83,15 @@ services:
     #           capabilities: [gpu]
 
   open-webui:
-    image: ghcr.io/open-webui/open-webui:main
+    # :main is Open WebUI's development branch, not a release. Pinned to the
+    # current release instead, so an update is a decision rather than whatever
+    # landed on main that day.
+    #
+    # Existing installs are running a main build that may be AHEAD of this
+    # tag, and Open WebUI migrates its chat database forward on start. Check
+    # the release notes before applying this to a box that has chat history:
+    # a downgrade can meet a schema it does not understand.
+    image: ghcr.io/open-webui/open-webui:v0.11.3
     container_name: open-webui
     restart: unless-stopped
     ports: ["3003:8080"]

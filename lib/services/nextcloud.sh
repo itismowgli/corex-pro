@@ -310,7 +310,9 @@ services:
   # the backend talks to Nextcloud over proxy-net, so routing it out
   # through Traefik or the tunnel would be a pointless round trip.
   whiteboard:
-    image: ghcr.io/nextcloud-releases/whiteboard:release
+    # Pinned, not :release. Moving tags carry major upgrades in on a routine
+    # `corex manage update`. See CLAUDE.md gotcha #19.
+    image: ghcr.io/nextcloud-releases/whiteboard:v1.5.3
     container_name: nextcloud-whiteboard
     restart: unless-stopped
     environment:
