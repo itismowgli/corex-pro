@@ -145,6 +145,12 @@ func loadState() CoreXState {
 	if s.Domain == "" {
 		s.Domain = getenv("DOMAIN", "")
 	}
+	// state.json can hold a domain with embedded quotes, from a v1 migration
+	// regex that captured the quotes around the YAML field. Left in place it
+	// produces URLs like https://adguard."example.com", so every link on the
+	// page is broken.
+	s.Domain = strings.Trim(s.Domain, "\"'")
+	s.ServerIP = strings.Trim(s.ServerIP, "\"'")
 	if s.ServerIP == "" {
 		s.ServerIP = getenv("SERVER_IP", "")
 	}
@@ -171,8 +177,14 @@ func runManage(args ...string) (string, error) {
 }
 
 func getRunningContainers() map[string]bool {
-	out, _ := runCmd("docker", "ps", "--format", "{{.Names}}")
+	out, err := runCmd("docker", "ps", "--format", "{{.Names}}")
 	result := map[string]bool{}
+	if err != nil {
+		// Without socket access every service looks stopped. Say so once in
+		// the log rather than reporting 15 healthy services as unhealthy.
+		log.Printf("cannot query Docker (%v): %s", err, out)
+		return result
+	}
 	for _, line := range strings.Split(out, "\n") {
 		if line = strings.TrimSpace(line); line != "" {
 			result[line] = true
@@ -182,8 +194,18 @@ func getRunningContainers() map[string]bool {
 }
 
 func containerExists(name string) bool {
-	out, _ := runCmd("docker", "ps", "-a", "--filter", "name=^/"+name+"$", "--format", "{{.Names}}")
-	return strings.TrimSpace(out) != ""
+	out, err := runCmd("docker", "ps", "-a", "--filter", "name=^/"+name+"$", "--format", "{{.Names}}")
+	if err != nil {
+		return false
+	}
+	// Match the name rather than accepting any output. runCmd merges stderr,
+	// so a Docker socket permission error would otherwise read as "exists".
+	for _, line := range strings.Split(out, "\n") {
+		if strings.TrimSpace(line) == name {
+			return true
+		}
+	}
+	return false
 }
 
 // ── Services ──────────────────────────────────────────────────────────────────

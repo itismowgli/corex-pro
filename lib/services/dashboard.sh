@@ -57,6 +57,14 @@ dashboard_deploy() {
     local DASHBOARD_HASH
     DASHBOARD_HASH=$(openssl passwd -apr1 "${DASHBOARD_PASS}" | sed 's/\$/\$\$/g')
 
+    # The container needs to read the Docker socket to report service health.
+    # Without membership of the socket's group every `docker ps` fails with
+    # "permission denied", which made the GUI report all services UNHEALTHY
+    # while they were running perfectly. Adding the group beats running the
+    # container as root.
+    local docker_gid
+    docker_gid=$(stat -c '%g' /var/run/docker.sock 2>/dev/null || echo 999)
+
     cat > "${dir}/docker-compose.yml" << DCEOF
 services:
   dashboard:
@@ -76,6 +84,8 @@ services:
     pull_policy: build
     container_name: corex-dashboard
     restart: unless-stopped
+    group_add:
+      - "${docker_gid}"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /etc/corex:/etc/corex:ro

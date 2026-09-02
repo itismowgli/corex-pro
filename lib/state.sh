@@ -58,6 +58,11 @@ state_get() {
 #
 # Usage: state_set "domain" "example.com"
 state_set() {
+    # Strip double quotes from the value. A v1 migration regex once captured
+    # the quotes around a YAML field, so state.json held
+    # domain="\"example.com\"". Everything reading it then built URLs like
+    # https://sub."example.com", which is how every dashboard link broke.
+    set -- "$1" "${2//\"/}"
     local key="$1"
     local value="$2"
     local tmp
