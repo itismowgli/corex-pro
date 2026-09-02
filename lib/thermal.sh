@@ -89,6 +89,20 @@ COREX_REPO_ROOT=${COREX_REPO_ROOT_DETECTED}
 TCEOF
         log_success "Wrote /etc/corex/thermal.conf"
     else
+        # Keep the operator's tuning, but add keys this version needs. A
+        # config from an older CoreX is missing anything added since, and
+        # leaving it stale is how a generated file drifts out of step with the
+        # code that reads it (gotcha #22). Appending is safe: sourcing the
+        # file later takes the last assignment, and nothing existing is
+        # touched.
+        local k
+        for k in THERMAL_WARN_C THERMAL_SHED_C THERMAL_CRITICAL_C \
+                 THERMAL_EMERGENCY_C THERMAL_RECOVER_C \
+                 THERMAL_CONFIRM_SAMPLES THERMAL_RESTORE_BATCH; do
+            grep -qE "^\s*${k}=" /etc/corex/thermal.conf && continue
+            printf '%s=%s\n' "$k" "${!k}" >> /etc/corex/thermal.conf
+            log_info "Added missing ${k} to thermal.conf"
+        done
         log_info "Keeping existing /etc/corex/thermal.conf"
     fi
 
@@ -116,6 +130,22 @@ LOG=/mnt/corex-data/blackbox.log
 # shellcheck disable=SC1090
 source "$CONF"
 [[ "${THERMAL_ENABLED:-true}" == "true" ]] || exit 0
+
+# Defaults for every setting, applied after the config is sourced. A config
+# written by an older CoreX will not contain keys added since, and this script
+# runs under `set -u`, so referencing one directly would abort the guardian on
+# a box that had been upgraded. Silence there means no shedding at all.
+THERMAL_WARN_C="${THERMAL_WARN_C:-80}"
+THERMAL_SHED_C="${THERMAL_SHED_C:-85}"
+THERMAL_CRITICAL_C="${THERMAL_CRITICAL_C:-90}"
+THERMAL_EMERGENCY_C="${THERMAL_EMERGENCY_C:-97}"
+THERMAL_RECOVER_C="${THERMAL_RECOVER_C:-72}"
+THERMAL_CONFIRM_SAMPLES="${THERMAL_CONFIRM_SAMPLES:-3}"
+THERMAL_RESTORE_BATCH="${THERMAL_RESTORE_BATCH:-3}"
+THERMAL_SHED_TIER1="${THERMAL_SHED_TIER1:-ai}"
+THERMAL_SHED_TIER2="${THERMAL_SHED_TIER2:-monitoring productivity storage backup}"
+THERMAL_PROTECT="${THERMAL_PROTECT:-core security communication}"
+THERMAL_NEVER_SHED="${THERMAL_NEVER_SHED:-ups}"
 
 mkdir -p "$(dirname "$STATE")" "$(dirname "$LOG")" 2>/dev/null
 touch "$SHED_LIST" 2>/dev/null

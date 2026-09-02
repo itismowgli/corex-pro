@@ -231,3 +231,52 @@ setup() {
     # Otherwise an operator cannot tune it on a box with more cooling.
     grep -q 'THERMAL_RESTORE_BATCH=\${THERMAL_RESTORE_BATCH}' "$THERMAL_LIB"
 }
+
+# ─── A config from an older CoreX must not break the guardian ────────────────
+
+@test "generated guard defaults every setting after sourcing the config" {
+    # The guard runs under set -u. A config written by an older CoreX lacks
+    # keys added since, so referencing one directly aborts the guardian, and
+    # a guardian that aborts sheds nothing at all.
+    local out="${BATS_TEST_TMPDIR:-/tmp}/guard-defaults.sh"
+    awk "/cat > \/usr\/local\/bin\/corex-thermal-guard.sh << 'TGEOF'/{f=1;next} /^TGEOF$/{f=0} f" \
+        "$THERMAL_LIB" > "$out"
+    [ -s "$out" ]
+    for v in THERMAL_WARN_C THERMAL_SHED_C THERMAL_CRITICAL_C THERMAL_EMERGENCY_C \
+             THERMAL_RECOVER_C THERMAL_CONFIRM_SAMPLES THERMAL_RESTORE_BATCH \
+             THERMAL_SHED_TIER1 THERMAL_SHED_TIER2 THERMAL_PROTECT THERMAL_NEVER_SHED; do
+        grep -qE "^${v}=\"\\\$\{${v}:-" "$out" || {
+            echo "guard has no default for $v"
+            false
+        }
+    done
+}
+
+@test "guard survives a config that predates the newest settings" {
+    local out="${BATS_TEST_TMPDIR:-/tmp}/guard-run.sh"
+    awk "/cat > \/usr\/local\/bin\/corex-thermal-guard.sh << 'TGEOF'/{f=1;next} /^TGEOF$/{f=0} f" \
+        "$THERMAL_LIB" > "$out"
+    # An old config: thresholds only, none of the newer keys.
+    local conf="${BATS_TEST_TMPDIR}/thermal.conf"
+    printf 'THERMAL_ENABLED=true\nTHERMAL_WARN_C=80\nTHERMAL_SHED_C=85\n' > "$conf"
+    # Point the script at the fixture and stub out everything that touches the
+    # host, so this exercises variable handling only.
+    sed -i.bak "s|^CONF=.*|CONF=${conf}|" "$out"
+    run bash -uo pipefail -c "
+        read_temp() { echo 75; }
+        docker() { return 0; }
+        logger() { return 0; }
+        sensors() { return 1; }
+        source '$out'
+    "
+    # It must not abort on an unbound variable.
+    [[ "$output" != *"unbound variable"* ]]
+}
+
+@test "thermal_install adds settings missing from an existing config" {
+    # Leaving a generated config stale is how it drifts out of step with the
+    # code that reads it (gotcha #22), while regenerating it would discard the
+    # operator's tuning.
+    grep -q 'Added missing ${k} to thermal.conf' "$THERMAL_LIB"
+    grep -qE 'for k in THERMAL_WARN_C' "$THERMAL_LIB"
+}
