@@ -6,6 +6,40 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.3.0] - 2026-09-02
+
+### Fixed
+- **Certificates were never issued behind a residential ISP.** Four separate
+  faults, each hiding the next: a stale `dynamic.yml` pointing at a cert
+  filename that no longer existed; `tlsChallenge` requiring inbound port 443,
+  which most home ISPs block; an empty ACME email, without which Let's Encrypt
+  will not register; and a wildcard `defaultCertificate` that matched every
+  route, so Traefik's TLS lookup always succeeded and the resolver was never
+  invoked. That last one was the real culprit. Removing it caused DNS-01 to
+  issue 10 certificates in seconds after months of issuing none.
+- **Traefik logged at ERROR**, hiding all ACME activity. A misconfigured
+  resolver presented only as a browser warning with an empty log. Now INFO.
+- **The Traefik dashboard and API were unreachable.** The entrypoint bound the
+  container's own loopback, but Docker publishes to a container's external
+  interface, so every request was reset. Exposure is still restricted to the
+  host's loopback by the publish itself.
+- **The CoreX Dashboard misreported a healthy system.** No membership of the
+  Docker socket group meant every `docker ps` failed, and `containerExists`
+  read the permission error as output, so 15 running services showed as
+  UNHEALTHY. Links were also broken by a quoted domain in `state.json`, which
+  `state_set` now strips on write and the dashboard trims on read.
+- **`mail-setup` wrote the wrong encryption mode and never enabled auth**, so a
+  correct Gmail app password still failed. The mode is now derived from the
+  port, and `mail_smtpauth` uses a type `occ` accepts.
+
+### Added
+- **`corex manage mail-setup`** configures Nextcloud outbound SMTP, verifying
+  the port is reachable before credentials get blamed.
+- **README rewritten.** The web dashboard shipped in v3.0.0 with no documented
+  way to log into it, and Cloudflare Tunnel had two sentences. Now covers
+  dashboard access, tunnel setup, DNS-01 certificates, outbound email limits on
+  home connections, thermal protection, and UPS monitoring.
+
 ## [Unreleased]
 
 ### Added

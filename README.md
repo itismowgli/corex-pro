@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://img.shields.io/badge/CoreX_Pro-v3.2.1-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
+  <img src="https://img.shields.io/badge/CoreX_Pro-v3.3.0-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
   <img src="https://img.shields.io/badge/Ubuntu-24.04_LTS-E95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Ubuntu">
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
 </div>
