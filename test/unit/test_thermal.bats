@@ -311,3 +311,24 @@ setup() {
     echo "$body" | grep -A 2 'disabled by the operator' | grep -q 'continue'
     echo "$body" | grep -A 2 'disabled by the operator' | grep -qv 'remaining+='
 }
+
+@test "a container is recorded as shed based on its state, not the client exit" {
+    # `docker stop --time 25` waits for SIGTERM then sends SIGKILL, so under
+    # load the call can exceed the 45s timeout: that kills the client while
+    # the daemon stops the container anyway. Recording only on client success
+    # left containers stopped and unlisted, and an unlisted container is never
+    # restored. nextcloud-cron sat at exit 137, absent from the list, with
+    # Nextcloud's background jobs silently not running.
+    local out="${BATS_TEST_TMPDIR:-/tmp}/guard-shed.sh"
+    awk "/cat > \/usr\/local\/bin\/corex-thermal-guard.sh << 'TGEOF'/{f=1;next} /^TGEOF$/{f=0} f" \
+        "$THERMAL_LIB" > "$out"
+    local body
+    body=$(awk '/^shed\(\)/,/^}/' "$out")
+    [ -n "$body" ]
+    # The stop must not gate the recording.
+    run bash -c "echo '$body' | grep -c 'if timeout 45 docker stop'"
+    [ "$output" = "0" ]
+    # Recording is decided by whether it is still running.
+    echo "$body" | grep -q "docker ps --format '{{.Names}}'"
+    echo "$body" | grep -q 'would not stop'
+}

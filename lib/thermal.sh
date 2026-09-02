@@ -224,9 +224,25 @@ shed() {
     for c in "$@"; do
         [[ -z "$c" ]] && continue
         grep -qxF "$c" "$SHED_LIST" 2>/dev/null && continue
-        if timeout 45 docker stop --time 25 "$c" >/dev/null 2>&1; then
+
+        timeout 45 docker stop --time 25 "$c" >/dev/null 2>&1 || true
+
+        # Judge by the container's actual state, not by whether the client
+        # call returned in time. `docker stop --time 25` waits 25s for SIGTERM
+        # then sends SIGKILL, so under load the whole thing can exceed the 45s
+        # timeout: that kills the client while the daemon stops the container
+        # anyway. Recording only on client success therefore left containers
+        # stopped and unlisted, and an unlisted container is never restored.
+        #
+        # Observed on nextcloud-cron: exit code 137, absent from the shed list,
+        # and down indefinitely afterwards because restart=unless-stopped
+        # honours the stop. Nextcloud's background jobs were silently not
+        # running.
+        if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -qxF "$c"; then
             echo "$c" >> "$SHED_LIST"
             stopped=$((stopped+1))
+        else
+            say "SHED: ${c} would not stop, leaving it running"
         fi
     done
     (( stopped > 0 )) && say "SHED ($reason): stopped $stopped container(s)"

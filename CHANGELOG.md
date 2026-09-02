@@ -6,7 +6,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
-## [v3.10.1] - 2026-09-02
+## [v3.10.2] - 2026-09-02
 
 ### Fixed
 - **The thermal guardian resurrected services the operator had disabled.** It
@@ -19,6 +19,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
   from `state.json`, and drops it from the shed list rather than deferring it,
   since deferring means retrying forever a container it must never start.
 
+- **A container the guardian killed but failed to record stayed down
+  indefinitely.** `shed` recorded a container only if the `docker stop` client
+  returned success within its 45s timeout. But `docker stop --time 25` waits
+  25s for SIGTERM before sending SIGKILL, so under load the call can exceed
+  that timeout: the client is killed while the daemon stops the container
+  anyway. The container ends up stopped and absent from the shed list, and an
+  unlisted container is never restored. Found on `nextcloud-cron`, sitting at
+  exit code 137 with Nextcloud's background jobs silently not running.
+  Recording is now decided by whether the container is still running, and a
+  container that genuinely refuses to stop is logged and left alone.
+
 ### Notes
 - The symptom was Immich and Uptime Kuma repeatedly going down. The guardian
   was behaving correctly; the box was oscillating. From `blackbox.log`:
@@ -27,9 +38,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 - `THERMAL_RESTORE_BATCH` is set to 1 on that machine. Three, or six in the
   recover band, is reasonable on hardware with cooling headroom and far too
   aggressive where each container costs several degrees.
-- Even with the AI stack removed, Stalwart uninstalled and Coolify, Twenty and
-  Grafana stopped, nineteen containers still reach 93C. That is a hardware
-  ceiling, not a tuning problem.
+- Those 93C readings included the resurrected Prometheus at 49% CPU, so they
+  measured the bug rather than the hardware. With it fixed the same nineteen
+  containers converge and idle at 60C to 70C, well under the 80C warn
+  threshold: recovery walked back from 11 shed to 0 while staying in the 60s.
+  Bursts still reach the low 90s, so the cooling is worth fixing, but it does
+  not limit which services can run.
 
 ---
 
