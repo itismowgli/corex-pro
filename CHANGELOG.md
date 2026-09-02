@@ -6,6 +6,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.2.1] - 2026-09-02
+
+### Fixed
+- **The CoreX Dashboard had never actually run.** See the entry below — this
+  release is what makes it work. Split out from v3.2.0 because the fix landed
+  after that tag.
+
 ## [v3.2.0] - 2026-09-02
 
 ### Fixed — `repair` never delivered compose-level fixes (systemic)
