@@ -205,7 +205,14 @@ api:
   insecure: true
 entryPoints:
   traefik:
-    address: "127.0.0.1:8080"
+    # Bind to all interfaces INSIDE the container, not the container's
+    # loopback. Docker publishes to a container's external interface, so an
+    # entrypoint on 127.0.0.1 can never receive a published connection — the
+    # dashboard and API were unreachable with "connection reset by peer".
+    # Exposure is restricted by the publish itself: "127.0.0.1:8080:8080" in
+    # the compose keeps it on the host's loopback only, which is the same
+    # security posture but actually works.
+    address: ":8080"
   web:
     address: ":80"
     http:
