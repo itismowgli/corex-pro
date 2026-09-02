@@ -76,6 +76,12 @@ services:
     ports: ["5678:5678"]
     user: "1000:1000"
     environment:
+      # Set the heap explicitly rather than letting Node infer it from the
+      # cgroup limit, which it does differently across versions. Kept well
+      # under the container limit: Node needs memory outside the heap too, and
+      # a cap equal to the limit means the kernel OOM-kills the container
+      # instead of Node running a collection.
+      NODE_OPTIONS: "--max-old-space-size=1024"
       N8N_HOST: "${sub}.${DOMAIN}"
       N8N_PORT: "5678"
       N8N_PROTOCOL: https
@@ -88,10 +94,17 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512m
+          # 512m crash-looped n8n 33 times with "Ineffective mark-compacts
+          # near heap limit / JavaScript heap out of memory", dying at a
+          # ~250MB heap. Node sizes its old-space from the cgroup limit, so a
+          # 512m container gives it roughly a 256MB heap, and n8n 2.x needs
+          # more than that just to start. OOMKilled was false throughout,
+          # because Node killed itself rather than the kernel killing the
+          # container, so nothing pointed at memory.
+          memory: 1536m
           cpus: "0.5"
         reservations:
-          memory: 128m
+          memory: 256m
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.n8n.rule=Host(\`${sub}.${DOMAIN}\`)"

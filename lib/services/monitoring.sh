@@ -96,7 +96,10 @@ services:
     deploy:
       resources:
         limits:
-          memory: 256m
+          # Uptime Kuma is Node, and 2.x is heavier than the 1.x line this
+          # upgraded from. 256m leaves it a ~128MB heap, which is the shape of
+          # failure that crash-looped n8n.
+          memory: 512m
           cpus: "0.5"
         reservations:
           memory: 64m

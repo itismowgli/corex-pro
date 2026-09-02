@@ -593,3 +593,39 @@ _repair_body() {
         false
     }
 }
+
+# ─── Node services need a deliberate heap, not an inferred one ───────────────
+
+@test "node services have enough memory for their heap" {
+    # n8n crash-looped 33 times on a 512m limit with "JavaScript heap out of
+    # memory", dying at a ~250MB heap: Node sizes its old-space from the
+    # cgroup limit, so 512m gives it roughly 256MB. OOMKilled stayed false
+    # because Node killed itself rather than the kernel killing the container,
+    # so nothing in docker pointed at memory.
+    local f="${REPO_ROOT}/lib/services/n8n.sh"
+    grep -qE '^\s+memory: 1536m' "$f"
+    grep -q 'max-old-space-size' "$f"
+
+    # And the heap cap must stay below the container limit, or the kernel
+    # OOM-kills the container instead of Node collecting.
+    local limit heap
+    limit=$(grep -oE 'memory: ([0-9]+)m' "$f" | head -1 | grep -oE '[0-9]+')
+    heap=$(grep -oE 'max-old-space-size=([0-9]+)' "$f" | head -1 | grep -oE '[0-9]+')
+    [ -n "$limit" ]
+    [ -n "$heap" ]
+    [ "$heap" -lt "$limit" ]
+}
+
+@test "uptime-kuma is not left on a 1.x-sized memory limit" {
+    # 2.x is heavier than the 1.x line it was pinned up from. Scoped to the
+    # uptime-kuma block: cadvisor sits at 256m and is Go, so it is fine there.
+    local block limit
+    # A comma range would end on its own start line, since "  uptime-kuma:"
+    # also matches "^  [a-z]". Skip the start line, then stop at the next
+    # service at the same indent.
+    block=$(awk '/^  uptime-kuma:/{f=1;next} f&&/^  [a-z]/{exit} f' \
+        "${REPO_ROOT}/lib/services/monitoring.sh")
+    limit=$(echo "$block" | grep -oE 'memory: ([0-9]+)m' | head -1 | grep -oE '[0-9]+')
+    [ -n "$limit" ]
+    [ "$limit" -ge 512 ]
+}
