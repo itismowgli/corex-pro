@@ -6,6 +6,63 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.5.0] - 2026-09-02
+
+### Fixed
+- **The dashboard linked to four hostnames that do not exist.** It built every
+  link as `<service>.DOMAIN`, but a name only resolves if a Traefik Host rule
+  declares it. Immich answers on `photos`, AdGuard has no router and is reached
+  on port 3000, the Traefik dashboard is bound to loopback, and Coolify runs
+  its own stack on port 8000. `status.DOMAIN` was missing altogether, because
+  its map key was `uptime-kuma`, which is not a service module. `serviceURLs`
+  now holds the addresses each module actually answers on, including the ones
+  that are not Traefik routes, and a module can list more than one.
+- **Immich would not start.** The moving `:release` tag had carried it from the
+  1.x line to 3.1.0, which supports only VectorChord or pgvector, while the
+  database holds its embeddings in pgvecto.rs columns. Server and machine
+  learning images are pinned to `v3.1.0`, and the database moves to the
+  transitional image that carries both extensions so Immich migrates the
+  embeddings itself. The Nextcloud whiteboard backend and Open WebUI are pinned
+  for the same reason, and a test fails the build on any `:release`, `:stable`
+  or `:main` tag.
+- **Two credential loaders disagreed, locking Immich out of its database.**
+  `lib/preflight.sh` read the column-aligned credentials file with `awk` on a
+  field number, which drops the alignment padding, so the database was created
+  with the trimmed password. `corex-manage.sh` read it with a `sed` that left
+  the padding in place, so a repair sent Postgres `"      nJBrU8gc..."` and
+  authentication failed. Both now call `cred_get`, which trims the padding and
+  keeps spaces inside a value. This affected all eleven credentials, including
+  the Restic repository password.
+- **Thermal recovery waited for a temperature the hardware never reaches.** The
+  guardian shed 24 containers and left them stopped, because recovery only ran
+  at `THERMAL_RECOVER_C` (72C) and this machine idles between 79C and 84C.
+  Recovery now also runs below `THERMAL_WARN_C`.
+- **Restoring the shed list at once re-triggered the shed.** Measured while
+  restoring by hand in groups of three, the temperature went 79C, then 92.9C,
+  then 96.2C in under two minutes, one degree below the emergency threshold.
+  `restore` now restarts at most `THERMAL_RESTORE_BATCH` containers per cycle,
+  doubled where there is real headroom.
+
+### Added
+- `cred_get` in `lib/common.sh`, the single way to read the credentials file.
+- `THERMAL_RESTORE_BATCH`, written into `/etc/corex/thermal.conf`.
+- Tests: dashboard links must match the Traefik Host rules in both directions,
+  map keys must name real modules, no image may track a moving major tag, no
+  script may parse the credentials file by hand, and thermal recovery must be
+  both reachable and batched.
+
+### Documented
+- Writing rules at the top of `CLAUDE.md`: run the humanizer skill before
+  writing, committing or publishing any prose, and never put AI attribution in
+  the repository, its history or its releases. Both carry a verification
+  command.
+- Gotcha #25: thermal recovery must be reachable and gradual, with the
+  measurements that show the cooling itself is the limit.
+- README lists all ten public hostnames with their tunnel URLs, and a table of
+  where every service answers and which addresses carry a certificate.
+
+---
+
 ## [v3.4.1] - 2026-09-02
 
 Follow-on fixes to v3.4.0, all found by making failures visible rather than
