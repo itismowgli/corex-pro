@@ -23,13 +23,15 @@
         <tr class="hover:bg-gray-800/50 transition-colors">
           <td class="px-4 py-3 text-gray-200 font-medium">{{.Label}}</td>
           <td class="px-4 py-3">
-            {{if .URL}}
-            <a href="{{.URL}}" target="_blank" rel="noopener noreferrer"
-               class="text-blue-400 hover:text-blue-300 hover:underline font-mono text-xs">
-              {{.URL}}
+            {{if .URLs}}
+            {{range .URLs}}
+            <a href="{{.}}" target="_blank" rel="noopener noreferrer"
+               class="block text-blue-400 hover:text-blue-300 hover:underline font-mono text-xs">
+              {{.}}
             </a>
+            {{end}}
             {{else}}
-            <span class="text-gray-600 text-xs italic">local only (no domain)</span>
+            <span class="text-gray-600 text-xs italic">no browsable address</span>
             {{end}}
           </td>
           <td class="px-4 py-3">

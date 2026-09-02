@@ -114,6 +114,40 @@ sudo bash corex-manage.sh add immich
 sudo bash corex-manage.sh remove n8n
 ```
 
+### Where each service answers
+
+Only the addresses below exist. Anything else, `immich.yourdomain.com` or
+`adguard.yourdomain.com` for instance, resolves to nothing, because a hostname
+only works if a Traefik Host rule declares it. The rules live in
+`lib/services/*.sh` and are the source of truth for this table.
+
+| Service | Address | Certificate |
+|---|---|---|
+| `nextcloud` | `https://nextcloud.DOMAIN` | Let's Encrypt |
+| `immich` | `https://photos.DOMAIN` | Let's Encrypt |
+| `vaultwarden` | `https://vault.DOMAIN` | Let's Encrypt |
+| `stalwart` | `https://mail.DOMAIN` | Let's Encrypt |
+| `n8n` | `https://n8n.DOMAIN` | Let's Encrypt |
+| `ai` | `https://ai.DOMAIN` | Let's Encrypt |
+| `monitoring` | `https://grafana.DOMAIN` and `https://status.DOMAIN` | Let's Encrypt |
+| `portainer` | `https://portainer.DOMAIN` | Let's Encrypt |
+| `dashboard` | `https://dashboard.DOMAIN` | Let's Encrypt |
+| `nextcloud` whiteboard | `https://whiteboard.DOMAIN` | Let's Encrypt |
+| `adguard` | `http://SERVER_IP:3000` | none, plain HTTP on the LAN |
+| `coolify` | `http://SERVER_IP:8000` | none, it runs its own stack |
+| `traefik` | `http://127.0.0.1:8080`, reachable only through an SSH tunnel | none |
+| `timemachine` | `smb://SERVER_IP/CoreX_Backup` | not applicable |
+| `crowdsec`, `cloudflared`, `ups` | no browsable address | not applicable |
+
+Every Traefik router uses the same entrypoint and the same resolver
+(`websecure` and `myresolver`), so all ten hostnames present a Let's Encrypt
+certificate. If one of them shows a certificate warning while the others do
+not, the router exists but ACME has not issued for that name yet. Check
+`docker logs traefik 2>&1 | grep -i acme`.
+
+The CoreX Dashboard builds its links from this same list, so a link it shows is
+a name that resolves.
+
 ## Commands
 
 ```bash
@@ -318,14 +352,22 @@ sudo docker logs cloudflared --tail 20   # look for "Registered tunnel connectio
 For each service you want reachable from outside, add a Public Hostname under
 your tunnel:
 
-| Subdomain | Type | URL |
+| Subdomain | Service | Tunnel URL |
 |---|---|---|
-| `nextcloud` | HTTP | `http://nextcloud:80` |
-| `immich` | HTTP | `http://immich-server:2283` |
-| `vault` | HTTP | `http://vaultwarden:80` |
-| `n8n` | HTTP | `http://n8n:5678` |
-| `mail` | HTTP | `http://stalwart:8080` |
-| `dashboard` | HTTP | `http://corex-dashboard:8080` |
+| `nextcloud` | Nextcloud | `http://nextcloud:80` |
+| `photos` | Immich | `http://immich-server:2283` |
+| `vault` | Vaultwarden | `http://vaultwarden:80` |
+| `n8n` | n8n | `http://n8n:5678` |
+| `mail` | Stalwart admin and webmail | `http://stalwart:8080` |
+| `ai` | Open WebUI | `http://open-webui:8080` |
+| `grafana` | Grafana | `http://grafana:3000` |
+| `status` | Uptime Kuma | `http://uptime-kuma:3001` |
+| `whiteboard` | Nextcloud whiteboard backend | `http://nextcloud-whiteboard:3002` |
+| `portainer` | Portainer | `https://portainer:9443`, with No TLS Verify on |
+
+Immich answers on `photos`, not `immich`. The subdomain is set by the Traefik
+Host rule in `lib/services/immich.sh`, so that is the name to use here and the
+only name that will resolve.
 
 The URL has to be the container name and its internal port. This is where most
 setups go wrong. `cloudflared` runs inside the `proxy-net` Docker network, so

@@ -38,7 +38,7 @@ type ServiceInfo struct {
 	Name      string
 	Label     string
 	Status    string // HEALTHY | UNHEALTHY | MISSING
-	URL       string
+	URLs      []string
 	Container string
 }
 
@@ -50,58 +50,81 @@ type PageData struct {
 
 // ── Service metadata ──────────────────────────────────────────────────────────
 
+// Display name per service module. Keys must be module names, that is the
+// filenames in lib/services/. "uptime-kuma" was a key here and in two other
+// maps but is not a module: Uptime Kuma ships inside the monitoring module,
+// so that entry never matched anything.
 var serviceLabels = map[string]string{
-	"traefik":     "Traefik — Reverse Proxy",
 	"adguard":     "AdGuard Home — DNS & Ad Blocker",
-	"portainer":   "Portainer — Container Manager",
-	"nextcloud":   "Nextcloud — File Storage",
-	"immich":      "Immich — Photo Library",
-	"vaultwarden": "Vaultwarden — Password Manager",
-	"n8n":         "n8n — Workflow Automation",
-	"stalwart":    "Stalwart — Mail Server",
 	"ai":          "AI Stack — Ollama + WebUI",
-	"crowdsec":    "CrowdSec — Intrusion Prevention",
-	"uptime-kuma": "Uptime Kuma — Service Monitor",
-	"monitoring":  "Grafana + Prometheus",
-	"timemachine": "Time Machine — Mac Backup",
-	"dashboard":   "CoreX Dashboard",
+	"cloudflared": "Cloudflare Tunnel — External Access",
 	"coolify":     "Coolify — App Platform",
+	"crowdsec":    "CrowdSec — Intrusion Prevention",
+	"dashboard":   "CoreX Dashboard",
+	"immich":      "Immich — Photo Library",
+	"monitoring":  "Monitoring — Uptime Kuma + Grafana + Prometheus",
+	"n8n":         "n8n — Workflow Automation",
+	"nextcloud":   "Nextcloud — File Storage",
+	"portainer":   "Portainer — Container Manager",
+	"stalwart":    "Stalwart — Mail Server",
+	"timemachine": "Time Machine — Mac Backup",
+	"traefik":     "Traefik — Reverse Proxy",
+	"ups":         "UPS — Power Monitoring",
+	"vaultwarden": "Vaultwarden — Password Manager",
 }
 
-// Primary subdomain per service (for URL construction)
-var serviceSubdomains = map[string]string{
-	"traefik":     "traefik",
-	"adguard":     "adguard",
-	"portainer":   "portainer",
-	"nextcloud":   "nextcloud",
-	"immich":      "immich",
-	"vaultwarden": "vault",
-	"n8n":         "n8n",
-	"stalwart":    "mail",
-	"ai":          "ai",
-	"uptime-kuma": "status",
-	"monitoring":  "grafana",
-	"dashboard":   "dashboard",
-	"coolify":     "coolify",
+// serviceURLs lists the addresses each service module actually answers on.
+// {DOMAIN} and {IP} are substituted from state.json.
+//
+// These must match the Traefik Host rules in lib/services/*.sh, which are the
+// only thing that makes a hostname resolvable. Guessing "<service>.DOMAIN"
+// produced four dead links: immich answers on photos, not immich; adguard has
+// no Traefik router and is reached on its own port; the Traefik dashboard is
+// bound to loopback; and coolify installs its own stack on port 8000. The
+// "uptime-kuma" key was never a module name either, so status.DOMAIN was
+// missing from the dashboard entirely.
+//
+// A module can serve more than one address: monitoring answers on both
+// grafana and status.
+var serviceURLs = map[string][]string{
+	"adguard":     {"http://{IP}:3000"},
+	"ai":          {"https://ai.{DOMAIN}"},
+	"coolify":     {"http://{IP}:8000"},
+	"dashboard":   {"https://dashboard.{DOMAIN}"},
+	"immich":      {"https://photos.{DOMAIN}"},
+	"monitoring":  {"https://grafana.{DOMAIN}", "https://status.{DOMAIN}"},
+	"n8n":         {"https://n8n.{DOMAIN}"},
+	"nextcloud":   {"https://nextcloud.{DOMAIN}"},
+	"portainer":   {"https://portainer.{DOMAIN}"},
+	"stalwart":    {"https://mail.{DOMAIN}"},
+	"timemachine": {"smb://{IP}/CoreX_Backup"},
+	"vaultwarden": {"https://vault.{DOMAIN}"},
+	// crowdsec, ups and traefik have no browsable address. Traefik's dashboard
+	// is published on 127.0.0.1:8080 and needs an SSH tunnel.
 }
 
 // Primary container name per service (used for status check and log streaming)
+// Representative container per service module, used for the log stream and as
+// the health fallback when the service modules cannot be consulted. A module
+// may run several containers; this names the one worth tailing.
+//
+// ups has no entry on purpose: NUT runs on the host, not in Docker.
 var serviceContainers = map[string]string{
-	"traefik":     "traefik",
 	"adguard":     "adguard",
-	"portainer":   "portainer",
-	"nextcloud":   "nextcloud",
-	"immich":      "immich-server",
-	"vaultwarden": "vaultwarden",
-	"n8n":         "n8n",
-	"stalwart":    "stalwart",
 	"ai":          "ollama",
-	"crowdsec":    "crowdsec",
-	"uptime-kuma": "uptime-kuma",
-	"monitoring":  "grafana",
-	"timemachine": "timemachine",
-	"dashboard":   "corex-dashboard",
+	"cloudflared": "cloudflared",
 	"coolify":     "coolify",
+	"crowdsec":    "crowdsec",
+	"dashboard":   "corex-dashboard",
+	"immich":      "immich-server",
+	"monitoring":  "grafana",
+	"n8n":         "n8n",
+	"nextcloud":   "nextcloud",
+	"portainer":   "portainer",
+	"stalwart":    "stalwart",
+	"timemachine": "timemachine",
+	"traefik":     "traefik",
+	"vaultwarden": "vaultwarden",
 }
 
 // ── Globals ───────────────────────────────────────────────────────────────────
@@ -257,9 +280,22 @@ func getServices(state CoreXState) []ServiceInfo {
 			status = ms
 		}
 
-		url := ""
-		if sub, ok := serviceSubdomains[name]; ok && state.Domain != "" {
-			url = "https://" + sub + "." + state.Domain
+		var urls []string
+		for _, tpl := range serviceURLs[name] {
+			u := tpl
+			if strings.Contains(u, "{DOMAIN}") {
+				if state.Domain == "" {
+					continue
+				}
+				u = strings.ReplaceAll(u, "{DOMAIN}", state.Domain)
+			}
+			if strings.Contains(u, "{IP}") {
+				if state.ServerIP == "" {
+					continue
+				}
+				u = strings.ReplaceAll(u, "{IP}", state.ServerIP)
+			}
+			urls = append(urls, u)
 		}
 
 		label := serviceLabels[name]
@@ -271,7 +307,7 @@ func getServices(state CoreXState) []ServiceInfo {
 			Name:      name,
 			Label:     label,
 			Status:    status,
-			URL:       url,
+			URLs:      urls,
 			Container: container,
 		})
 	}
