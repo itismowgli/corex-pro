@@ -217,9 +217,31 @@ monitoring_destroy() {
 }
 
 monitoring_status() {
-    if container_running "uptime-kuma" && container_running "grafana"; then echo "HEALTHY"
-    elif container_exists "uptime-kuma"; then echo "UNHEALTHY"
-    else echo "MISSING"; fi
+    # Judge only the components that are meant to be running. Checking Grafana
+    # unconditionally reported the module UNHEALTHY forever once Grafana was
+    # deliberately disabled, so doctor kept flagging a fault that was a
+    # choice.
+    local required=() c
+    for c in uptime-kuma grafana; do
+        if declare -f state_component_is_enabled >/dev/null 2>&1; then
+            state_component_is_enabled monitoring "$c" || continue
+        fi
+        required+=("$c")
+    done
+
+    # Everything disabled is a coherent state, not a failure.
+    if [[ ${#required[@]} -eq 0 ]]; then
+        container_exists "uptime-kuma" && echo "HEALTHY" || echo "MISSING"
+        return 0
+    fi
+
+    for c in "${required[@]}"; do
+        if ! container_running "$c"; then
+            container_exists "$c" && { echo "UNHEALTHY"; return 0; }
+            echo "MISSING"; return 0
+        fi
+    done
+    echo "HEALTHY"
 }
 
 monitoring_repair() {
