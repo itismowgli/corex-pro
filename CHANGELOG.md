@@ -6,6 +6,42 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.10.0] - 2026-09-02
+
+### Added
+- **Disable one container inside a module.** `corex manage disable
+  monitoring:grafana` stops that component and leaves the rest of the module
+  supervised. Previously turning Grafana off meant disabling the whole
+  monitoring module, which made `repair` skip it and Uptime Kuma stop being
+  auto-healed: a working service lost its supervision to turn off two it
+  happened to sit next to. Recorded in `state.json` as
+  `disabled_components`, and `enable` takes the same syntax.
+- `compose_up_enabled`, which is what makes the choice stick. A plain
+  `up -d` starts every service in the file, so a repair silently restarted a
+  component that had been deliberately stopped. It names only the enabled
+  ones, then stops the disabled ones and clears `restart=always`, so the
+  choice survives repair, update and reboot. With nothing disabled it behaves
+  exactly like `up -d`. An unknown component name is rejected with the list of
+  real ones rather than recorded and silently ignored.
+
+### Fixed
+- **Deploy wiped the service's own state on every run.**
+  `state_service_installed` assigned a fresh object to `.services[$svc]`,
+  discarding every other field, and deploy calls it each time. So a repair
+  threw away `disabled_components` and restarted a component that had been
+  stopped on purpose, and would have reset `enabled` to true, undoing a
+  disable. `installed_at` also came to mean "last repaired". It now merges.
+- **The first attempt at that merge reintroduced the jq trap** fixed earlier
+  in this release: `(.enabled) // true` is `true` when enabled is `false`, so
+  a disabled module came back enabled. The guard test only matched
+  `.enabled //` and missed `.enabled) //`, which is how it got back in.
+- **monitoring reported UNHEALTHY for a component that was switched off.**
+  `monitoring_status` checked Grafana unconditionally, so doctor kept flagging
+  a fault that was a choice. It now judges only the components meant to be
+  running.
+
+---
+
 ## [v3.9.0] - 2026-09-02
 
 ### Fixed
