@@ -17,6 +17,10 @@ SERVICE_NEEDS_DOMAIN=false
 SERVICE_NEEDS_EMAIL=false
 SERVICE_RAM_MB=128
 SERVICE_DISK_GB=1
+# UFW rules this service opens, as full `ufw allow` specs. cmd_remove
+# revokes them, because leaving a port open with nothing behind it is all
+# of the exposure and none of the service.
+SERVICE_FIREWALL_SPECS=("9443/tcp")
 SERVICE_DESCRIPTION="Web UI to manage all your Docker containers, images, and volumes. Replaces the Docker CLI for most tasks."
 
 # ── Functions ─────────────────────────────────────────────────────────────────

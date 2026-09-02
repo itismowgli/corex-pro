@@ -19,6 +19,10 @@ SERVICE_NEEDS_DOMAIN=false
 SERVICE_NEEDS_EMAIL=false
 SERVICE_RAM_MB=256
 SERVICE_DISK_GB=0
+# UFW rules this service opens, as full `ufw allow` specs. cmd_remove
+# revokes them, because leaving a port open with nothing behind it is all
+# of the exposure and none of the service.
+SERVICE_FIREWALL_SPECS=("from ${LAN_SUBNET:-192.168.0.0/16} to any port 445 proto tcp" "from ${LAN_SUBNET:-192.168.0.0/16} to any port 137:139 proto tcp" "5353/udp")
 SERVICE_DESCRIPTION="macOS Time Machine backup server over high-performance SMB3. Multi-gigabit LAN transfers with multichannel support. Your Mac backs up automatically over Wi-Fi."
 
 # ── Functions ─────────────────────────────────────────────────────────────────

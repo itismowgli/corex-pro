@@ -16,6 +16,10 @@ SERVICE_NEEDS_DOMAIN=true
 SERVICE_NEEDS_EMAIL=false
 SERVICE_RAM_MB=512
 SERVICE_DISK_GB=2
+# UFW rules this service opens, as full `ufw allow` specs. cmd_remove
+# revokes them, because leaving a port open with nothing behind it is all
+# of the exposure and none of the service.
+SERVICE_FIREWALL_SPECS=("5678/tcp")
 SERVICE_DESCRIPTION="Visual workflow automation. Connect any app to any app. 400+ integrations. Replaces Zapier, Make (formerly Integromat), and IFTTT."
 
 # ── Functions ─────────────────────────────────────────────────────────────────

@@ -365,6 +365,20 @@ cmd_remove() {
 
     _run_service_fn "$svc" "destroy"
 
+    # Close the ports the service opened. No <svc>_destroy ever did this, so
+    # removing a service left its rules in place permanently: uninstalling
+    # Stalwart left five mail ports open to the internet with nothing
+    # listening behind them.
+    local module="${SCRIPT_DIR}/lib/services/${svc}.sh"
+    if [[ -f "$module" ]]; then
+        # shellcheck disable=SC1090
+        source "$module"
+        if [[ -n "${SERVICE_FIREWALL_SPECS[*]:-}" ]]; then
+            ufw_revoke "${SERVICE_FIREWALL_SPECS[@]}"
+            log_success "Revoked ${#SERVICE_FIREWALL_SPECS[@]} firewall rule(s) for ${svc}."
+        fi
+    fi
+
     if [[ "$del_data" == "y" || "$del_data" == "Y" ]]; then
         log_warning "Deleting data directories for ${svc}..."
         # Exact path only — no glob to prevent accidental deletion of related services

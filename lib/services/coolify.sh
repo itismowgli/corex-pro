@@ -20,6 +20,10 @@ SERVICE_NEEDS_DOMAIN=false
 SERVICE_NEEDS_EMAIL=false
 SERVICE_RAM_MB=1024
 SERVICE_DISK_GB=5
+# UFW rules this service opens, as full `ufw allow` specs. cmd_remove
+# revokes them, because leaving a port open with nothing behind it is all
+# of the exposure and none of the service.
+SERVICE_FIREWALL_SPECS=("8000/tcp")
 SERVICE_DESCRIPTION="Deploy web apps, APIs, and databases with one click. Connect GitHub for auto-deploys. Replaces Vercel, Netlify, Heroku, and Railway."
 
 # ── Functions ─────────────────────────────────────────────────────────────────

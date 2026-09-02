@@ -56,6 +56,38 @@ cred_get() {
         | sed -e 's/^[^:]*:[[:space:]]*//' -e 's/[[:space:]]*$//'
 }
 
+# ── ufw_revoke ────────────────────────────────────────────────────────────────
+# Delete the UFW rules for one or more port specs.
+#
+# Usage: ufw_revoke "25/tcp" "587/tcp" "5353/udp"
+#        ufw_revoke "from 192.168.1.0/24 to any port 11434 proto tcp"
+#
+# Each argument is a full `ufw allow` spec, because a scoped rule can only be
+# deleted by repeating the spec it was added with; deleting by port alone does
+# not match it.
+#
+# Removing a service used to leave its ports open forever. No <svc>_destroy
+# revoked anything, so uninstalling Stalwart left 25, 143, 465, 587 and 993
+# open to the whole internet with nothing listening behind them: all of the
+# exposure and none of the service.
+#
+# Deleting by port removes every rule for that port, LAN-scoped ones included,
+# which is what removal should do. Both address families are handled by ufw
+# itself. Absent rules are not an error, so this is safe to call for a service
+# that opened none.
+ufw_revoke() {
+    command -v ufw >/dev/null 2>&1 || return 0
+    local spec
+    for spec in "$@"; do
+        [[ -n "$spec" ]] || continue
+        # Unquoted on purpose: a spec such as
+        # "from 10.0.0.0/8 to any port 445 proto tcp" has to reach ufw as
+        # separate words.
+        # shellcheck disable=SC2086
+        ufw --force delete allow $spec >/dev/null 2>&1 || true
+    done
+}
+
 # Verify the script is running as root; exit with error if not.
 check_root() {
     if [[ $EUID -ne 0 ]]; then

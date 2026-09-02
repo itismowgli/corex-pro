@@ -19,6 +19,10 @@ SERVICE_NEEDS_DOMAIN=true
 SERVICE_NEEDS_EMAIL=false
 SERVICE_RAM_MB=4096
 SERVICE_DISK_GB=20
+# UFW rules this service opens, as full `ufw allow` specs. cmd_remove
+# revokes them, because leaving a port open with nothing behind it is all
+# of the exposure and none of the service.
+SERVICE_FIREWALL_SPECS=("from ${LAN_SUBNET:-192.168.0.0/16} to any port 11434 proto tcp" "from ${LAN_SUBNET:-192.168.0.0/16} to any port 3003 proto tcp")
 SERVICE_DESCRIPTION="Local AI chat with open-source models (Llama, Mistral, etc.). No API costs, complete privacy. Includes web browsing capability for AI agents."
 
 # ── Functions ─────────────────────────────────────────────────────────────────

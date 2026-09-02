@@ -16,6 +16,10 @@ SERVICE_NEEDS_DOMAIN=true
 SERVICE_NEEDS_EMAIL=false
 SERVICE_RAM_MB=2048
 SERVICE_DISK_GB=20
+# UFW rules this service opens, as full `ufw allow` specs. cmd_remove
+# revokes them, because leaving a port open with nothing behind it is all
+# of the exposure and none of the service.
+SERVICE_FIREWALL_SPECS=("2283/tcp")
 SERVICE_DESCRIPTION="Automatic photo and video backup from your phone. Face recognition, smart search, albums. Replaces Google Photos and iCloud."
 
 # ── Functions ─────────────────────────────────────────────────────────────────

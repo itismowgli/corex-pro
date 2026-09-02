@@ -736,3 +736,55 @@ _repair_body() {
         false
     }
 }
+
+# ─── Removal must close the ports it opened ──────────────────────────────────
+
+@test "every module that opens a port declares how to revoke it" {
+    # No <svc>_destroy revoked anything, so removing a service left its rules
+    # in place forever. Uninstalling Stalwart left 25, 143, 465, 587 and 993
+    # open to the internet with nothing listening behind them.
+    local offenders=""
+    for f in "${REPO_ROOT}"/lib/services/*.sh; do
+        grep -q 'ufw allow' "$f" || continue
+        grep -q '^SERVICE_FIREWALL_SPECS=' "$f" || offenders+=" $(basename "$f" .sh)"
+    done
+    [ -z "$offenders" ] || {
+        echo "modules opening ports with no SERVICE_FIREWALL_SPECS:$offenders"
+        false
+    }
+}
+
+@test "declared firewall specs cover every port the module opens" {
+    # A spec list that misses a rule leaves that port open on removal.
+    local offenders=""
+    for f in "${REPO_ROOT}"/lib/services/*.sh; do
+        grep -q '^SERVICE_FIREWALL_SPECS=' "$f" || continue
+        local svc opened declared p
+        svc=$(basename "$f" .sh)
+        # Cut the line at `comment` and at the `2>/dev/null` redirect first,
+        # or the 2 from the redirect counts as a port.
+        opened=$(grep -oE 'ufw allow [^#]*' "$f" \
+            | sed -e 's/comment.*//' -e 's/2>.*//' \
+            | grep -oE '\b[0-9]+(:[0-9]+)?\b' | sort -u)
+        declared=$(grep '^SERVICE_FIREWALL_SPECS=' "$f" \
+            | grep -oE '\b[0-9]+(:[0-9]+)?\b' | sort -u)
+        for p in $opened; do
+            echo "$declared" | grep -qx "$p" || offenders+=" ${svc}:${p}"
+        done
+    done
+    [ -z "$offenders" ] || {
+        echo "ports opened but not declared for revocation:$offenders"
+        false
+    }
+}
+
+@test "cmd_remove revokes the firewall rules after destroy" {
+    local body
+    body=$(awk '/^cmd_remove\(\)/,/^}/' "${REPO_ROOT}/corex-manage.sh")
+    echo "$body" | grep -q 'ufw_revoke'
+    # And it must run after destroy, not before.
+    local d r
+    d=$(echo "$body" | grep -n '"destroy"' | head -1 | cut -d: -f1)
+    r=$(echo "$body" | grep -n 'ufw_revoke' | head -1 | cut -d: -f1)
+    [ "$d" -lt "$r" ]
+}

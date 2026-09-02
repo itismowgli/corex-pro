@@ -18,6 +18,10 @@ SERVICE_NEEDS_DOMAIN=false
 SERVICE_NEEDS_EMAIL=false
 SERVICE_RAM_MB=64
 SERVICE_DISK_GB=1
+# UFW rules this service opens, as full `ufw allow` specs. cmd_remove
+# revokes them, because leaving a port open with nothing behind it is all
+# of the exposure and none of the service.
+SERVICE_FIREWALL_SPECS=("53" "3000/tcp" "5353/udp")
 SERVICE_DESCRIPTION="Network-wide ad blocker and DNS server. Blocks ads on all devices. Required for local domain routing (*.yourdomain → server IP)."
 
 # ── Functions ─────────────────────────────────────────────────────────────────

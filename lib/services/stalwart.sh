@@ -18,6 +18,10 @@ SERVICE_NEEDS_DOMAIN=true
 SERVICE_NEEDS_EMAIL=false
 SERVICE_RAM_MB=512
 SERVICE_DISK_GB=5
+# UFW rules this service opens, as full `ufw allow` specs. cmd_remove
+# revokes them. Uninstalling Stalwart once left 25, 143, 465, 587 and 993
+# open to the whole internet with nothing listening behind them.
+SERVICE_FIREWALL_SPECS=("25/tcp" "587/tcp" "465/tcp" "143/tcp" "993/tcp" "4190/tcp")
 SERVICE_DESCRIPTION="Self-hosted email server with SMTP, IMAP, CalDAV, and CardDAV. Full email independence. Requires a proper domain with DNS records configured."
 
 # ── Functions ─────────────────────────────────────────────────────────────────

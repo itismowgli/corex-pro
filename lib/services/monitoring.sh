@@ -17,6 +17,10 @@ SERVICE_NEEDS_DOMAIN=true
 SERVICE_NEEDS_EMAIL=false
 SERVICE_RAM_MB=1024
 SERVICE_DISK_GB=5
+# UFW rules this service opens, as full `ufw allow` specs. cmd_remove
+# revokes them, because leaving a port open with nothing behind it is all
+# of the exposure and none of the service.
+SERVICE_FIREWALL_SPECS=("3001/tcp" "3002/tcp" "9090/tcp")
 SERVICE_DESCRIPTION="Complete observability stack. Uptime Kuma for status pages, Grafana for dashboards, Prometheus for metrics collection. Monitor all services from one place."
 
 # ── Functions ─────────────────────────────────────────────────────────────────

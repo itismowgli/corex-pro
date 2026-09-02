@@ -28,6 +28,10 @@ SERVICE_NEEDS_DOMAIN=false
 SERVICE_NEEDS_EMAIL=true
 SERVICE_RAM_MB=128
 SERVICE_DISK_GB=1
+# UFW rules this service opens, as full `ufw allow` specs. cmd_remove
+# revokes them, because leaving a port open with nothing behind it is all
+# of the exposure and none of the service.
+SERVICE_FIREWALL_SPECS=("80/tcp" "443/tcp")
 SERVICE_DESCRIPTION="Automatic HTTPS for all your services. Manages SSL certificates via Let's Encrypt. Required for all domain-based services."
 
 # ── Private Helpers ───────────────────────────────────────────────────────────
