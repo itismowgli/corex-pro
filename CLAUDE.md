@@ -28,10 +28,15 @@ learning nginx, SSL, Docker networking, or Linux hardening.
 - Re-run on existing server = health-check + repair broken services only
 - No live server required for testing (Docker-in-Docker + bats)
 
-**Current version:** v2.4.2
-**Current services:** 14 (Traefik, AdGuard, Portainer, Nextcloud, Immich,
-Vaultwarden, Stalwart Mail, Coolify, n8n, Time Machine, Uptime Kuma,
-Grafana+Prometheus, Ollama+OpenWebUI+Browserless, CrowdSec)
+**Current version:** v3.1.0
+**Current service modules:** 16 (Traefik, AdGuard, Portainer, Nextcloud,
+Immich, Vaultwarden, Stalwart Mail, Coolify, n8n, Time Machine,
+Uptime Kuma + Grafana + Prometheus (monitoring), Ollama + OpenWebUI +
+Browserless (ai), CrowdSec, Cloudflared, Dashboard, UPS)
+
+Note the count is service *modules* in `lib/services/`, not containers — a
+single module can deploy several containers (`monitoring` and `ai` each deploy
+three), so a full install runs considerably more than 16 containers.
 
 ---
 

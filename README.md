@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/CoreX_Pro-v3.0.0-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
+  <img src="https://img.shields.io/badge/CoreX_Pro-v3.1.0-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
   <img src="https://img.shields.io/badge/Ubuntu-24.04_LTS-E95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Ubuntu">
   <img src="https://img.shields.io/badge/Docker-Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker">
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
@@ -86,6 +86,9 @@ sudo bash corex.sh manage add <svc>     # Add a service you skipped during insta
 sudo bash corex.sh manage lan-setup     # Configure LAN fast-path (full-speed local transfers)
 sudo bash corex.sh manage network-tune  # Optimize kernel for Gbps file transfers
 sudo bash corex.sh manage network-check # Test HTTPS reachability, SSL expiry, and DNS
+sudo bash corex.sh manage health        # Host hardware health (temp, SMART, dpkg, last shutdown)
+sudo bash corex.sh manage os-upgrade    # Supervised OS upgrade (refuses if too hot or unstable)
+sudo bash corex.sh manage cleanup       # Reclaim disk (journal, apt cache, images, networks)
 sudo bash corex.sh update               # Pull latest CoreX Pro version
 sudo bash corex.sh migrate              # Change domain across all services
 sudo bash corex.sh nuke                 # Uninstall / rollback
@@ -393,7 +396,7 @@ cat /root/CoreX_Dashboard_Credentials.md  # Full guide with every URL and setup 
 
 ## 🔧 Managing Services
 
-v2.0.0 introduced full post-install service management. v2.1.0 added LAN fast-path automation. v2.2.0 added network performance tuning and hardened security. v2.5.0 added storage management, hard resource limits, and security fixes. v3.0.0 introduced the web dashboard, CrowdSec firewall bouncer, and the `network-check` diagnostic command. No need to re-run the installer to add, fix, or configure services.
+v2.0.0 introduced full post-install service management. v2.1.0 added LAN fast-path automation. v2.2.0 added network performance tuning and hardened security. v2.5.0 added storage management, hard resource limits, and security fixes. v3.0.0 introduced the web dashboard, CrowdSec firewall bouncer, and the `network-check` diagnostic command. v3.1.0 added thermal load shedding, boot-time dpkg self-repair, UPS monitoring, and the `health` / `os-upgrade` commands. No need to re-run the installer to add, fix, or configure services.
 
 ### Health Check & Auto-Repair
 

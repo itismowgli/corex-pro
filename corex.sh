@@ -22,7 +22,7 @@
 set -uo pipefail
 
 # ── Version ──
-COREX_VERSION="3.0.0"
+COREX_VERSION="3.1.0"
 
 # ── Colors ──
 RED='\033[0;31m'
@@ -257,19 +257,44 @@ do_update() {
     REMOTE_VERSION=$(git show origin/main:corex.sh 2>/dev/null \
         | grep -oP 'COREX_VERSION="\K[^"]+' | head -1 || echo "$LOCAL_VERSION")
 
-    if [[ "$REMOTE_VERSION" == "$LOCAL_VERSION" ]]; then
-        echo -e "${GREEN}Already up to date (v${COREX_VERSION}).${NC}"
+    # Commits behind is the authoritative signal, NOT the version string.
+    # Comparing versions alone silently hides every fix pushed without a
+    # version bump — the common case for hotfixes — and leaves users running
+    # stale code while being told they are up to date.
+    local behind
+    behind=$(git rev-list --count HEAD..origin/main 2>/dev/null || echo 0)
+
+    if [[ "$behind" == "0" ]]; then
+        echo -e "${GREEN}Already up to date (v${COREX_VERSION}, $(git rev-parse --short HEAD)).${NC}"
         return 0
     fi
 
-    echo ""
-    echo -e "  Pending update: ${YELLOW}v${LOCAL_VERSION}${NC} → ${GREEN}v${REMOTE_VERSION}${NC}"
+    # Describe the update honestly: a version bump when there is one, otherwise
+    # say plainly that these are unreleased commits on the current version.
+    local update_desc
+    if [[ "$REMOTE_VERSION" != "$LOCAL_VERSION" ]]; then
+        update_desc="v${LOCAL_VERSION} → v${REMOTE_VERSION}"
+        echo ""
+        echo -e "  Pending update: ${YELLOW}v${LOCAL_VERSION}${NC} → ${GREEN}v${REMOTE_VERSION}${NC} (${behind} commit(s))"
+    else
+        update_desc="${behind} new commit(s) on v${LOCAL_VERSION}"
+        echo ""
+        echo -e "  ${GREEN}${behind} new commit(s)${NC} on v${LOCAL_VERSION} ${YELLOW}(unreleased)${NC}"
+    fi
     echo ""
 
-    # Show abbreviated changelog if available
+    # Always show what is actually arriving. Commit subjects are available even
+    # when the CHANGELOG has no section for this version yet.
+    echo -e "${BOLD}Incoming commits:${NC}"
+    git log --oneline --no-decorate HEAD..origin/main 2>/dev/null | head -10 | sed 's/^/    /'
+    echo ""
+
+    # Show abbreviated changelog if available. The heading may or may not carry
+    # a leading "v" (CHANGELOG uses "## [v3.0.0]" while COREX_VERSION is
+    # "3.0.0"), so accept both rather than silently matching nothing.
     local changelog
     changelog=$(git show origin/main:CHANGELOG.md 2>/dev/null \
-        | grep -A5 "## \[${REMOTE_VERSION}\]" | head -8 || true)
+        | grep -A5 -E "^## \[v?${REMOTE_VERSION}\]" | head -8 || true)
     if [[ -n "$changelog" ]]; then
         echo -e "${BOLD}Changelog:${NC}"
         echo "$changelog"
@@ -277,7 +302,7 @@ do_update() {
     fi
 
     local confirm
-    read -r -p "Update CoreX Pro v${LOCAL_VERSION} → v${REMOTE_VERSION}? [y/N]: " confirm
+    read -r -p "Update CoreX Pro (${update_desc})? [y/N]: " confirm
     [[ "$confirm" != "y" && "$confirm" != "Y" ]] && { echo "Aborted."; return 0; }
 
     # Apply update (fast-forward only — won't destroy diverged history)
@@ -285,7 +310,7 @@ do_update() {
         # Validate the downloaded scripts before celebrating
         if bash -n "${REPO_DIR}/install-corex-master.sh" 2>/dev/null \
             && bash -n "${REPO_DIR}/corex.sh" 2>/dev/null; then
-            echo -e "${GREEN}Updated to v${REMOTE_VERSION}. Scripts validated OK.${NC}"
+            echo -e "${GREEN}Updated to v${REMOTE_VERSION} ($(git rev-parse --short HEAD)). Scripts validated OK.${NC}"
             echo ""
             # Re-exec with the freshly downloaded script so the new version loads
             exec bash "${REPO_DIR}/corex.sh" "$@"

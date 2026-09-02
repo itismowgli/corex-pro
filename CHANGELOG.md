@@ -6,7 +6,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
-## [Unreleased]
+## [v3.1.0] - 2026-09-02
+
+### Fixed — `corex update` reported "already up to date" while behind
+
+`do_update` compared only the `COREX_VERSION` string between local and
+`origin/main`. Any commit pushed without a version bump — the normal case for
+a hotfix — was therefore invisible: the command printed "Already up to date"
+and pulled nothing, leaving users on stale code with no indication. At the time
+this was found the repo was 8 commits ahead of the v3.0.0 tag and `update`
+still reported no changes available.
+
+Commits behind (`git rev-list --count HEAD..origin/main`) is now the
+authoritative signal; the version string is only used for display. The command
+also now lists the incoming commit subjects, so what is arriving is visible
+even when the CHANGELOG has no section for it yet, and reports the resulting
+commit hash after updating.
+
+Also fixed the changelog preview, which grepped for `## [3.0.0]` while the
+CHANGELOG writes `## [v3.0.0]` — so it silently matched nothing and no
+changelog was ever displayed. It now accepts either form.
 
 ### Added — Resilience & self-healing
 
