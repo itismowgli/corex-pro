@@ -6,6 +6,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.7.2] - 2026-09-02
+
+### Added
+- **n8n can answer on more than one hostname.** `n8n_subdomain` accepts a
+  space-separated list. The first entry is primary and drives `N8N_HOST` and
+  `WEBHOOK_URL`, so the links and webhook URLs n8n generates match the URL
+  people actually open; every entry gets a Traefik Host rule, so the rest work
+  as aliases. Two names are useful when one has been flagged by Safe
+  Browsing: Chrome then refuses that name everywhere, including the LAN, while
+  the service keeps returning HTTP 200, so a second unflagged name gives a URL
+  that opens while a review is pending.
+
+### Fixed
+- **n8n's own configuration pointed at the wrong hostname.** After the earlier
+  rename, `N8N_HOST` and `WEBHOOK_URL` still said `flows` while requests
+  arrived for `n8n`, so every link and webhook URL it generated named a host
+  nobody was using.
+
+---
+
 ## [v3.7.1] - 2026-09-02
 
 ### Fixed
