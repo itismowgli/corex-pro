@@ -6,6 +6,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [Unreleased]
+
+### Added
+- **`corex manage mail-setup`** — configures Nextcloud outbound SMTP. Nextcloud
+  cannot send password resets, share notifications or activity digests until
+  this is set, and its own setup check only reports the config as "not set or
+  verified" without saying what breaks. Takes settings from the environment
+  (scriptable) or prompts with hidden password input, and verifies the SMTP
+  port is actually reachable before credentials get blamed.
+- **README: "Outbound Email — Why You Need a Relay"** — documents that
+  self-hosting mail on a residential connection generally cannot work, with the
+  three commands to prove it (inbound 25, outbound 25, reverse DNS). Most ISPs
+  block port 25 in both directions and `PTR` cannot be set on a residential IP,
+  which alone causes major providers to reject the mail. Submission (587) is
+  normally open, so relaying through an authenticated provider works where
+  direct delivery does not.
+
 ## [v3.2.1] - 2026-09-02
 
 ### Fixed

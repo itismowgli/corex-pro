@@ -704,6 +704,107 @@ cmd_health() {
     echo ""
 }
 
+# ── mail-setup ────────────────────────────────────────────────────────────────
+# Configures Nextcloud's outbound SMTP.
+#
+# Nextcloud silently cannot send password resets, share notifications or
+# activity digests until this is set, and its own setup check only says the
+# config is "not set or verified" without explaining the consequence.
+#
+# This deliberately configures a RELAY rather than direct delivery: most
+# residential ISPs block port 25 in both directions and reverse DNS cannot be
+# set on a residential IP, so direct delivery is refused or spam-filed by every
+# major provider. Submission (587) is normally open, which is why relaying
+# through an authenticated provider works where self-hosting does not.
+
+cmd_mail_setup() {
+    echo ""
+    echo -e "${CYAN}${BOLD}Nextcloud Outbound Mail Setup${NC}"
+    echo "─────────────────────────────────────────────────────────"
+    echo ""
+
+    container_running "nextcloud" || {
+        log_warning "Nextcloud is not running — start it first."
+        return 1
+    }
+
+    # Values may come from the environment (scriptable) or be prompted for.
+    local host="${NC_SMTP_HOST:-}" port="${NC_SMTP_PORT:-587}"
+    local user="${NC_SMTP_USER:-}" pass="${NC_SMTP_PASS:-}"
+    local from="${NC_MAIL_FROM:-}" secure="${NC_SMTP_SECURE:-tls}"
+
+    if [[ -z "$host" || -z "$user" || -z "$pass" ]]; then
+        if [[ ! -t 0 ]]; then
+            log_warning "Missing settings and no terminal to prompt on."
+            echo "    Set NC_SMTP_HOST, NC_SMTP_USER and NC_SMTP_PASS, e.g.:"
+            echo "      sudo NC_SMTP_HOST=smtp.gmail.com \\"
+            echo "           NC_SMTP_USER=you@gmail.com \\"
+            echo "           NC_SMTP_PASS='abcd efgh ijkl mnop' \\"
+            echo "           bash corex-manage.sh mail-setup"
+            return 1
+        fi
+        echo "  Common providers:"
+        echo "    Gmail    smtp.gmail.com:587  (requires an App Password, not"
+        echo "             your account password — myaccount.google.com/apppasswords)"
+        echo "    Brevo    smtp-relay.brevo.com:587"
+        echo "    Fastmail smtp.fastmail.com:587"
+        echo ""
+        [[ -z "$host" ]] && read -r -p "  SMTP host [smtp.gmail.com]: " host
+        host="${host:-smtp.gmail.com}"
+        [[ -z "$user" ]] && read -r -p "  SMTP username (full email): " user
+        if [[ -z "$pass" ]]; then
+            read -r -s -p "  SMTP password / app password: " pass
+            echo ""
+        fi
+    fi
+    from="${from:-$user}"
+
+    [[ -n "$host" && -n "$user" && -n "$pass" ]] || {
+        log_warning "Host, username and password are all required."
+        return 1
+    }
+
+    # Split the From address; Nextcloud stores local part and domain apart.
+    local from_local="${from%@*}" from_domain="${from#*@}"
+
+    local _o=(docker exec -u www-data nextcloud php occ)
+    log_step "Applying SMTP settings..."
+    "${_o[@]}" config:system:set mail_smtpmode     --value smtp        >/dev/null
+    "${_o[@]}" config:system:set mail_sendmailmode --value smtp        >/dev/null
+    "${_o[@]}" config:system:set mail_smtphost     --value "$host"     >/dev/null
+    "${_o[@]}" config:system:set mail_smtpport     --value "$port"     >/dev/null
+    "${_o[@]}" config:system:set mail_smtpsecure   --value "$secure"   >/dev/null
+    "${_o[@]}" config:system:set mail_smtpauth     --value 1 --type=boolean >/dev/null
+    "${_o[@]}" config:system:set mail_smtpname     --value "$user"     >/dev/null
+    "${_o[@]}" config:system:set mail_smtppassword --value "$pass"     >/dev/null
+    "${_o[@]}" config:system:set mail_from_address --value "$from_local"  >/dev/null
+    "${_o[@]}" config:system:set mail_domain       --value "$from_domain" >/dev/null
+
+    echo ""
+    echo -e "  ${BOLD}Configured:${NC}"
+    printf '    %-16s %s\n' "host"   "$host:$port ($secure)"
+    printf '    %-16s %s\n' "username" "$user"
+    printf '    %-16s %s\n' "from"   "${from_local}@${from_domain}"
+    printf '    %-16s %s\n' "password" "(stored in Nextcloud config.php)"
+    echo ""
+
+    # Verify the port is actually reachable before blaming credentials — many
+    # ISPs block 25, and some block 465, while 587 is usually permitted.
+    log_step "Checking the SMTP port is reachable from this host..."
+    if timeout 8 bash -c "cat < /dev/null > /dev/tcp/${host}/${port}" 2>/dev/null; then
+        log_success "${host}:${port} is reachable"
+    else
+        log_warning "${host}:${port} is NOT reachable from this server."
+        echo "    Outbound port ${port} appears blocked. Port 25 is blocked by most"
+        echo "    residential ISPs; 587 usually works. Mail will fail until this does."
+    fi
+
+    echo ""
+    log_success "Nextcloud mail configured."
+    echo "    Send a test from: Settings → Administration → Basic settings → Send email"
+    echo "    Or from the CLI:  docker exec -u www-data nextcloud php occ mail:test <you@example.com>"
+}
+
 # ── os-upgrade ────────────────────────────────────────────────────────────────
 # A supervised OS package upgrade that REFUSES to start when conditions make an
 # interrupted dpkg transaction likely. Kernel/libc/systemd are excluded from
@@ -1538,6 +1639,7 @@ Commands:
   doctor              Full health check + auto-repair
   health              Host hardware health (temp, SMART, dpkg, last shutdown)
   os-upgrade          Supervised OS package upgrade (refuses if too hot/unstable)
+  mail-setup          Configure Nextcloud outbound SMTP (relay; e.g. Gmail app password)
   storage             Show disk usage breakdown (OS disk, SSD, per-service)
   cleanup [--dry-run] Remove stale Docker images and build cache safely
   lan-setup           Configure LAN fast-path for direct local network access
@@ -1554,6 +1656,7 @@ Examples:
   sudo bash corex-manage.sh network-check
   sudo bash corex-manage.sh health
   sudo bash corex-manage.sh os-upgrade
+  sudo bash corex-manage.sh mail-setup
 
 HELPEOF
 }
@@ -1580,6 +1683,7 @@ main() {
         doctor)       cmd_doctor ;;
         health)       cmd_health ;;
         os-upgrade)   cmd_os_upgrade "$@" ;;
+        mail-setup)   cmd_mail_setup ;;
         storage)      cmd_storage ;;
         cleanup)      cmd_cleanup "$@" ;;
         lan-setup)    cmd_lan_setup ;;

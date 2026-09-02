@@ -88,6 +88,7 @@ sudo bash corex.sh manage network-tune  # Optimize kernel for Gbps file transfer
 sudo bash corex.sh manage network-check # Test HTTPS reachability, SSL expiry, and DNS
 sudo bash corex.sh manage health        # Host hardware health (temp, SMART, dpkg, last shutdown)
 sudo bash corex.sh manage os-upgrade    # Supervised OS upgrade (refuses if too hot or unstable)
+sudo bash corex.sh manage mail-setup    # Configure Nextcloud outbound email (SMTP relay)
 sudo bash corex.sh manage cleanup       # Reclaim disk (journal, apt cache, images, networks)
 sudo bash corex.sh update               # Pull latest CoreX Pro version
 sudo bash corex.sh migrate              # Change domain across all services
@@ -342,6 +343,70 @@ Automatically adds the wildcard DNS rewrite `*.yourdomain.com → SERVER_IP` via
 docker exec crowdsec cscli decisions list    # View blocked IPs
 docker exec crowdsec cscli metrics           # View detection stats
 ```
+
+---
+
+### 📧 Outbound Email — Why You Need a Relay
+
+Nextcloud cannot send password resets, share notifications or activity digests
+until SMTP is configured, and its setup check only reports the config as "not
+set or verified" without saying what breaks.
+
+**Self-hosting mail on a home connection usually cannot work**, regardless of
+which mail server you run. Check yours before trying:
+
+```bash
+# Inbound: can mail reach you at all?
+nc -z -G 8 $(curl -s https://api.ipify.org) 25 && echo "25 open" || echo "25 BLOCKED"
+
+# Outbound: can you deliver directly?
+timeout 8 bash -c 'cat </dev/null >/dev/tcp/aspmx.l.google.com/25' \
+  && echo "outbound 25 open" || echo "outbound 25 BLOCKED"
+
+# Reverse DNS — receiving servers check this
+dig +short -x $(curl -s https://api.ipify.org)
+```
+
+Most residential ISPs block port 25 in **both** directions, and you cannot set
+a `PTR` record on a residential IP — which alone causes Gmail and Outlook to
+reject or spam-file your mail. Cloudflare Tunnel does not help: the free tunnel
+carries HTTP only, not SMTP.
+
+Submission (587) is normally open, so **relaying through an authenticated
+provider works where direct delivery does not**:
+
+```bash
+sudo NC_SMTP_HOST=smtp.gmail.com \
+     NC_SMTP_USER=you@gmail.com \
+     NC_SMTP_PASS='abcd efgh ijkl mnop' \
+     bash corex-manage.sh mail-setup
+```
+
+Or run it interactively and it will prompt (password input is hidden):
+
+```bash
+sudo bash corex-manage.sh mail-setup
+```
+
+**Gmail requires an App Password**, not your account password — create one at
+[myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords)
+(needs 2-Step Verification enabled). Brevo, Fastmail, Resend and Postmark all
+work the same way.
+
+The command verifies the port is actually reachable before you go blaming
+credentials, then:
+
+```bash
+docker exec -u www-data nextcloud php occ mail:test you@example.com
+```
+
+**For inbound mail**, use Cloudflare Email Routing (free) to forward
+`you@yourdomain.com` to an existing mailbox. Note that it takes ownership of
+your `MX` record, so a self-hosted mail server must not also claim it.
+
+**Stalwart Mail** is included for people who *do* have a public IP with a
+settable `PTR` — typically a small VPS. On a residential line it can still
+serve LAN mailboxes over IMAP, but it will not exchange mail with the internet.
 
 ---
 
