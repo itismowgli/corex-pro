@@ -67,6 +67,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
   burning 49% of a core on a box that thermal-trips. It now restarts only what
   is already running, and skips any disabled component regardless.
 
+- **`corex manage enable` left the restart policy at `no`, so a re-enabled
+  service did not survive a reboot.** `docker update --restart=no`, which
+  `disable` uses, changes the running container's HostConfig without changing
+  the config hash Compose compares against, so `up -d` saw nothing to
+  reconcile and started the container with disable's policy still in place.
+  The service ran immediately and silently failed to come back after a power
+  cut, which is the worst version of this bug because nothing looks wrong
+  until it matters. `enable` now restores the policy explicitly, the way the
+  per-component branch already did.
+
+- **`corex manage enable <service>` started components that were individually
+  disabled.** It used a bare `docker compose up -d` rather than
+  `compose_up_enabled`, so enabling a service as a whole overrode the
+  per-component choices inside it.
+
 - **A non-UTF-8 file in `lib/services/` crashed the agent on startup.** A macOS
   `tar` had left an AppleDouble sidecar named `._dashboard.sh`, which matches
   the `*.sh` service-module glob and is binary. Service discovery now skips

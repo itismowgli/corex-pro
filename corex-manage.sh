@@ -434,7 +434,23 @@ cmd_enable() {
     local dir="${DOCKER_ROOT}/${svc}"
 
     if [[ -f "${dir}/docker-compose.yml" ]]; then
-        docker compose -f "${dir}/docker-compose.yml" up -d
+        # compose_up_enabled, not a bare `up -d`: a service with disabled
+        # components must not have them started just because the service as a
+        # whole is being enabled.
+        compose_up_enabled "$svc" "${dir}/docker-compose.yml"
+
+        # Then put the restart policy back, which `up -d` does not do.
+        # `docker update --restart=no` changes the running container's
+        # HostConfig without changing the config hash Compose compares
+        # against, so Compose sees nothing to reconcile and starts the
+        # container with disable's policy still in place. The service then
+        # runs now and silently fails to come back after a reboot, which is
+        # the worst version of this bug because nothing looks wrong until the
+        # next power cut.
+        local up_ids
+        up_ids=$(docker compose -f "${dir}/docker-compose.yml" ps -q 2>/dev/null)
+        [[ -n "$up_ids" ]] && { echo "$up_ids" \
+            | xargs -r docker update --restart=unless-stopped >/dev/null 2>&1 || true; }
     else
         local ids
         ids=$(_service_containers "$svc")
