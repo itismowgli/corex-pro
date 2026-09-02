@@ -1,4 +1,4 @@
-# CLAUDE.md — CoreX Pro Development Guide
+# CLAUDE.md: CoreX Pro Development Guide
 
 This file is the authoritative context document for AI assistants working on
 CoreX Pro. Read this before touching any file in the repo. Update it when you
@@ -23,7 +23,7 @@ learning nginx, SSL, Docker networking, or Linux hardening.
 
 **Core design constraints:**
 - One-command install: `curl -fsSL .../corex.sh | sudo bash`
-- All services are user's choice — nothing forced except core infrastructure
+- All services are user's choice, nothing forced except core infrastructure
 - Adding a new service = drop one file in `lib/services/` (auto-discovered)
 - Re-run on existing server = health-check + repair broken services only
 - No live server required for testing (Docker-in-Docker + bats)
@@ -34,9 +34,64 @@ Immich, Vaultwarden, Stalwart Mail, Coolify, n8n, Time Machine,
 Uptime Kuma + Grafana + Prometheus (monitoring), Ollama + OpenWebUI +
 Browserless (ai), CrowdSec, Cloudflared, Dashboard, UPS)
 
-Note the count is service *modules* in `lib/services/`, not containers — a
+Note the count is service *modules* in `lib/services/`, not containers, a
 single module can deploy several containers (`monitoring` and `ai` each deploy
 three), so a full install runs considerably more than 16 containers.
+
+---
+
+## Writing Rules (apply to every commit, document, and release)
+
+These are not style preferences. Follow them on anything that leaves this
+machine.
+
+### 1. Run the humanizer skill before you write, commit, or publish
+
+Every piece of prose gets the `humanizer` skill applied **before** it is
+written to a file, committed, pushed, tagged, or published. That covers
+`README.md`, `CLAUDE.md`, `CHANGELOG.md`, commit messages, release notes, PR
+descriptions, and any new documentation.
+
+The rules that get broken most often here:
+
+| Rule | What it means for this repo |
+|---|---|
+| No em or en dashes | Use a comma, colon, period, or parentheses in prose. Existing `SERVICE_LABEL` strings and dashboard UI labels keep their dashes, so the two stay consistent |
+| No curly quotes | Straight `"` only |
+| Sentence case headings | `## Outbound email`, not `## Outbound Email` |
+| No emoji in headings or lists | Anywhere |
+| No bold mini-heading lists | Write the sentence instead |
+| Say what is, not what was | Code comments describe current behaviour. Version history belongs in `CHANGELOG.md`. The exception is a comment recording a trap that will otherwise be reintroduced, which this repo uses deliberately |
+
+Check before committing:
+
+```bash
+grep -rn $'\u2014\|\u2013' README.md CLAUDE.md CHANGELOG.md   # em and en dashes
+grep -rn $'\u201c\|\u201d' README.md CLAUDE.md CHANGELOG.md   # curly quotes
+```
+
+### 2. No AI attribution anywhere, ever
+
+Nothing in this repository, its git history, or its releases may reference
+Claude, Claude Code, Anthropic, or any AI assistant. Specifically:
+
+- No `Co-Authored-By` trailer
+- No "Generated with" line
+- No AI mention in a commit message, tag message, release note, PR body, or
+  code comment
+- No AI name in `git config user.name` or `user.email` for any commit
+
+Verify before pushing. Match attribution patterns, not the word itself, or
+every mention of the `CLAUDE.md` filename counts as a hit:
+
+```bash
+git log --format='%an <%ae>%n%s%n%b' -30 \
+  | grep -inE 'co-authored-by|generated with|assisted by|claude (code|opus|sonnet)|anthropic'
+# must print nothing
+```
+
+A commit that already carries attribution has to be amended or rebased out
+before it is pushed.
 
 ---
 
@@ -113,7 +168,7 @@ heredoc inside the service's `_deploy()` function in `lib/services/<name>.sh`.
 
 Cloudflare Tunnel requires zero router configuration. The tunnel is established
 from inside the Docker network outbound to Cloudflare. Works on any internet
-connection — apartment, office, hotel — without touching router settings.
+connection (apartment, office, hotel) without touching router settings.
 
 **Critical implication:** In CF Dashboard "Public Hostnames" config, use Docker
 container names as the service URL, not "localhost". The cloudflared container
@@ -311,7 +366,7 @@ set -o pipefail
 
 Exception: `corex.sh` and `nuke-corex.sh` use `set -uo pipefail` only.
 
-### Logging functions (from installer — copy into each new script)
+### Logging functions (from installer: copy into each new script)
 
 ```bash
 RED='\033[0;31m'; GREEN='\033[0;32m'; BLUE='\033[0;34m'
@@ -325,7 +380,7 @@ log_error()   { echo -e "${RED}[FAIL]${NC} $1"; exit 1; }
 ```
 
 Do NOT use raw `echo` for status output. Do NOT import log functions between
-scripts — each script defines its own identical set.
+scripts, each script defines its own identical set.
 
 ### Variable naming
 
@@ -336,11 +391,11 @@ scripts — each script defines its own identical set.
 ### Heredoc markers convention
 
 Use unique end markers per heredoc to prevent nesting confusion:
-- `DCEOF` — docker-compose files
-- `TEOF` — Traefik config
-- `PEOF` — Prometheus config
-- `CREDEOF` — credential files
-- `DOCSEOF` — documentation files
+- `DCEOF`: docker-compose files
+- `TEOF`: Traefik config
+- `PEOF`: Prometheus config
+- `CREDEOF`: credential files
+- `DOCSEOF`: documentation files
 - Use `'ENDMARKER'` (single-quoted) to suppress variable substitution
 
 ### Error handling pattern
@@ -351,7 +406,7 @@ some_command || log_warning "Non-fatal, continuing..."       # Non-fatal
 some_command 2>/dev/null || true                            # Silently ignore
 ```
 
-Avoid verbose `if ! command; then log_error; fi` — use `|| log_error` instead.
+Avoid verbose `if ! command; then log_error; fi`, use `|| log_error` instead.
 
 ### Idempotency pattern
 
@@ -378,14 +433,14 @@ Portainer listens on 9443 with HTTPS internally. Traefik must be told to use
 HTTPS: add `traefik.http.services.portainer.loadbalancer.server.scheme=https`.
 Without this, Traefik sends HTTP to an HTTPS endpoint → bad handshake.
 
-### 3. Stalwart admin password — pin it, never scrape the log
+### 3. Stalwart admin password: pin it, never scrape the log
 
 `STALWART_ADMIN_USER` / `STALWART_ADMIN_SECRET` are **not read** by current
 Stalwart images. CoreX set them for a long time, which looked correct and did
 nothing: Stalwart fell back to **bootstrap mode**, generated its own random
 temporary password, and printed it to the container log exactly once.
 
-The result in the field was a mail server nobody could ever log into — the
+The result in the field was a mail server nobody could ever log into, the
 credentials file had no Stalwart entry at all, and the only copy of the
 password was a log line. The service appeared healthy the whole time.
 
@@ -397,7 +452,7 @@ STALWART_RECOVERY_ADMIN: "admin:${STALWART_ADMIN_PASS}"
 ```
 
 The password is also persisted to `${DOCKER_ROOT}/stalwart/.admin-password`
-(0600), because it must stay **stable across re-runs** — the previous code
+(0600), because it must stay **stable across re-runs**, the previous code
 regenerated it whenever `STALWART_ADMIN_PASS` was unset, which is every
 `corex manage repair stalwart`, silently changing the admin password to a
 value nothing recorded.
@@ -441,7 +496,7 @@ manually, chown it: `chown 65534:65534 /mnt/corex-data/service-data/prometheus/`
 ### 9. Credential file loading on re-runs (CRITICAL)
 
 Phase 0 checks for `/root/corex-credentials.txt`. If it exists, passwords are
-LOADED from it — not regenerated. This prevents new passwords from locking you
+LOADED from it, not regenerated. This prevents new passwords from locking you
 out of existing databases. Never delete the credential file before a re-run.
 
 ### 10. OpenClaw setup (not auto-installed)
@@ -530,8 +585,8 @@ systemctl daemon-reload && systemctl enable openclaw && systemctl start openclaw
 - LAN access → change `"bind": "loopback"` to `"bind": "0.0.0.0"` in config
 
 **Recommended models for OpenClaw + Ollama:**
-- `qwen3-coder` — best tool calling support
-- `glm-4.7-flash` — lighter, faster
+- `qwen3-coder`: best tool calling support
+- `glm-4.7-flash`: lighter, faster
 - Avoid models >14B on Ryzen 7 with integrated GPU (too slow)
 
 ### 11. LAN fast-path requires solving 5 browser bypass layers
@@ -539,20 +594,20 @@ systemctl daemon-reload && systemctl enable openclaw && systemctl start openclaw
 AdGuard DNS rewrite (A-record → LAN IP) is necessary but NOT sufficient.
 Modern browsers have 4 additional paths that bypass the DNS rewrite:
 
-1. **SVCB/HTTPS (Type 65) DNS records** — Cloudflare publishes these with
+1. **SVCB/HTTPS (Type 65) DNS records**, Cloudflare publishes these with
    embedded IPv4/IPv6 address hints. Browsers query them and connect directly
    to Cloudflare, ignoring A-record rewrites. Fix: AdGuard filtering rules
    `||domain^$dnstype=SVCB` and `||domain^$dnstype=HTTPS`.
 
-2. **Chrome QUIC/HTTP3 Alt-Svc caching** — Chrome caches QUIC connections to
+2. **Chrome QUIC/HTTP3 Alt-Svc caching**, Chrome caches QUIC connections to
    Cloudflare via the Alt-Svc HTTP header for up to 30 days. Even after DNS
    changes, Chrome reuses cached connections. Fix: Chrome policy
    `QuicAllowed=false`.
 
-3. **Chrome built-in DNS client** — bypasses the system DNS resolver entirely.
+3. **Chrome built-in DNS client**, bypasses the system DNS resolver entirely.
    Fix: Chrome policy `BuiltInDnsClientEnabled=false`.
 
-4. **IPv6 bypass** — AAAA records point to Cloudflare IPv6 edge servers.
+4. **IPv6 bypass**, AAAA records point to Cloudflare IPv6 edge servers.
    Browsers prefer IPv6, so even with correct IPv4 rewrite, they connect via
    IPv6 to Cloudflare. Fix: disable IPv6 on the LAN interface.
 
@@ -584,8 +639,8 @@ this in Steps 1 and 2.
 
 ### 15. UFW must allow 10.0.0.0/8, not just 172.16.0.0/12
 
-Docker's default address pool is `172.16.0.0/12`, but Docker **Swarm** — which
-Coolify uses — allocates overlay networks from `10.0.0.0/8`. A UFW config that
+Docker's default address pool is `172.16.0.0/12`, but Docker **Swarm**, which
+Coolify uses, allocates overlay networks from `10.0.0.0/8`. A UFW config that
 only allows `172.16.0.0/12` silently drops every overlay packet and kernel-logs
 each one, producing a `[UFW BLOCK]` entry every 10-60 seconds:
 
@@ -595,10 +650,10 @@ each one, producing a `[UFW BLOCK]` entry every 10-60 seconds:
 
 This is self-inflicted noise, not an attack, and it buries genuine security
 events. `lib/security.sh` now allows both ranges. Note that `ufw allow in on
-br-+` is **not** a valid workaround — ufw validates interface names against
+br-+` is **not** a valid workaround, ufw validates interface names against
 `[a-zA-Z0-9.:_-]+` and rejects the `+` wildcard outright.
 
-### 16. Unclean shutdowns leave no journal evidence — use the blackbox log
+### 16. Unclean shutdowns leave no journal evidence: use the blackbox log
 
 When the machine loses power or hard-hangs, journald never flushes, so the
 journal simply stops mid-line with no `systemd-shutdown` or `Reached target
@@ -611,25 +666,25 @@ impossible. Two things make it tractable:
   journalctl -b -1 | grep -cE "systemd-shutdown|Reached target Shutdown|Powering off"
   ```
   Also note that `last -x` showing every boot as "still running" is the same
-  signal — no boot ever recorded a clean shutdown.
+  signal, no boot ever recorded a clean shutdown.
 - **Diagnosing it:** `/mnt/corex-data/blackbox.log`, written every 20s by
   `corex-blackbox.timer`, survives unclean shutdown because it is a plain
   append to the SSD. The last line before the gap gives temperature, load,
-  memory, swap and CPU throttle count at the moment of death — which
+  memory, swap and CPU throttle count at the moment of death, which
   distinguishes thermal shutdown from PSU failure from OOM.
 
 **Do not clear logs on a crashing system before archiving them.** The journal
 is the only crash evidence; `corex manage cleanup` vacuums it. Archive
 `journalctl -b -1` first.
 
-### 17. Mini servers thermal-trip — shed load, never let TjMax decide
+### 17. Mini servers thermal-trip: shed load, never let TjMax decide
 
 CoreX targets small-form-factor hardware, which frequently means a mobile CPU
 (Ryzen HX, Intel NUC) in a chassis with marginal cooling. Under sustained
 container load these reach TjMax and fire **THERMTRIP**: an instant,
 hardware-level power cut. This is the worst possible failure mode because:
 
-- The kernel logs **nothing** — no critical-temp warning, no panic. The journal
+- The kernel logs **nothing**, no critical-temp warning, no panic. The journal
   simply stops mid-line, so it looks exactly like someone pulled the plug.
   Diagnosing it without `lm-sensors` installed is close to impossible.
 - Nothing is flushed, so you risk both database corruption *and* a broken dpkg
@@ -637,7 +692,7 @@ hardware-level power cut. This is the worst possible failure mode because:
 
 A real measurement from the field: a Ryzen 9 5900HX sat at **Tctl 95.6°C** three
 minutes after boot with 38 containers running, and tripped after ~5 minutes.
-With the four heaviest containers stopped it still read **91.1°C** — so the
+With the four heaviest containers stopped it still read **91.1°C**, so the
 cooling was independently inadequate, not merely overloaded.
 
 **Three rules follow:**
@@ -671,7 +726,7 @@ subsequent boot retried and re-broke it.
 but only through `corex manage os-upgrade`, which refuses to start when the CPU
 is above 85°C, when dpkg is already dirty, or when uptime is under 15 minutes.
 
-`Remove-Unused-Kernel-Packages` is also set to `false` — removing a kernel is
+`Remove-Unused-Kernel-Packages` is also set to `false`, removing a kernel is
 itself a dpkg transaction, and a known-good fallback kernel is worth the disk.
 
 Detect the damage with `corex manage health`; `lib/selfheal.sh` repairs it
@@ -680,7 +735,7 @@ automatically on the next boot via `dpkg --configure -a`.
 ### 19. Do not track moving major-version image tags
 
 `nextcloud:stable` follows **major** versions. A routine `corex manage update`
-pulled Nextcloud 33 -> 34 unattended, and 34 **removed `gosu`** from the image —
+pulled Nextcloud 33 -> 34 unattended, and 34 **removed `gosu`** from the image , 
 which broke the `before-starting` hook completely. Every `occ` call failed with
 `gosu: command not found`, the retry loop then blocked container startup for
 ~4 minutes per restart, Traefik served 502 throughout, and no configuration was
@@ -695,7 +750,7 @@ Pin majors and bump them deliberately, the way `traefik:v3.6` and
 Still tracking moving targets, and worth pinning for the same reason:
 `ghcr.io/immich-app/immich-server:release`, `ghcr.io/open-webui/open-webui:main`.
 
-**Corollary — never assume a binary exists in an upstream image.** Probe for it:
+**Corollary, never assume a binary exists in an upstream image.** Probe for it:
 
 ```bash
 if command -v gosu >/dev/null 2>&1; then ...
@@ -703,7 +758,7 @@ elif command -v setpriv >/dev/null 2>&1; then ...
 ```
 
 `setpriv`, `runuser` and `su` are all present in `nextcloud:34`. And fail fast
-when privilege-dropping is impossible rather than retrying 30s per call — a
+when privilege-dropping is impossible rather than retrying 30s per call, a
 retry loop around an unsatisfiable command turns a warning into an outage.
 
 ### 20. Nextcloud gets stuck in maintenance mode, serving HTTP 503
@@ -732,12 +787,12 @@ occ maintenance:mode --off
 Order matters: finish any pending schema upgrade first, then clear maintenance
 mode, then apply settings. `_nextcloud_apply_occ` does exactly this.
 
-**Related — pulling an image puts the DB behind the code.** After any Nextcloud
+**Related, pulling an image puts the DB behind the code.** After any Nextcloud
 image update, `needsDbUpgrade: true` until `occ upgrade` runs, and occ refuses
 most commands meanwhile. `corex manage update` does not run it, so a plain
 image update leaves the instance in a degraded, quietly-limited state.
 
-### 21. TLS-ALPN-01 cannot work behind a residential ISP — use DNS-01
+### 21. TLS-ALPN-01 cannot work behind a residential ISP: use DNS-01
 
 CoreX's premise is "no router configuration" via Cloudflare Tunnel, but Traefik
 was configured with `tlsChallenge: {}` (TLS-ALPN-01), which **requires Let's
@@ -751,7 +806,7 @@ The failure is confusing rather than obvious:
 2. Traefik falls back to its built-in `CN=TRAEFIK DEFAULT CERT` placeholder and
    every browser shows `ERR_CERT_AUTHORITY_INVALID`.
 3. Retries burn Let's Encrypt's limit of **5 failed authorizations per hostname
-   per hour**, after which it returns `429 rateLimited` — which reads like a
+   per hour**, after which it returns `429 rateLimited`, which reads like a
    completely different problem.
 
 **DNS-01 needs no inbound connectivity**: Traefik proves domain control by
@@ -766,11 +821,11 @@ zone DNS" template, scoped to the zone) and `_traefik_write_configs` selects
 so neither ever changed on an existing install. A months-old `dynamic.yml` was
 found still pointing `defaultCertificate` at `/certs/${DOMAIN}.crt` from an
 earlier naming scheme. That file no longer existed, so Traefik silently ignored
-the store and served its placeholder cert — the CoreX CA wildcard was never
+the store and served its placeholder cert, the CoreX CA wildcard was never
 presented at all, despite being generated correctly.
 
 The same trap as gotcha #19 for compose files. **Anything CoreX generates is
-not user data — regenerate it unconditionally on repair.** Guard with
+not user data, regenerate it unconditionally on repair.** Guard with
 `if [[ ! -f ... ]]` only for genuine user state.
 
 Diagnose with:
@@ -795,7 +850,7 @@ Banned due to scan (security.scan-ban) remoteIp=172.18.0.11 path="//wp-content/.
 `EOF`, Cloudflare returned 502, and the failure looked like a routing problem:
 the ingress rule was correct, the container was `Up (healthy)`, and the **LAN
 path kept working** because Traefik had a different container IP
-(`172.18.0.5`). Diagnosing it from the tunnel side is impossible — only
+(`172.18.0.5`). Diagnosing it from the tunnel side is impossible, only
 `docker logs stalwart` names the cause.
 
 Two settings fix it properly, and both need a configured store, so they can
@@ -806,7 +861,7 @@ only be applied **after** initial setup:
 | `proxyTrustedNetworks` | `172.16.0.0/12` | trust the Docker network as a proxy |
 | `useXForwarded` | `true` | ban the real client, not the proxy |
 
-Do not try to set these through environment variables — `stalwart-cli` is not
+Do not try to set these through environment variables, `stalwart-cli` is not
 in the image and the settings live in the store, not in env (the same trap as
 gotcha #3). Restarting the container clears the in-memory ban list, which is
 the only interim remedy; `corex manage repair stalwart` does that and says so.
@@ -814,7 +869,7 @@ the only interim remedy; `corex manage repair stalwart` does that and says so.
 **Also: a running Stalwart container proves nothing.** It reported `HEALTHY`
 throughout the outage above. `stalwart_status` now returns `UNHEALTHY` when a
 proxy IP is banned or when the server is still in bootstrap mode
-(`server.bootstrap-mode` in the log — no config file was ever written, so
+(`server.bootstrap-mode` in the log, no config file was ever written, so
 nothing persists and mail cannot flow).
 
 ### 24. state.json must never hold a credential
@@ -825,7 +880,7 @@ container, so anything in it is readable by a web-facing service. It held
 
 The mode is not optional: the dashboard runs as `nobody`, and at 0600 it read
 nothing and rendered **"No services installed" on a box running 36
-containers** — because `loadState` discarded the read error. Two rules follow:
+containers**, because `loadState` discarded the read error. Two rules follow:
 
 - `state_set` refuses secret-looking keys (`token`, `secret`, `password`,
   `key`, `credential`) rather than trusting callers. Secrets go in a 0600
@@ -868,7 +923,7 @@ These are firm constraints. Violating them breaks existing installations.
 7. **DO NOT change the Restic password** after initial setup. It invalidates the
    existing repository and all backups.
 
-8. **DO NOT use `docker volume prune`** — it destroys ALL unnamed volumes
+8. **DO NOT use `docker volume prune`**, it destroys ALL unnamed volumes
    including potentially active service data. Always be explicit: `docker volume rm <name>`.
 
 ---
@@ -987,7 +1042,7 @@ gitea_repair()      { ... }    # docker compose up -d --force-recreate (no data 
 gitea_credentials() { ... }    # Print credential lines for summary doc
 ```
 
-Drop this file in `lib/services/` — it automatically appears in wizard,
+Drop this file in `lib/services/`, it automatically appears in wizard,
 `corex-manage list`, `corex doctor`, and `corex-manage update`.
 
 ### Auto-discovery mechanism
@@ -1010,13 +1065,13 @@ Follow this checklist when adding a service to the project:
 
 1. Create `lib/services/<name>.sh` with all metadata vars and all 7 functions
 2. Write a smoke test in `test/smoke/` before implementing (TDD)
-3. Implement `_dirs()` — create directories with correct ownership
-4. Implement `_firewall()` — add UFW rules if needed
-5. Implement `_deploy()` — write compose heredoc + `docker compose up -d` + `state_service_installed`
+3. Implement `_dirs()`, create directories with correct ownership
+4. Implement `_firewall()`, add UFW rules if needed
+5. Implement `_deploy()`, write compose heredoc + `docker compose up -d` + `state_service_installed`
 6. Implement `_status()` and `_repair()` for doctor command support
 7. Implement `_credentials()` for the summary doc
 8. Run smoke test to validate compose generation
-9. Update this `CLAUDE.md` — add service to dependency map and network table
+9. Update this `CLAUDE.md`, add service to dependency map and network table
 10. Update `CHANGELOG.md` with the new service under the next version
 
 **Do NOT update any other core files.** Auto-discovery handles the rest.
@@ -1047,12 +1102,12 @@ Follow this checklist when adding a service to the project:
 ```
 
 Key functions in `lib/state.sh`:
-- `state_init` — create fresh state file
-- `state_get "field"` — read a value
-- `state_set "field" "value"` — write a value
-- `state_service_installed "name"` — mark service installed
-- `state_service_is_installed "name"` — returns 0 if installed
-- `state_list_installed` — list all installed service names
+- `state_init`: create fresh state file
+- `state_get "field"`: read a value
+- `state_set "field" "value"`: write a value
+- `state_service_installed "name"`: mark service installed
+- `state_service_is_installed "name"`: returns 0 if installed
+- `state_list_installed`: list all installed service names
 
 ---
 
@@ -1062,11 +1117,11 @@ Key functions in `lib/state.sh`:
 - **v1.0.0** (2026-02-10): Initial release. Monolithic single-file installer. 14 services + Restic backups.
 - **v1.1.0** (2026-02-11): Fixed Time Machine env var (PASSWORD not TM_PASSWORD), moved TM data to shared pool, added `corex.sh` CLI, `nuke-corex.sh`, `migrate-domain.sh`, curl-pipe detection, BASH_SOURCE detection.
 - **v2.0.0** (2026-02-21): Modular lib/ structure, wizard, state.json, corex-manage, corex doctor, plugin extensibility. 1,865-line monolith replaced by ~200-line orchestrator + lib/ modules.
-- **v2.0.1** (2026-02-22): Fixed `corex doctor` on v1 installs — auto-migrates state from `docker ps` when `state.json` is missing.
-- **v2.1.0** (2026-03-01): Added `corex manage lan-setup` — automates AdGuard DNS wildcard rewrite via REST API; prints router/device DNS instructions. Eliminates the manual post-install AdGuard step.
-- **v2.1.1** (2026-03-02): Fixed `lan-setup` HTTP 400 — v1 migration regex captured YAML quotes around email field, storing domain with embedded quotes in state.json. Fixed at root (migration strips quotes) and defensively in `_load_config()` via `tr -d '"'`.
+- **v2.0.1** (2026-02-22): Fixed `corex doctor` on v1 installs, auto-migrates state from `docker ps` when `state.json` is missing.
+- **v2.1.0** (2026-03-01): Added `corex manage lan-setup`, automates AdGuard DNS wildcard rewrite via REST API; prints router/device DNS instructions. Eliminates the manual post-install AdGuard step.
+- **v2.1.1** (2026-03-02): Fixed `lan-setup` HTTP 400, v1 migration regex captured YAML quotes around email field, storing domain with embedded quotes in state.json. Fixed at root (migration strips quotes) and defensively in `_load_config()` via `tr -d '"'`.
 - **v2.2.0** (2026-03-06): Network performance tuning + security hardening. Added `corex manage network-tune` command. Kernel params expanded from 14 to 50+ (BBR, 64MB TCP buffers, TCP Fast Open, MTU probing). Time Machine rebuilt with high-performance SMB3 (multichannel, 8MB chunks, async I/O, sendfile). SSH hardened with modern ciphers only (ChaCha20/AES-GCM, curve25519 KEX). Fail2ban upgraded to 3-jail system (standard + aggressive + recidive for 30-day repeat-offender bans).
 - **v2.3.0** (2026-03-07): Traefik upgraded v3.0→v3.6 (Docker Engine 29+ broke API v1.24 negotiation, v3.6 adds auto-negotiation). Nextcloud LAN transfer performance fix (KB/s → MB/s). PHP output_buffering=Off, OPcache+JIT, APCu local cache, Apache mod_deflate bypass for binary files, mod_reqtimeout unlimited body, MariaDB innodb tuning (256M buffer pool, O_DIRECT), Traefik unlimited read/write timeouts, CalDAV/CardDAV middleware, HSTS headers. Repair command regenerates perf configs.
 - **v2.4.0** (2026-03-07): LAN fast-path hardened against 5 browser bypass layers. Self-signed CA + wildcard cert auto-generated by Traefik (file provider + dynamic.yml). SVCB/HTTPS DNS record blocking via AdGuard filtering rules. `lan-setup` expanded with browser config (Chrome QUIC/DNS policies), IPv6 disable instructions, CA trust instructions per platform. Nextcloud max_chunk_size set to 10MB for Cloudflare compatibility. Secondary DNS warnings added.
-- **v2.4.1** (2026-03-07): Fixed Nextcloud "Unknown error during upload" — APACHE_BODY_LIMIT=0, .htaccess patching, gosu for occ commands, JIT disabled. Added MariaDB/Redis health checks, cron container, security headers.
-- **v2.4.2** (2026-03-09): Added HEVC video streaming via Memories app (internal go-vod + ffmpeg). iPhone .mov files now play in Chrome/Firefox via on-demand HLS transcoding. Memories v7+ ships its own go-vod binary — no external container needed. Fixed CalDAV `$$1` interpolation bug. Extracted `_nextcloud_write_compose()` helper so repair regenerates compose files.
+- **v2.4.1** (2026-03-07): Fixed Nextcloud "Unknown error during upload", APACHE_BODY_LIMIT=0, .htaccess patching, gosu for occ commands, JIT disabled. Added MariaDB/Redis health checks, cron container, security headers.
+- **v2.4.2** (2026-03-09): Added HEVC video streaming via Memories app (internal go-vod + ffmpeg). iPhone .mov files now play in Chrome/Firefox via on-demand HLS transcoding. Memories v7+ ships its own go-vod binary, no external container needed. Fixed CalDAV `$$1` interpolation bug. Extracted `_nextcloud_write_compose()` helper so repair regenerates compose files.

@@ -293,3 +293,88 @@ _repair_body() {
         false
     }
 }
+
+# ─── Dashboard links must match the Traefik Host rules ───────────────────────
+
+@test "every dashboard subdomain is declared by a Traefik Host rule" {
+    # The dashboard built links as "<service>.DOMAIN", which produced four dead
+    # links: immich answers on photos, adguard has no router at all, the
+    # Traefik dashboard is loopback-only, and coolify runs its own stack on a
+    # port. A hostname only resolves if a Host rule declares it.
+    local rules
+    rules=$(grep -rhoE 'rule=Host\(\\`[a-z0-9-]+\.' "${REPO_ROOT}"/lib/services/*.sh \
+        | sed 's/.*Host(\\`//;s/\.$//' | sort -u)
+    [ -n "$rules" ]
+
+    local subs offenders=""
+    subs=$(grep -oE '"https://[a-z0-9-]+\.\{DOMAIN\}"' "${REPO_ROOT}/dashboard/main.go" \
+        | sed 's|"https://||;s|\.{DOMAIN}"||' | sort -u)
+    [ -n "$subs" ]
+
+    for s in $subs; do
+        echo "$rules" | grep -qx "$s" || offenders+=" $s"
+    done
+    [ -z "$offenders" ] || {
+        echo "dashboard links to hostnames with no Traefik Host rule:$offenders"
+        echo "Host rules that exist: $(echo $rules)"
+        false
+    }
+}
+
+@test "dashboard covers every Traefik Host rule that serves a UI" {
+    # whiteboard is a Nextcloud websocket backend, not a page a user opens.
+    local skip="whiteboard"
+    local rules missing=""
+    rules=$(grep -rhoE 'rule=Host\(\\`[a-z0-9-]+\.' "${REPO_ROOT}"/lib/services/*.sh \
+        | sed 's/.*Host(\\`//;s/\.$//' | sort -u)
+    for r in $rules; do
+        [[ " $skip " == *" $r "* ]] && continue
+        grep -q "https://${r}\.{DOMAIN}" "${REPO_ROOT}/dashboard/main.go" \
+            || missing+=" $r"
+    done
+    [ -z "$missing" ] || {
+        echo "Host rules with no dashboard link:$missing"
+        false
+    }
+}
+
+@test "dashboard service maps are keyed by real service module names" {
+    # "uptime-kuma" was a key in three maps and is not a module: Uptime Kuma
+    # ships inside the monitoring module, so those entries matched nothing.
+    # Scoped to the three service maps; main.go holds other maps too.
+    local keys offenders=""
+    keys=$(awk '
+        /^var service(Labels|URLs|Containers) = map\[string\]/ { inmap=1; next }
+        inmap && /^}/ { inmap=0; next }
+        inmap && match($0, /"[a-z0-9-]+":/) {
+            print substr($0, RSTART+1, RLENGTH-3)
+        }' "${REPO_ROOT}/dashboard/main.go" | sort -u)
+    [ -n "$keys" ]
+
+    for k in $keys; do
+        [ -f "${REPO_ROOT}/lib/services/${k}.sh" ] || offenders+=" $k"
+    done
+    [ -z "$offenders" ] || {
+        echo "dashboard map keys with no lib/services module:$offenders"
+        false
+    }
+}
+
+@test "no service image tracks a moving major-version tag" {
+    # :release moved Immich from 1.x to 3.1.0 on a routine update, and 3.x
+    # dropped the pgvecto.rs extension the database provided, so the photo
+    # library would not start. :stable did the same to Nextcloud earlier.
+    local offenders=""
+    for f in "${REPO_ROOT}"/lib/services/*.sh; do
+        while IFS= read -r img; do
+            case "$img" in
+                *:release|*:stable|*:main) offenders+=" $(basename "$f" .sh):${img##*/}" ;;
+            esac
+        done < <(grep -ohE '^\s+image: \S+' "$f" | sed 's/^ *image: //')
+    done
+    [ -z "$offenders" ] || {
+        echo "images on moving major tags:$offenders"
+        echo "Pin the major and bump it deliberately (CLAUDE.md gotcha #19)."
+        false
+    }
+}
