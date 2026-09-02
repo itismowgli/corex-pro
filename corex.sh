@@ -251,17 +251,6 @@ do_update() {
 
     LOCAL_VERSION="$COREX_VERSION"
 
-    # Check for uncommitted local changes before touching anything
-    if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
-        log_warning "Local changes detected in ${REPO_DIR}."
-        log_warning "Update would overwrite them. Use --force to proceed anyway."
-        local force_flag="${1:-}"
-        if [[ "$force_flag" != "--force" ]]; then
-            echo "Aborted. Run: corex update --force"
-            return 1
-        fi
-    fi
-
     # Fetch remote without applying changes
     if ! git fetch origin 2>/dev/null; then
         log_warning "Could not reach GitHub. Check your internet connection."
@@ -282,6 +271,46 @@ do_update() {
         echo -e "${GREEN}Already up to date (v${COREX_VERSION}, $(git rev-parse --short HEAD)).${NC}"
         _restore_repo_owner
         return 0
+    fi
+
+    # Only now, with something actually pending, ask whether pulling it would
+    # destroy local work.
+    #
+    # This check used to run before the fetch and used plain `git status
+    # --porcelain`, so it aborted on an already-up-to-date repo with nothing to
+    # pull, and it counted untracked files that a pull never touches. Three
+    # stray macOS "._name" sidecar files were enough to make `corex update`
+    # demand --force on a repo that was exactly in sync.
+    #
+    # What a pull can actually overwrite is a tracked file that has been
+    # modified, or an untracked file sitting on a path the incoming commits
+    # also write.
+    local dirty untracked_collisions=""
+    dirty=$(git status --porcelain --untracked-files=no 2>/dev/null)
+
+    local incoming
+    incoming=$(git diff --name-only HEAD..origin/main 2>/dev/null)
+    if [[ -n "$incoming" ]]; then
+        local f
+        while IFS= read -r f; do
+            [[ -n "$f" ]] || continue
+            grep -qxF "$f" <<< "$incoming" && untracked_collisions+="${f}"$'\n'
+        done < <(git ls-files --others --exclude-standard 2>/dev/null)
+    fi
+
+    if [[ -n "$dirty" || -n "$untracked_collisions" ]]; then
+        log_warning "Local changes in ${REPO_DIR} that this update would overwrite:"
+        [[ -n "$dirty" ]] && printf '%s\n' "$dirty" | sed 's/^/    /'
+        [[ -n "$untracked_collisions" ]] && \
+            printf '%s' "$untracked_collisions" | sed 's/^/    untracked: /'
+        local force_flag="${1:-}"
+        if [[ "$force_flag" != "--force" ]]; then
+            echo ""
+            echo "Aborted. Commit or stash them, or run: corex update --force"
+            _restore_repo_owner
+            return 1
+        fi
+        log_warning "Continuing anyway (--force)."
     fi
 
     # Describe the update honestly: a version bump when there is one, otherwise

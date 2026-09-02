@@ -462,3 +462,33 @@ _repair_body() {
     done
     awk '/^coolify_destroy\(\)/,/^}/' "$c" | grep -q 'rm -f.*coolify.yml'
 }
+
+# ─── corex update must not refuse when there is nothing to pull ──────────────
+
+@test "update checks for local changes only after finding commits to pull" {
+    # The check ran before the fetch, so it aborted on a repo that was exactly
+    # in sync and had nothing to overwrite. Three stray macOS "._name" files
+    # were enough to make `corex update` demand --force.
+    local body
+    body=$(awk '/^do_update\(\)/,/^}/' "${REPO_ROOT}/corex.sh")
+    local behind_line dirty_line
+    behind_line=$(echo "$body" | grep -n 'behind=\$(git rev-list --count' | head -1 | cut -d: -f1)
+    dirty_line=$(echo "$body" | grep -n 'dirty=\$(git status --porcelain' | head -1 | cut -d: -f1)
+    [ -n "$behind_line" ]
+    [ -n "$dirty_line" ]
+    [ "$behind_line" -lt "$dirty_line" ]
+}
+
+@test "update ignores untracked files that no incoming commit touches" {
+    # git pull does not overwrite an untracked file unless an incoming commit
+    # writes that same path, so only a collision should block.
+    local body
+    body=$(awk '/^do_update\(\)/,/^}/' "${REPO_ROOT}/corex.sh")
+    echo "$body" | grep -q 'untracked-files=no'
+    echo "$body" | grep -q 'git diff --name-only HEAD..origin/main'
+    echo "$body" | grep -q 'git ls-files --others --exclude-standard'
+}
+
+@test "AppleDouble sidecars are gitignored" {
+    grep -qx '\._\*' "${REPO_ROOT}/.gitignore"
+}

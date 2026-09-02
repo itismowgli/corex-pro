@@ -12,3 +12,9 @@ Thumbs.db
 # AI tooling
 .claude/
 .planning/
+
+# macOS writes these AppleDouble sidecars whenever files reach the server
+# through a tar or an SMB share. They are not project files, and counting them
+# as local changes made `corex update` refuse to run on a clean repo.
+._*
+.DS_Store
