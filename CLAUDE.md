@@ -655,6 +655,35 @@ itself a dpkg transaction, and a known-good fallback kernel is worth the disk.
 Detect the damage with `corex manage health`; `lib/selfheal.sh` repairs it
 automatically on the next boot via `dpkg --configure -a`.
 
+### 19. Do not track moving major-version image tags
+
+`nextcloud:stable` follows **major** versions. A routine `corex manage update`
+pulled Nextcloud 33 -> 34 unattended, and 34 **removed `gosu`** from the image —
+which broke the `before-starting` hook completely. Every `occ` call failed with
+`gosu: command not found`, the retry loop then blocked container startup for
+~4 minutes per restart, Traefik served 502 throughout, and no configuration was
+applied at all.
+
+Nextcloud also does not support skipping major versions, so an instance left
+two majors behind cannot upgrade itself and needs manual recovery.
+
+Pin majors and bump them deliberately, the way `traefik:v3.6` and
+`mariadb:10.11` already are. `nextcloud` is now pinned to `:34`.
+
+Still tracking moving targets, and worth pinning for the same reason:
+`ghcr.io/immich-app/immich-server:release`, `ghcr.io/open-webui/open-webui:main`.
+
+**Corollary — never assume a binary exists in an upstream image.** Probe for it:
+
+```bash
+if command -v gosu >/dev/null 2>&1; then ...
+elif command -v setpriv >/dev/null 2>&1; then ...
+```
+
+`setpriv`, `runuser` and `su` are all present in `nextcloud:34`. And fail fast
+when privilege-dropping is impossible rather than retrying 30s per call — a
+retry loop around an unsatisfiable command turns a warning into an outage.
+
 ---
 
 ## What NOT to Do

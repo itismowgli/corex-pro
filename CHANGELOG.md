@@ -8,6 +8,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ## [Unreleased]
 
+### Fixed — Nextcloud 34 broke the occ hook (outage)
+- **`nextcloud:stable` pulled a major upgrade that removed `gosu`.** The
+  `before-starting` hook hardcoded `gosu www-data`, so on Nextcloud 34 every
+  `occ` call failed with `gosu: command not found`. Wrapped in a 6-attempt /
+  30-second retry loop across 8 calls, that blocked container startup for
+  roughly four minutes on every restart, Traefik served **502** for the whole
+  window, and none of the configuration was applied. The hook now probes for
+  `gosu` / `setpriv` / `runuser` / `su` and fails fast with a clear message if
+  none can drop privileges, instead of retrying something unsatisfiable.
+- **Pinned `nextcloud` to `:34`.** `:stable` follows major versions, so a
+  routine `corex manage update` performed an unattended major upgrade — and
+  Nextcloud does not support skipping majors, so an instance two versions
+  behind cannot upgrade itself. Majors should be a deliberate decision, as
+  `traefik:v3.6` and `mariadb:10.11` already are.
+
+### Added — Whiteboard real-time collaboration
+- **Whiteboard WebSocket backend** (`nextcloud-whiteboard`). The Whiteboard app
+  draws fine standalone but real-time multi-user editing needs a separate
+  WebSocket server, which Nextcloud's setup checks flag as "WebSocket server
+  URL is not configured". Added to the Nextcloud compose with a Traefik route
+  at `whiteboard.DOMAIN`, Redis-backed shared state, and resource limits. The
+  shared JWT secret is persisted in `${DOCKER_ROOT}/nextcloud/.whiteboard-secret`
+  (0600) so it survives re-runs — regenerating it would silently break
+  collaboration — and deliberately kept out of `corex-credentials.txt`, whose
+  format is parsed by exact grep patterns in phase 0.
+
 ### Fixed — Nextcloud setup warnings
 - **HSTS header missing on tunnel traffic.** Traefik's `nc-headers` middleware
   sets `Strict-Transport-Security`, but Cloudflare Tunnel connects directly to

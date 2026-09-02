@@ -147,11 +147,40 @@ APEOF
 # manipulation. config:system:set writes to config.php (no DB needed);
 # config:app:set writes to the database (retry loop handles DB readiness).
 #
-# Uses gosu (ships with the Nextcloud image) to drop to www-data (uid 33)
-# — compatible with no-new-privileges security policy; avoids root-owned
-# session/cache artifacts that break subsequent occ calls.
+# occ must run as www-data (uid 33): Nextcloud refuses to run it as root, and
+# running it as root also leaves root-owned session/cache artifacts that break
+# later calls. Dropping privileges is compatible with no-new-privileges.
+#
+# Nextcloud 34 REMOVED gosu from the image. Hardcoding it meant every occ call
+# failed with "gosu: command not found", which combined with the retry loop
+# blocked container startup for minutes and applied no configuration at all
+# (Traefik served 502 throughout). Probe for what the image actually ships
+# instead of assuming: setpriv, runuser and su are all present on 34.
+if command -v gosu >/dev/null 2>&1; then
+    _as_www() { gosu www-data "$@"; }
+elif command -v setpriv >/dev/null 2>&1; then
+    _as_www() { setpriv --reuid=33 --regid=33 --clear-groups "$@"; }
+elif command -v runuser >/dev/null 2>&1; then
+    _as_www() { runuser -u www-data -- "$@"; }
+else
+    # su takes a single command string rather than argv, so quote each word.
+    _as_www() {
+        local _q="" _a
+        for _a in "$@"; do _q="${_q} '${_a//\'/\'\\\'\'}'"; done
+        su -s /bin/sh -p www-data -c "${_q}"
+    }
+fi
+
 CONFIG="/var/www/html/config/config.php"
 [ -f "$CONFIG" ] || exit 0
+
+# Fail fast if privilege-dropping is broken, rather than burning 30s per call
+# retrying something that cannot succeed.
+if ! _as_www php /var/www/html/occ status >/dev/null 2>&1; then
+    echo "[corex] WARNING: cannot run occ as www-data — skipping config hook." >&2
+    echo "[corex] Apply settings manually: docker exec -u www-data nextcloud php occ ..." >&2
+    exit 0
+fi
 
 # _occ: run an occ command as www-data with up to 6 retries (30s total).
 # config:system:set calls usually succeed on the first attempt.
@@ -159,7 +188,7 @@ CONFIG="/var/www/html/config/config.php"
 _occ() {
     local _i
     for _i in $(seq 1 6); do
-        if gosu www-data php /var/www/html/occ "$@" 2>&1; then
+        if _as_www php /var/www/html/occ "$@" 2>&1; then
             return 0
         fi
         sleep 5
@@ -204,6 +233,21 @@ _occ config:system:set log_rotate_size --type=integer --value=10485760 || true
 # is deliberately NOT run here — it can take a very long time on a large
 # instance. Run it by hand during a maintenance window.
 _occ db:add-missing-indices || true
+
+# ── Whiteboard real-time collaboration ───────────────────────────────
+# The app works standalone for basic drawing, but multi-user real-time
+# editing needs the WebSocket backend, and Nextcloud reports
+# "WebSocket server URL is not configured" until collabBackendUrl is
+# set. Both values are no-ops if the whiteboard app is not enabled.
+#
+# The browser connects to this URL directly, so it must be reachable
+# from the client: on the LAN that works via the AdGuard wildcard plus
+# Traefik, but external access also needs a Cloudflare Tunnel public
+# hostname for whiteboard.DOMAIN -> nextcloud-whiteboard:3002.
+if [ -n "${WHITEBOARD_SECRET:-}" ] && [ -n "${COREX_DOMAIN:-}" ]; then
+    _occ config:app:set whiteboard collabBackendUrl --value "https://whiteboard.${COREX_DOMAIN}" || true
+    _occ config:app:set whiteboard jwt_secret_key --value "${WHITEBOARD_SECRET}" || true
+fi
 
 # ── Patch .htaccess for LimitRequestBody (Umbrel pattern) ────────
 # Nextcloud regenerates .htaccess on startup and updates. The
@@ -271,8 +315,27 @@ nextcloud_firewall() {
 # Writes the docker-compose.yml for Nextcloud and satellite containers.
 # Called by both nextcloud_deploy() and nextcloud_repair() so compose
 # changes (added/removed containers) take effect on repair.
+# The whiteboard backend and the Nextcloud app authenticate to each other with
+# a shared JWT secret, so it must stay stable across re-runs — regenerating it
+# would silently break real-time collaboration until the app was reconfigured.
+# It is kept in its own 0600 file rather than added to corex-credentials.txt,
+# because that file's format is parsed by exact grep patterns in phase 0
+# (see CLAUDE.md "What NOT to Do" #2) and is not worth destabilising for this.
+_nextcloud_whiteboard_secret() {
+    local f="${DOCKER_ROOT}/nextcloud/.whiteboard-secret"
+    if [[ -s "$f" ]]; then
+        WHITEBOARD_SECRET=$(cat "$f")
+    else
+        WHITEBOARD_SECRET=$(generate_pass)
+        printf '%s' "$WHITEBOARD_SECRET" > "$f"
+        chmod 600 "$f"
+    fi
+    export WHITEBOARD_SECRET
+}
+
 _nextcloud_write_compose() {
     local dir="${DOCKER_ROOT}/nextcloud"
+    _nextcloud_whiteboard_secret
 
     cat > "${dir}/docker-compose.yml" << DCEOF
 services:
@@ -320,7 +383,7 @@ services:
     networks: [proxy-net]
 
   app:
-    image: nextcloud:stable
+    image: nextcloud:34
     container_name: nextcloud
     restart: unless-stopped
     volumes:
@@ -345,6 +408,12 @@ services:
       # 0 = unlimited (PHP enforces its own upload_max_filesize = 16G).
       # Ref: https://github.com/nextcloud/docker/issues/1796
       APACHE_BODY_LIMIT: "0"
+      # ── For the before-starting hook ──────────────────────────────
+      # The hook heredoc is single-quoted, so these stay literal in the
+      # script and expand at runtime from the container's environment.
+      # Used to point the Whiteboard app at its WebSocket backend.
+      COREX_DOMAIN: "${DOMAIN}"
+      WHITEBOARD_SECRET: "${WHITEBOARD_SECRET}"
     depends_on:
       db:
         condition: service_healthy
@@ -377,7 +446,7 @@ services:
   # jobs don't compete with web request PHP workers. Shares the same
   # data volume and image as the app container.
   cron:
-    image: nextcloud:stable
+    image: nextcloud:34
     container_name: nextcloud-cron
     restart: unless-stopped
     entrypoint: /cron.sh
@@ -393,6 +462,45 @@ services:
       redis:
         condition: service_healthy
     networks: [proxy-net]
+
+  # ── Whiteboard real-time collaboration backend ──────────────────────
+  # The Whiteboard app renders locally without this, but real-time
+  # multi-user editing needs a separate WebSocket server — which is why
+  # Nextcloud's setup checks flag "WebSocket server URL is not
+  # configured" the moment the app is enabled.
+  #
+  # It authenticates to Nextcloud with a shared JWT secret, so
+  # WHITEBOARD_SECRET here must match the whiteboard app's jwt_secret
+  # (set via occ below). NEXTCLOUD_URL uses the internal container name:
+  # the backend talks to Nextcloud over proxy-net, so routing it out
+  # through Traefik or the tunnel would be a pointless round trip.
+  whiteboard:
+    image: ghcr.io/nextcloud-releases/whiteboard:release
+    container_name: nextcloud-whiteboard
+    restart: unless-stopped
+    environment:
+      NEXTCLOUD_URL: "http://nextcloud"
+      JWT_SECRET_KEY: "${WHITEBOARD_SECRET}"
+      STORAGE_STRATEGY: "redis"
+      REDIS_URL: "redis://nextcloud-redis:6379"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks: [proxy-net]
+    security_opt: ["no-new-privileges:true"]
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "0.5"
+        reservations:
+          memory: 64m
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.ncwb.rule=Host(\`whiteboard.${DOMAIN}\`)"
+      - "traefik.http.routers.ncwb.entrypoints=websecure"
+      - "traefik.http.routers.ncwb.tls.certresolver=myresolver"
+      - "traefik.http.services.ncwb.loadbalancer.server.port=3002"
 
 networks:
   proxy-net: { external: true }
@@ -435,6 +543,10 @@ nextcloud_repair() {
 
 nextcloud_credentials() {
     echo "Nextcloud: https://nextcloud.${DOMAIN} (create admin on first visit)"
+    echo "  Whiteboard backend: https://whiteboard.${DOMAIN} (real-time collaboration)"
+    echo "    For external access, add a Cloudflare Tunnel public hostname:"
+    echo "      whiteboard.${DOMAIN} -> http://nextcloud-whiteboard:3002"
+    echo "    LAN access works via the AdGuard wildcard + Traefik already."
     echo "  DB user: nextcloud / pass: ${NEXTCLOUD_DB_PASS}"
     echo "  MySQL root: ${MYSQL_ROOT_PASS}"
     echo "  Video streaming: Memories app (internal go-vod + ffmpeg transcoding)"
