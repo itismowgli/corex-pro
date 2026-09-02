@@ -139,6 +139,31 @@ traefik_firewall() {
 _traefik_write_configs() {
     local dir="${DOCKER_ROOT}/traefik"
 
+    # ── ACME requires an account email ───────────────────────────────────
+    # Let's Encrypt will not register an account without one, so an empty
+    # value produces `email: ""` and Traefik then never requests a single
+    # certificate — silently. No error, no ACME attempt, just the fallback
+    # cert and a browser warning, which is very hard to trace back here.
+    #
+    # This bit in practice: state.json had an empty email, so regenerating
+    # traefik.yml replaced a previously working address with "". Preserve
+    # whatever is already in the file rather than overwrite it with nothing.
+    local acme_email="${EMAIL:-}"
+    if [[ -z "$acme_email" && -f "${dir}/traefik.yml" ]]; then
+        acme_email=$(grep -m1 -E '^\s+email:' "${dir}/traefik.yml" 2>/dev/null \
+            | sed 's/.*email:[[:space:]]*"\?\([^"]*\)"\?.*/\1/')
+        [[ -n "$acme_email" ]] && \
+            log_warning "EMAIL not set — keeping existing ACME email: ${acme_email}"
+    fi
+    if [[ -z "$acme_email" ]]; then
+        log_warning "No ACME email available. Let's Encrypt cannot issue certificates"
+        echo "    without one, and Traefik will fail silently — it simply never"
+        echo "    requests a certificate. Set it and repair:"
+        echo "      sudo EMAIL=you@example.com bash corex-manage.sh repair traefik"
+        echo "    Persist it so future repairs keep it:"
+        echo "      corex manage status   # check state.json has an email"
+    fi
+
     # ── ACME challenge selection ─────────────────────────────────────────
     # TLS-ALPN-01 (tlsChallenge) requires Let's Encrypt to reach port 443
     # from the internet. Most residential ISPs block 80/443 inbound, and
@@ -207,7 +232,7 @@ certificatesResolvers:
   myresolver:
     acme:
 ${acme_challenge}
-      email: "${EMAIL}"
+      email: "${acme_email}"
       storage: /acme.json
 TEOF
 
