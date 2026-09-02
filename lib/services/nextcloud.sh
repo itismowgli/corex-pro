@@ -176,8 +176,13 @@ CONFIG="/var/www/html/config/config.php"
 
 # Fail fast if privilege-dropping is broken, rather than burning 30s per call
 # retrying something that cannot succeed.
-if ! _as_www php /var/www/html/occ status >/dev/null 2>&1; then
-    echo "[corex] WARNING: cannot run occ as www-data — skipping config hook." >&2
+#
+# Probe the MECHANISM, not the application: `occ status` also depends on
+# Nextcloud and the database being ready, and at before-starting time they are
+# still initialising. Using it here turned a transient startup failure into
+# skipping the entire hook. `id -u` tests only what this check is about.
+if [ "$(_as_www id -u 2>/dev/null)" != "33" ]; then
+    echo "[corex] WARNING: cannot drop privileges to www-data — skipping config hook." >&2
     echo "[corex] Apply settings manually: docker exec -u www-data nextcloud php occ ..." >&2
     exit 0
 fi
@@ -481,11 +486,14 @@ services:
     environment:
       NEXTCLOUD_URL: "http://nextcloud"
       JWT_SECRET_KEY: "${WHITEBOARD_SECRET}"
-      STORAGE_STRATEGY: "redis"
-      REDIS_URL: "redis://nextcloud-redis:6379"
+      # Storage strategy is left at the image default (in-memory).
+      # STORAGE_STRATEGY=redis fails on this release with
+      # "RedisStrategy.createRedisClient is not a function", and Redis there
+      # exists to share state across MULTIPLE whiteboard backend instances —
+      # which a single-server homelab does not run. In-memory is correct here.
     depends_on:
-      redis:
-        condition: service_healthy
+      app:
+        condition: service_started
     networks: [proxy-net]
     security_opt: ["no-new-privileges:true"]
     deploy:
