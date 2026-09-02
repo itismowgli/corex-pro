@@ -6,6 +6,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- **A successful `corex update` dropped the user on the interactive-setup
+  screen.** `do_update` ended with `exec bash corex.sh "$@"`, but inside that
+  function `"$@"` is the function's own arguments and all three call sites
+  invoke `do_update` with none. The re-exec therefore ran `corex.sh` with an
+  empty argument list and fell through to the no-args path, printing
+  "CoreX Pro v2 — Interactive Setup" — which reads as though updating had
+  launched the installer. Nothing runs after an update, so the re-exec served
+  no purpose; it now reports success and returns.
+
 ## [v3.1.1] - 2026-09-02
 
 ### Fixed

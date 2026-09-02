@@ -312,8 +312,16 @@ do_update() {
             && bash -n "${REPO_DIR}/corex.sh" 2>/dev/null; then
             echo -e "${GREEN}Updated to v${REMOTE_VERSION} ($(git rev-parse --short HEAD)). Scripts validated OK.${NC}"
             echo ""
-            # Re-exec with the freshly downloaded script so the new version loads
-            exec bash "${REPO_DIR}/corex.sh" "$@"
+            # Deliberately do NOT re-exec here. "$@" inside this function is the
+            # function's own arguments, and every call site invokes do_update
+            # with none, so re-execing ran corex.sh with an empty argument list
+            # and dropped the user on the interactive-setup screen — which reads
+            # as though the update had launched the installer. Nothing follows an
+            # update anyway, so there is nothing to re-exec for: the new code is
+            # already on disk and the next invocation picks it up.
+            echo -e "  Run ${BOLD}sudo bash ${REPO_DIR}/corex.sh${NC} to use the new version."
+            echo ""
+            return 0
         else
             log_warning "Script syntax validation failed after update. Check manually."
         fi
