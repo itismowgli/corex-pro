@@ -413,8 +413,24 @@ _service_containers() {
 }
 
 cmd_enable() {
-    local svc="${1:-}"
-    [[ -z "$svc" ]] && { echo "Usage: corex-manage enable <service>"; exit 1; }
+    local arg="${1:-}"
+    [[ -z "$arg" ]] && { echo "Usage: corex-manage enable <service>[:<component>]"; exit 1; }
+
+    if [[ "$arg" == *:* ]]; then
+        local m_svc="${arg%%:*}" m_comp="${arg#*:}"
+        local m_dir="${DOCKER_ROOT}/${m_svc}"
+        [[ -f "${m_dir}/docker-compose.yml" ]] \
+            || log_error "No compose file for ${m_svc}"
+        state_component_enable "$m_svc" "$m_comp"
+        docker compose -f "${m_dir}/docker-compose.yml" up -d "$m_comp"
+        local ids
+        ids=$(docker compose -f "${m_dir}/docker-compose.yml" ps -aq "$m_comp" 2>/dev/null)
+        [[ -n "$ids" ]] && { echo "$ids" | xargs -r docker update --restart=unless-stopped >/dev/null 2>&1 || true; }
+        log_success "${m_svc}:${m_comp} started."
+        return 0
+    fi
+
+    local svc="$arg"
     local dir="${DOCKER_ROOT}/${svc}"
 
     if [[ -f "${dir}/docker-compose.yml" ]]; then
@@ -434,8 +450,35 @@ cmd_enable() {
 }
 
 cmd_disable() {
-    local svc="${1:-}"
-    [[ -z "$svc" ]] && { echo "Usage: corex-manage disable <service>"; exit 1; }
+    local arg="${1:-}"
+    [[ -z "$arg" ]] && { echo "Usage: corex-manage disable <service>[:<component>]"; exit 1; }
+
+    # svc:component turns off one container inside a module and leaves the
+    # rest supervised. Disabling the whole of monitoring to stop Grafana also
+    # made repair skip Uptime Kuma, so a working service lost its supervision
+    # to turn off two it sat next to.
+    if [[ "$arg" == *:* ]]; then
+        local m_svc="${arg%%:*}" m_comp="${arg#*:}"
+        local m_dir="${DOCKER_ROOT}/${m_svc}"
+        [[ -f "${m_dir}/docker-compose.yml" ]] \
+            || log_error "No compose file for ${m_svc}"
+        docker compose -f "${m_dir}/docker-compose.yml" config --services 2>/dev/null \
+            | grep -qx "$m_comp" \
+            || log_error "${m_svc} has no component '${m_comp}'. Components: $(docker compose -f "${m_dir}/docker-compose.yml" config --services 2>/dev/null | tr '\n' ' ')"
+
+        local ids
+        ids=$(docker compose -f "${m_dir}/docker-compose.yml" ps -aq "$m_comp" 2>/dev/null)
+        if [[ -n "$ids" ]]; then
+            echo "$ids" | xargs -r docker update --restart=no >/dev/null 2>&1 || true
+            echo "$ids" | xargs -r docker stop >/dev/null 2>&1 || true
+        fi
+        state_component_disable "$m_svc" "$m_comp"
+        log_success "${m_svc}:${m_comp} stopped and set not to restart."
+        log_info "The rest of ${m_svc} stays supervised. Repair and update skip this component."
+        return 0
+    fi
+
+    local svc="$arg"
     local dir="${DOCKER_ROOT}/${svc}"
 
     local ids
@@ -1934,6 +1977,8 @@ Commands:
   lan-setup           Configure LAN fast-path for direct local network access
   network-tune        Diagnose and optimize network for high-speed file transfers
   network-check       Test HTTPS reachability, SSL expiry, and DNS for all services
+  disable <svc>[:<component>]  Stop a service, or one container inside it
+  enable  <svc>[:<component>]  Start it again, restoring its restart policy
   route               Traefik routes for containers CoreX did not deploy:
                         route list
                         route add <hostname> <backend-url>

@@ -88,6 +88,55 @@ ufw_revoke() {
     done
 }
 
+# ── compose_up_enabled ────────────────────────────────────────────────────────
+# `docker compose up -d` for a service, minus any component the operator turned
+# off, and with those components stopped and set not to restart.
+#
+# Usage: compose_up_enabled monitoring /path/to/docker-compose.yml [extra args]
+#
+# A plain `up -d` starts every service in the file, so a repair silently
+# restarted a component that had been deliberately stopped. Naming only the
+# enabled ones is what makes a per-component choice survive a repair, an
+# update and a reboot.
+#
+# With nothing disabled this behaves exactly like `up -d`.
+compose_up_enabled() {
+    local svc="$1" compose="$2"; shift 2
+    local disabled=() enabled=() comp
+
+    if declare -f state_component_list_disabled >/dev/null 2>&1; then
+        mapfile -t disabled < <(state_component_list_disabled "$svc")
+    fi
+
+    if [[ ${#disabled[@]} -eq 0 ]]; then
+        docker compose -f "$compose" up -d "$@"
+        return $?
+    fi
+
+    while IFS= read -r comp; do
+        [[ -n "$comp" ]] || continue
+        local skip=0 d
+        for d in "${disabled[@]}"; do [[ "$comp" == "$d" ]] && skip=1; done
+        (( skip == 0 )) && enabled+=("$comp")
+    done < <(docker compose -f "$compose" config --services 2>/dev/null)
+
+    log_info "${svc}: skipping disabled component(s): ${disabled[*]}"
+    local rc=0
+    if [[ ${#enabled[@]} -gt 0 ]]; then
+        docker compose -f "$compose" up -d "$@" "${enabled[@]}" || rc=$?
+    fi
+
+    # Stop anything disabled that is running, and clear restart=always so a
+    # daemon restart does not bring it back.
+    local ids
+    ids=$(docker compose -f "$compose" ps -aq "${disabled[@]}" 2>/dev/null)
+    if [[ -n "$ids" ]]; then
+        echo "$ids" | xargs -r docker update --restart=no >/dev/null 2>&1 || true
+        echo "$ids" | xargs -r docker stop >/dev/null 2>&1 || true
+    fi
+    return $rc
+}
+
 # Verify the script is running as root; exit with error if not.
 check_root() {
     if [[ $EUID -ne 0 ]]; then

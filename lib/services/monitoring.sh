@@ -203,7 +203,7 @@ networks:
   monitoring-net: { external: true }
 DCEOF
 
-    docker compose -f "${dir}/docker-compose.yml" up -d \
+    compose_up_enabled monitoring "${dir}/docker-compose.yml" \
         || log_warning "Monitoring stack may not have fully started — check: docker ps"
     state_service_installed "monitoring"
     log_success "Monitoring deployed (Kuma:3001, Grafana:3002, Prometheus:9090)"
@@ -232,7 +232,7 @@ monitoring_repair() {
     monitoring_deploy
     local dir="${DOCKER_ROOT}/monitoring"
     [[ -f "${dir}/docker-compose.yml" ]] && \
-        docker compose -f "${dir}/docker-compose.yml" up -d --force-recreate
+        compose_up_enabled monitoring "${dir}/docker-compose.yml" --force-recreate
 }
 
 monitoring_credentials() {

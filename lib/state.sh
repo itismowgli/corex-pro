@@ -190,6 +190,57 @@ state_service_is_enabled() {
     [[ "$val" != "false" ]]
 }
 
+# ── Component-level enable and disable ────────────────────────────────────────
+# A service module can deploy several containers, and sometimes only some of
+# them are wanted. monitoring is the case in point: Grafana and Prometheus are
+# expensive and rarely looked at, while Uptime Kuma is the thing that says when
+# something broke.
+#
+# Disabling the whole module was the only option, which meant `repair` skipped
+# it entirely and Uptime Kuma stopped being auto-healed: a working service lost
+# its supervision to turn off two it sat next to.
+#
+# Components are named after their compose service, so "grafana" and
+# "prometheus" inside the monitoring module.
+#
+# Usage: state_component_disable monitoring grafana
+#        state_component_is_enabled monitoring grafana
+#        state_component_list_disabled monitoring
+state_component_disable() {
+    local svc="$1" comp="$2" tmp
+    tmp="$(mktemp)"
+    trap 'rm -f "${tmp:-}"' RETURN
+    jq --arg s "$svc" --arg c "$comp" \
+        '.services[$s].disabled_components = (((.services[$s].disabled_components // []) + [$c]) | unique)' \
+        "$COREX_STATE_FILE" > "$tmp" \
+        && mv "$tmp" "$COREX_STATE_FILE" \
+        && chmod 644 "$COREX_STATE_FILE"
+}
+
+state_component_enable() {
+    local svc="$1" comp="$2" tmp
+    tmp="$(mktemp)"
+    trap 'rm -f "${tmp:-}"' RETURN
+    jq --arg s "$svc" --arg c "$comp" \
+        '.services[$s].disabled_components = ((.services[$s].disabled_components // []) - [$c])' \
+        "$COREX_STATE_FILE" > "$tmp" \
+        && mv "$tmp" "$COREX_STATE_FILE" \
+        && chmod 644 "$COREX_STATE_FILE"
+}
+
+state_component_is_enabled() {
+    local svc="$1" comp="$2" hit
+    hit=$(jq -r --arg s "$svc" --arg c "$comp" \
+        '((.services[$s].disabled_components // []) | index($c)) != null' \
+        "$COREX_STATE_FILE" 2>/dev/null)
+    [[ "$hit" != "true" ]]
+}
+
+state_component_list_disabled() {
+    jq -r --arg s "$1" '(.services[$s].disabled_components // [])[]' \
+        "$COREX_STATE_FILE" 2>/dev/null || true
+}
+
 # ── state_list_installed ──────────────────────────────────────────────────────
 # Print a newline-separated list of all installed service names.
 # Prints nothing if nothing is installed.
