@@ -235,6 +235,20 @@ do_update() {
     # on the filesystem but the repo tracks them as 644 — not a real diff)
     git config core.fileMode false 2>/dev/null || true
 
+    # This command is normally run with sudo, so git writes new objects, refs
+    # and .git/config as root. The repo owner can then never fetch again:
+    #   error: insufficient permission for adding an object to repository
+    #          database .git/objects
+    # and because `git pull` failure is easy to miss in a longer script, the
+    # repo silently stops updating while appearing to succeed. Record the
+    # owner now and restore it before returning.
+    local repo_owner=""
+    repo_owner=$(stat -c '%U:%G' "$REPO_DIR" 2>/dev/null || true)
+    _restore_repo_owner() {
+        [[ -n "$repo_owner" && "$repo_owner" != "root:root" ]] || return 0
+        chown -R "$repo_owner" "$REPO_DIR" 2>/dev/null || true
+    }
+
     LOCAL_VERSION="$COREX_VERSION"
 
     # Check for uncommitted local changes before touching anything
@@ -266,6 +280,7 @@ do_update() {
 
     if [[ "$behind" == "0" ]]; then
         echo -e "${GREEN}Already up to date (v${COREX_VERSION}, $(git rev-parse --short HEAD)).${NC}"
+        _restore_repo_owner
         return 0
     fi
 
@@ -303,7 +318,7 @@ do_update() {
 
     local confirm
     read -r -p "Update CoreX Pro (${update_desc})? [y/N]: " confirm
-    [[ "$confirm" != "y" && "$confirm" != "Y" ]] && { echo "Aborted."; return 0; }
+    [[ "$confirm" != "y" && "$confirm" != "Y" ]] && { echo "Aborted."; _restore_repo_owner; return 0; }
 
     # Apply update (fast-forward only — won't destroy diverged history)
     if git pull --ff-only origin main 2>/dev/null; then
@@ -321,6 +336,7 @@ do_update() {
             # already on disk and the next invocation picks it up.
             echo -e "  Run ${BOLD}sudo bash ${REPO_DIR}/corex.sh${NC} to use the new version."
             echo ""
+            _restore_repo_owner
             return 0
         else
             log_warning "Script syntax validation failed after update. Check manually."
@@ -329,6 +345,7 @@ do_update() {
         log_warning "git pull --ff-only failed. Your branch may have diverged."
         log_warning "To force update: cd ${REPO_DIR} && git reset --hard origin/main"
     fi
+    _restore_repo_owner
 }
 
 # ── Interactive menu ──
