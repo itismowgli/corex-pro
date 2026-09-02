@@ -154,48 +154,61 @@ APEOF
 # Nextcloud 34 REMOVED gosu from the image. Hardcoding it meant every occ call
 # failed with "gosu: command not found", which combined with the retry loop
 # blocked container startup for minutes and applied no configuration at all
-# (Traefik served 502 throughout). Probe for what the image actually ships
-# instead of assuming: setpriv, runuser and su are all present on 34.
-if command -v gosu >/dev/null 2>&1; then
-    _as_www() { gosu www-data "$@"; }
-elif command -v setpriv >/dev/null 2>&1; then
-    _as_www() { setpriv --reuid=33 --regid=33 --clear-groups "$@"; }
-elif command -v runuser >/dev/null 2>&1; then
-    _as_www() { runuser -u www-data -- "$@"; }
-else
-    # su takes a single command string rather than argv, so quote each word.
-    _as_www() {
-        local _q="" _a
-        for _a in "$@"; do _q="${_q} '${_a//\'/\'\\\'\'}'"; done
-        su -s /bin/sh -p www-data -c "${_q}"
-    }
-fi
-
+# (Traefik served 502 throughout).
+#
+# Each candidate is TESTED rather than assumed: a binary can be present yet
+# still fail to yield uid 33 under the container's security policy, and
+# probing with `command -v` alone was not sufficient in practice. The chosen
+# mechanism is logged so a future failure is diagnosable from the container
+# logs alone.
 CONFIG="/var/www/html/config/config.php"
 [ -f "$CONFIG" ] || exit 0
 
-# Fail fast if privilege-dropping is broken, rather than burning 30s per call
-# retrying something that cannot succeed.
-#
-# Probe the MECHANISM, not the application: `occ status` also depends on
-# Nextcloud and the database being ready, and at before-starting time they are
-# still initialising. Using it here turned a transient startup failure into
-# skipping the entire hook. `id -u` tests only what this check is about.
-if [ "$(_as_www id -u 2>/dev/null)" != "33" ]; then
-    echo "[corex] WARNING: cannot drop privileges to www-data — skipping config hook." >&2
-    echo "[corex] Apply settings manually: docker exec -u www-data nextcloud php occ ..." >&2
+_RUNAS=""
+for _cand in "gosu www-data" \
+             "setpriv --reuid=33 --regid=33 --clear-groups" \
+             "runuser -u www-data --"; do
+    # shellcheck disable=SC2086
+    set -- $_cand
+    command -v "$1" >/dev/null 2>&1 || continue
+    if [ "$($_cand id -u 2>/dev/null)" = "33" ]; then
+        _RUNAS="$_cand"
+        break
+    fi
+done
+
+# su takes a single command string rather than argv, so it needs a separate
+# code path and is kept as the last resort.
+if [ -z "$_RUNAS" ] && command -v su >/dev/null 2>&1; then
+    if [ "$(su -s /bin/sh -p www-data -c 'id -u' 2>/dev/null)" = "33" ]; then
+        _RUNAS="SU"
+    fi
+fi
+
+if [ -z "$_RUNAS" ]; then
+    echo "[corex] WARNING: no working way to drop privileges to www-data (uid 33)." >&2
+    echo "[corex] Tried gosu, setpriv, runuser, su. Skipping config hook." >&2
+    echo "[corex] Apply settings manually:" >&2
+    echo "[corex]   docker exec -u www-data nextcloud php occ <command>" >&2
     exit 0
 fi
+echo "[corex] dropping privileges via: ${_RUNAS}"
 
 # _occ: run an occ command as www-data with up to 6 retries (30s total).
 # config:system:set calls usually succeed on the first attempt.
 # config:app:set calls may need retries while the database is initialising.
 _occ() {
-    local _i
-    for _i in $(seq 1 6); do
-        if _as_www php /var/www/html/occ "$@" 2>&1; then
+    _i=1
+    while [ "$_i" -le 6 ]; do
+        if [ "$_RUNAS" = "SU" ]; then
+            if su -s /bin/sh -p www-data -c "php /var/www/html/occ $*" 2>&1; then
+                return 0
+            fi
+        # shellcheck disable=SC2086
+        elif $_RUNAS php /var/www/html/occ "$@" 2>&1; then
             return 0
         fi
+        _i=$((_i + 1))
         sleep 5
     done
     echo "[corex] WARNING: occ $* failed after retries" >&2
