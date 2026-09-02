@@ -6,6 +6,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.12.1] - 2026-09-03
+
+### Changed
+- **One release convention, and a tool that enforces it.** Release titles had
+  drifted through three styles at once, so fourteen of the thirty-six were
+  renamed and the title is now exactly the tag. Four versions documented here
+  had no GitHub release and three had no tag; v2.1.0, v2.2.0, v2.4.1 and
+  v2.5.0 are now tagged at the commits whose subjects match their entries, and
+  released.
+
+  `tools/release-notes.py` takes a release body from this file, so the
+  changelog stays the single source of truth, and refuses to print notes
+  containing em dashes, an IP address, an email address, a bot token or a
+  credential. It refuses rather than warns because a release body cannot be
+  quietly fixed later: it is what people receive in notifications.
+
+  Prose em dashes in the v2.1.0 to v2.5.0 sections are rewritten, since those
+  sections became release bodies for the first time.
+
 ## [v3.12.0] - 2026-09-03
 
 ### Added
