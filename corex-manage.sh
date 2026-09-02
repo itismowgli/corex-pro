@@ -393,12 +393,42 @@ cmd_remove() {
 
 # ── enable / disable ──────────────────────────────────────────────────────────
 
+# Enable and disable both used to hard-fail without a compose file, so neither
+# worked for a service that installs its own stack. Coolify is the case in
+# point: it has no CoreX compose file, so it could not be switched off through
+# CoreX at all, and its containers use restart=always, which brings a manually
+# stopped container back when the daemon restarts.
+#
+# _service_containers finds a service's containers from the module's own status
+# function where possible, and falls back to a name prefix.
+_service_containers() {
+    local svc="$1"
+    local dir="${DOCKER_ROOT}/${svc}"
+    if [[ -f "${dir}/docker-compose.yml" ]]; then
+        docker compose -f "${dir}/docker-compose.yml" ps -aq 2>/dev/null
+        return 0
+    fi
+    # No compose file: match on the container name prefix.
+    docker ps -aq --filter "name=^${svc}" 2>/dev/null
+}
+
 cmd_enable() {
     local svc="${1:-}"
     [[ -z "$svc" ]] && { echo "Usage: corex-manage enable <service>"; exit 1; }
     local dir="${DOCKER_ROOT}/${svc}"
-    [[ -f "${dir}/docker-compose.yml" ]] || { log_error "No compose file for ${svc}"; }
-    docker compose -f "${dir}/docker-compose.yml" up -d
+
+    if [[ -f "${dir}/docker-compose.yml" ]]; then
+        docker compose -f "${dir}/docker-compose.yml" up -d
+    else
+        local ids
+        ids=$(_service_containers "$svc")
+        [[ -n "$ids" ]] || log_error "No compose file and no containers found for ${svc}"
+        # restart=no is what disable set, so put the policy back before
+        # starting, or the service will not survive the next reboot.
+        echo "$ids" | xargs -r docker update --restart=unless-stopped >/dev/null 2>&1 || true
+        echo "$ids" | xargs -r docker start >/dev/null 2>&1 || true
+        log_info "${svc} has no CoreX compose file; started its containers directly."
+    fi
     state_service_enable "$svc"
     log_success "${svc} started."
 }
@@ -407,10 +437,20 @@ cmd_disable() {
     local svc="${1:-}"
     [[ -z "$svc" ]] && { echo "Usage: corex-manage disable <service>"; exit 1; }
     local dir="${DOCKER_ROOT}/${svc}"
-    [[ -f "${dir}/docker-compose.yml" ]] || { log_error "No compose file for ${svc}"; }
-    docker compose -f "${dir}/docker-compose.yml" stop
+
+    local ids
+    ids=$(_service_containers "$svc")
+    [[ -n "$ids" ]] || log_error "No compose file and no containers found for ${svc}"
+
+    # Set restart=no before stopping. A container on restart=always comes back
+    # when the daemon restarts even though it was stopped deliberately, which
+    # is how Coolify would have restarted itself on the next reboot.
+    echo "$ids" | xargs -r docker update --restart=no >/dev/null 2>&1 || true
+    echo "$ids" | xargs -r docker stop >/dev/null 2>&1 || true
+
     state_service_disable "$svc"
-    log_success "${svc} stopped (data preserved)."
+    log_success "${svc} stopped and set not to restart (data preserved)."
+    log_info "Bring it back with: corex manage enable ${svc}"
 }
 
 # ── update ────────────────────────────────────────────────────────────────────

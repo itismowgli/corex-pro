@@ -788,3 +788,41 @@ _repair_body() {
     r=$(echo "$body" | grep -n 'ufw_revoke' | head -1 | cut -d: -f1)
     [ "$d" -lt "$r" ]
 }
+
+# ─── Disable must work for a service that installs its own stack ─────────────
+
+@test "enable and disable do not require a CoreX compose file" {
+    # Both hard-failed with "No compose file", so neither worked for Coolify,
+    # which installs its own stack. It could not be switched off through CoreX
+    # at all.
+    local m="${REPO_ROOT}/corex-manage.sh"
+    grep -q '_service_containers' "$m"
+    for fn in cmd_enable cmd_disable; do
+        awk "/^${fn}\(\)/,/^}/" "$m" | grep -q '_service_containers' || {
+            echo "$fn still depends on a compose file"
+            false
+        }
+    done
+}
+
+@test "disable clears restart=always so a reboot does not undo it" {
+    # A container on restart=always comes back when the daemon restarts even
+    # though it was stopped deliberately. Coolify's five containers were all
+    # on always, so stopping them would not have survived a reboot.
+    local body
+    body=$(awk '/^cmd_disable\(\)/,/^}/' "${REPO_ROOT}/corex-manage.sh")
+    echo "$body" | grep -q 'docker update --restart=no'
+    # And the policy change must come before the stop, not after.
+    local u s
+    u=$(echo "$body" | grep -n 'restart=no' | head -1 | cut -d: -f1)
+    s=$(echo "$body" | grep -n 'docker stop' | head -1 | cut -d: -f1)
+    [ "$u" -lt "$s" ]
+}
+
+@test "enable restores a restart policy that disable removed" {
+    # Otherwise a re-enabled service runs until the next reboot and then stays
+    # down, which is worse than either state.
+    local body
+    body=$(awk '/^cmd_enable\(\)/,/^}/' "${REPO_ROOT}/corex-manage.sh")
+    echo "$body" | grep -q 'restart=unless-stopped'
+}
