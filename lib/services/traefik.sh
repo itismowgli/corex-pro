@@ -250,17 +250,43 @@ ${acme_challenge}
       storage: /acme.json
 TEOF
 
-    # ── Dynamic config: default wildcard cert for LAN HTTPS ────────────
-    # Traefik uses this as the fallback cert when no ACME cert matches.
-    # LAN clients hitting *.DOMAIN via AdGuard DNS rewrite get a valid
-    # cert (once the CA is trusted on the client device).
-    cat > "${dir}/dynamic.yml" << DYEOF
-tls:
+    # ── Default certificate: ONLY when ACME cannot work ────────────────
+    # A defaultCertificate for *.DOMAIN matches every route, so Traefik TLS
+    # resolution always succeeds and the certResolver is NEVER invoked: no
+    # ACME request, no error, nothing in the log. Measured on a live server,
+    # removing this block caused DNS-01 to issue 10 certificates within
+    # seconds after months of issuing none.
+    #
+    # The self-signed wildcard is therefore a FALLBACK, for installs where
+    # ACME is impossible (no DNS token and inbound 443 blocked). Where ACME
+    # can work, publicly-valid certificates are strictly better: no per-device
+    # CA trust, and they work on phones and for shared links.
+    local tls_default_block
+    if [[ -n "${CLOUDFLARE_DNS_API_TOKEN:-}" ]]; then
+        tls_default_block="tls:
+  options:
+    default:
+      minVersion: VersionTLS12"
+        log_info "TLS: no self-signed default; ACME certificates cover all routes"
+    else
+        tls_default_block="tls:
+  options:
+    default:
+      minVersion: VersionTLS12
   stores:
     default:
       defaultCertificate:
         certFile: /certs/wildcard.crt
-        keyFile: /certs/wildcard.key
+        keyFile: /certs/wildcard.key"
+        log_info "TLS: self-signed wildcard default; trust the CA on LAN clients"
+    fi
+
+    # ── Dynamic config ─────────────────────────────────────────────────
+    # Traefik uses this as the fallback cert when no ACME cert matches.
+    # LAN clients hitting *.DOMAIN via AdGuard DNS rewrite get a valid
+    # cert (once the CA is trusted on the client device).
+    cat > "${dir}/dynamic.yml" << DYEOF
+${tls_default_block}
 DYEOF
 }
 
