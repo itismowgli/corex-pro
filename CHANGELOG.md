@@ -6,6 +6,44 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.4.1] - 2026-09-02
+
+Follow-on fixes to v3.4.0, all found by making failures visible rather than
+by reading code.
+
+### Fixed
+- **`pipefail` inverted Stalwart's bootstrap-mode check.** It used
+  `docker logs stalwart | grep -q ...`; grep exits on the first match, docker
+  logs takes SIGPIPE, and under `set -o pipefail` the pipeline reports 141. So
+  the check returned false exactly when it matched, and a bootstrap-mode
+  server reported HEALTHY through `corex-manage.sh`, which sets pipefail.
+  Called directly it worked, which is what made it confusing. Both checks now
+  capture the output and pattern-match instead. A test blocks
+  `docker logs | grep -q` from coming back.
+- **`jq` was missing from the dashboard image**, so every `state_get` inside
+  the container returned empty.
+- **The dashboard's Storage tab had never worked.** `corex-manage.sh` required
+  root, the container runs as `nobody`, and `main.go` called it as
+  `out, _ :=` so the "Run as root" message went nowhere. `storage` and
+  `status --plain` are read-only and now run without root; the error is
+  logged.
+- **The dashboard Go build broke on a redeclared `err`.** docker compose kept
+  serving the previous image and `repair dashboard` still reported success.
+
+### Added
+- `corex-manage.sh status --plain`, a machine-readable
+  `<service><TAB><STATUS>` listing that asks each service module for its
+  status. The dashboard now uses it instead of deriving health from
+  `docker ps`, which is why it disagreed with `corex doctor`.
+
+### Known limitation
+- Service actions from the dashboard (start, stop, update, cleanup) still
+  require root and fail from the unprivileged container. Those handlers show
+  the error rather than hiding it. How an unprivileged container should
+  perform privileged work is a design question, not a patch.
+
+---
+
 ## [v3.4.0] - 2026-09-02
 
 ### Fixed
