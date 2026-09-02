@@ -211,6 +211,13 @@ monitoring_status() {
 }
 
 monitoring_repair() {
+    # Regenerate the compose file first. Without this, repair recreated the
+    # container from a compose file that could be months old, so CoreX fixes
+    # to env vars, resource limits, security_opt, published ports or Traefik
+    # labels never reached an existing install. monitoring_deploy is idempotent
+    # by design (see CLAUDE.md "Idempotency pattern"), so calling it here is
+    # safe and is what makes `corex doctor` able to deliver fixes at all.
+    monitoring_deploy
     local dir="${DOCKER_ROOT}/monitoring"
     [[ -f "${dir}/docker-compose.yml" ]] && \
         docker compose -f "${dir}/docker-compose.yml" up -d --force-recreate

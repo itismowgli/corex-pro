@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/CoreX_Pro-v3.1.1-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
+  <img src="https://img.shields.io/badge/CoreX_Pro-v3.2.0-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
   <img src="https://img.shields.io/badge/Ubuntu-24.04_LTS-E95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Ubuntu">
   <img src="https://img.shields.io/badge/Docker-Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker">
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
@@ -197,7 +197,18 @@ The wizard, `corex doctor`, and `corex manage` automatically discover and suppor
 
 **How it works:** Watches Docker socket for containers with `traefik.enable=true` labels, automatically creates routes, gets Let's Encrypt certificates via TLS-ALPN-01 challenge.
 
-**Access:** `http://YOUR_IP:8080` (dashboard)
+**Access:** The Traefik dashboard is published on **loopback only**
+(`127.0.0.1:8080`) — it exposes your full routing table, and Docker's published
+ports bypass UFW, so it must not be bound to `0.0.0.0`. Reach it through an SSH
+tunnel:
+
+```bash
+ssh -L 8080:127.0.0.1:8080 youruser@YOUR_IP
+# then open http://localhost:8080 on your own machine
+```
+
+Do not confuse this with the **CoreX Dashboard** (`https://dashboard.yourdomain.com`),
+which is the service management GUI — see [CoreX Dashboard](#-corex-dashboard--web-gui) below.
 
 ---
 
@@ -334,11 +345,108 @@ docker exec crowdsec cscli metrics           # View detection stats
 
 ---
 
-### 🔒 Cloudflare Tunnel - Secure External Access
+### 🔒 Cloudflare Tunnel — Step-by-Step Setup
 
-**What:** Encrypted tunnel from Cloudflare's edge to your server. Zero port forwarding required. DDoS protection and WAF included.
+**What:** An encrypted tunnel from Cloudflare's edge to your server. No port
+forwarding, no static IP, no router configuration. Works behind CGNAT, in a
+rented flat, or on a hotel connection. DDoS protection and WAF included on the
+free tier.
 
-**Critical:** In CF Dashboard → Tunnels → Public Hostnames, use **container names** (e.g., `n8n:5678`), not `localhost`.
+**How it works:** the `cloudflared` container makes an *outbound* connection to
+Cloudflare and holds it open. Inbound requests arrive over that existing
+connection, so nothing needs to be reachable from the internet.
+
+#### 1. Point your domain at Cloudflare
+
+Add your domain to Cloudflare (free plan is fine) and switch your registrar's
+nameservers to the two Cloudflare gives you. Wait until the dashboard shows the
+domain as **Active** — nothing below works until it does.
+
+#### 2. Create the tunnel
+
+1. Go to **[one.dash.cloudflare.com](https://one.dash.cloudflare.com)** →
+   **Networks** → **Tunnels** → **Create a tunnel**
+2. Choose **Cloudflared** as the connector type
+3. Name it (e.g. `corex`) and click **Save tunnel**
+4. On the install screen, **ignore the install commands** — CoreX runs
+   `cloudflared` for you. You only need the **token**: the long string in the
+   displayed command after `--token`
+
+#### 3. Give CoreX the token
+
+Either paste it during the interactive installer when prompted, or set it
+before running:
+
+```bash
+sudo CLOUDFLARE_TUNNEL_TOKEN='eyJhIjoi...' bash corex.sh install
+```
+
+On an existing install:
+
+```bash
+sudo CLOUDFLARE_TUNNEL_TOKEN='eyJhIjoi...' bash corex-manage.sh repair cloudflared
+```
+
+Verify the connector came up — the Cloudflare dashboard should show the tunnel
+as **Healthy**:
+
+```bash
+sudo docker logs cloudflared --tail 20    # expect "Registered tunnel connection"
+```
+
+#### 4. Add public hostnames — use container names, not localhost
+
+For each service you want reachable from outside, add a **Public Hostname**
+under your tunnel (**Tunnels** → your tunnel → **Public Hostname** → **Add**):
+
+| Subdomain | Domain | Type | URL |
+|---|---|---|---|
+| `nextcloud` | yourdomain.com | HTTP | `http://nextcloud:80` |
+| `immich` | yourdomain.com | HTTP | `http://immich-server:2283` |
+| `vault` | yourdomain.com | HTTP | `http://vaultwarden:80` |
+| `n8n` | yourdomain.com | HTTP | `http://n8n:5678` |
+| `mail` | yourdomain.com | HTTP | `http://stalwart:8080` |
+| `dashboard` | yourdomain.com | HTTP | `http://corex-dashboard:8080` |
+
+> **This is the single most common mistake.** The URL must be the **Docker
+> container name and its internal port** — *not* `localhost`, and *not* the
+> host-mapped port. `cloudflared` runs inside the `proxy-net` Docker network,
+> so `localhost` means *the cloudflared container itself*, which serves
+> nothing. `nextcloud:80` resolves via Docker's internal DNS.
+>
+> Use the container's **internal** port too: Grafana maps `3002:3000` on the
+> host, but the tunnel URL is `http://grafana:3000`.
+
+Cloudflare creates the DNS records automatically. There is no need to add
+`A`/`CNAME` records by hand.
+
+#### 5. What NOT to expose
+
+Only publish what you actually need reachable from the internet. In particular:
+
+- **AdGuard** — a public DNS admin panel is a liability
+- **Portainer** and **CoreX Dashboard** — both can control every container;
+  keep them LAN-only, or put **Cloudflare Access** in front of them
+- **Traefik dashboard** — loopback only by design; use an SSH tunnel
+
+#### Local traffic should not go through Cloudflare
+
+By default, LAN devices resolving `nextcloud.yourdomain.com` are sent out to
+Cloudflare and back — so a local upload crosses your internet connection twice.
+Run `corex manage lan-setup` to make LAN clients resolve straight to the
+server's local IP. External access continues to work unchanged. See
+[LAN Fast-Path](#-lan-fast-path-v210) for the details, including the browser
+behaviours that defeat a naive DNS override.
+
+#### Troubleshooting
+
+| Symptom | Cause |
+|---|---|
+| **Error 1033** / tunnel unavailable | `cloudflared` is not running or cannot reach Cloudflare — check `docker logs cloudflared` |
+| **502 Bad Gateway** | Public Hostname URL is wrong — almost always `localhost` instead of a container name, or the host-mapped port instead of the internal one |
+| **Cloudflare "Active" but no response** | Public Hostname missing for that subdomain |
+| **HTTP 413 on large uploads** | Cloudflare's free plan caps request bodies at 100MB. CoreX sets Nextcloud's chunk size to 10MB for this reason (gotcha #12) |
+| Tunnel healthy, site loads slowly on LAN | Expected without `lan-setup` — traffic is round-tripping through Cloudflare |
 
 ---
 
@@ -396,7 +504,7 @@ cat /root/CoreX_Dashboard_Credentials.md  # Full guide with every URL and setup 
 
 ## 🔧 Managing Services
 
-v2.0.0 introduced full post-install service management. v2.1.0 added LAN fast-path automation. v2.2.0 added network performance tuning and hardened security. v2.5.0 added storage management, hard resource limits, and security fixes. v3.0.0 introduced the web dashboard, CrowdSec firewall bouncer, and the `network-check` diagnostic command. v3.1.0 added thermal load shedding, boot-time dpkg self-repair, UPS monitoring, and the `health` / `os-upgrade` commands. No need to re-run the installer to add, fix, or configure services.
+v2.0.0 introduced full post-install service management. v2.1.0 added LAN fast-path automation. v2.2.0 added network performance tuning and hardened security. v2.5.0 added storage management, hard resource limits, and security fixes. v3.0.0 introduced the web dashboard, CrowdSec firewall bouncer, and the `network-check` diagnostic command. v3.1.0 added thermal load shedding, boot-time dpkg self-repair, UPS monitoring, and the `health` / `os-upgrade` commands. v3.2.0 made `repair` regenerate compose files so fixes actually reach existing installs, and documented Dashboard and Cloudflare Tunnel setup. No need to re-run the installer to add, fix, or configure services.
 
 ### Health Check & Auto-Repair
 
@@ -456,22 +564,86 @@ This command:
 
 **External access** through Cloudflare Tunnel continues to work unchanged for devices off the LAN.
 
-### 🖥 Web Dashboard (v3.0.0)
+### 🖥 CoreX Dashboard — Web GUI
 
-CoreX Pro now ships a lightweight web dashboard (Go + HTMX, ~15MB Docker image) at `https://dashboard.yourdomain.com`. It provides a service-level GUI for all daily operations without requiring SSH access:
+A lightweight web GUI (Go + HTMX, ~15MB image, container `corex-dashboard`) for
+day-to-day operations without SSH.
 
-- **Services tab** — Health badges, CPU/RAM usage, start/stop/restart/update/repair buttons, install new services
-- **Storage tab** — OS disk vs SSD breakdown, per-service usage, cleanup trigger, Restic snapshot list
-- **Monitoring tab** — Embedded Prometheus metrics, per-container resource table
-- **Network tab** — All service URLs with status, LAN setup instructions, SSL certificate expiry countdown
-- **System tab** — Host info, CoreX version, SSH key management, reboot/shutdown
+#### How to log in
 
-The dashboard shells out to `corex-manage.sh` — all operations go through the same CLI surface. Portainer remains deployed and linked for advanced container management.
+| | |
+|---|---|
+| **URL** | `https://dashboard.yourdomain.com` |
+| **Username** | `admin` |
+| **Password** | auto-generated — see below |
+| **Auth** | HTTP Basic, enforced by Traefik (`dash-auth` middleware) |
+
+The password is generated at install and printed in the post-install summary.
+To retrieve it later, on the server:
 
 ```bash
-# Dashboard is auto-installed — access it after setup
-open https://dashboard.yourdomain.com
+# Primary location (survives re-runs, mode 600)
+sudo cat /mnt/corex-data/docker-configs/dashboard/.dashboard-password
+
+# Also recorded in the credentials file
+sudo grep -A2 -i dashboard /root/corex-credentials.txt
 ```
+
+To change it, set the password and repair the service:
+
+```bash
+sudo DASHBOARD_PASS='your-new-password' bash corex-manage.sh repair dashboard
+```
+
+#### Reaching it from the LAN
+
+The dashboard is routed by Traefik, so `dashboard.yourdomain.com` must resolve
+to your server. If you ran `corex manage lan-setup`, the AdGuard wildcard
+already handles this and LAN access works at full local speed. Otherwise add a
+hosts entry on your client:
+
+```
+192.168.1.100   dashboard.yourdomain.com
+```
+
+#### Reaching it from outside your network
+
+The dashboard is **not** exposed through Cloudflare Tunnel by default — you
+must add a public hostname for it deliberately. See
+[Cloudflare Tunnel setup](#-cloudflare-tunnel--step-by-step-setup):
+
+```
+Subdomain: dashboard    Service: http://corex-dashboard:8080
+```
+
+Think carefully before doing this: the dashboard can start, stop and update
+every service on the box. Basic Auth over HTTPS is the only thing in front of
+it. Prefer LAN-only access, or put Cloudflare Access in front of the hostname.
+
+#### What each tab does
+
+| Tab | Contents |
+|---|---|
+| **Services** | Health badges (HEALTHY / UNHEALTHY / MISSING), start/stop/update/repair, live log streaming via SSE |
+| **Storage** | OS disk vs SSD breakdown, per-service usage, cleanup trigger |
+| **Network** | Service URLs with status, SSL expiry countdown, LAN setup reminder |
+| **System** | Host info, kernel, uptime, Docker and CoreX versions, command reference |
+
+Every action shells out to `corex-manage.sh`, so the GUI and CLI cannot drift
+apart. Service names and actions are allowlisted server-side.
+
+#### If you cannot reach it
+
+```bash
+sudo docker ps --filter name=corex-dashboard      # is it running?
+sudo bash corex-manage.sh repair dashboard        # rebuild + re-apply config
+sudo docker logs corex-dashboard --tail 50        # why it failed
+```
+
+A `404` from Traefik usually means DNS resolves but the router did not match —
+check the hostname spelling. A `502` means Traefik matched but the container is
+down. Repeated password prompts mean the Basic Auth hash and your password
+disagree; reset it with the `DASHBOARD_PASS` command above.
 
 ### 🔍 Network Check
 

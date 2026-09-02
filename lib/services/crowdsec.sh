@@ -159,6 +159,11 @@ crowdsec_status() {
 }
 
 crowdsec_repair() {
+    # Regenerate the compose file first. Without this, repair recreated the
+    # container from a compose file that could be months old, so CoreX fixes
+    # to env vars, resource limits, security_opt, published ports or Traefik
+    # labels never reached an existing install.
+    crowdsec_deploy
     local dir="${DOCKER_ROOT}/crowdsec"
     [[ -f "${dir}/docker-compose.yml" ]] && \
         docker compose -f "${dir}/docker-compose.yml" up -d --force-recreate

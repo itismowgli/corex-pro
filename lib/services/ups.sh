@@ -135,8 +135,18 @@ ups_deploy() {
     fi
     log_success "UPS detected (driver: ${driver})"
 
-    local ups_pass
-    ups_pass=$(generate_pass)
+    # Persisted: upsd.users and upsmon.conf must agree on this password, so a
+    # regenerated value on re-run would leave upsmon unable to authenticate to
+    # upsd — silently disabling the shutdown-on-battery protection this module
+    # exists to provide.
+    local ups_pass pass_file="${DATA_ROOT}/ups-config/.monitor-password"
+    if [[ -s "$pass_file" ]]; then
+        ups_pass=$(cat "$pass_file")
+    else
+        ups_pass=$(generate_pass)
+    fi
+    printf '%s' "$ups_pass" > "$pass_file"
+    chmod 600 "$pass_file"
 
     # ── nut.conf: standalone = driver + server + monitor on one machine ──────
     cat > "${_UPS_CONF_DIR}/nut.conf" << UNEOF

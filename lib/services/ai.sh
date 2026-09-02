@@ -42,10 +42,18 @@ ai_deploy() {
     # Generate a separate Browserless token if not already set.
     # Sharing WEBUI_SECRET_KEY with Browserless means compromise of one
     # grants access to both. A separate token limits the blast radius.
+    # Persisted so it stays stable across re-runs: repair calls deploy, and a
+    # regenerated token would break any client already configured against it.
+    local token_file="${dir}/.browserless-token"
+    if [[ -z "${BROWSERLESS_TOKEN:-}" ]] && [[ -s "$token_file" ]]; then
+        BROWSERLESS_TOKEN=$(cat "$token_file")
+    fi
     if [[ -z "${BROWSERLESS_TOKEN:-}" ]]; then
         BROWSERLESS_TOKEN=$(openssl rand -base64 32 | tr -d '/+=' | head -c 32)
-        export BROWSERLESS_TOKEN
     fi
+    printf '%s' "$BROWSERLESS_TOKEN" > "$token_file"
+    chmod 600 "$token_file"
+    export BROWSERLESS_TOKEN
 
     cat > "${dir}/docker-compose.yml" << DCEOF
 services:
@@ -149,6 +157,13 @@ ai_status() {
 }
 
 ai_repair() {
+    # Regenerate the compose file first. Without this, repair recreated the
+    # container from a compose file that could be months old, so CoreX fixes
+    # to env vars, resource limits, security_opt, published ports or Traefik
+    # labels never reached an existing install. ai_deploy is idempotent
+    # by design (see CLAUDE.md "Idempotency pattern"), so calling it here is
+    # safe and is what makes `corex doctor` able to deliver fixes at all.
+    ai_deploy
     local dir="${DOCKER_ROOT}/ai"
     [[ -f "${dir}/docker-compose.yml" ]] && \
         docker compose -f "${dir}/docker-compose.yml" up -d --force-recreate

@@ -125,6 +125,38 @@ traefik_firewall() {
     # Port 8080 (Traefik dashboard) is bound to localhost only — no UFW rule needed
 }
 
+_traefik_write_compose() {
+    local dir="${DOCKER_ROOT}/traefik"
+    cat > "${dir}/docker-compose.yml" << DCEOF
+services:
+  traefik:
+    image: traefik:v3.6
+    container_name: traefik
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik.yml:/traefik.yml:ro
+      - ./dynamic.yml:/dynamic.yml:ro
+      - ./acme.json:/acme.json
+      - ./certs:/certs:ro
+    networks: [proxy-net]
+    security_opt: ["no-new-privileges:true"]
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.5"
+        reservations:
+          memory: 64m
+networks:
+  proxy-net: { external: true }
+DCEOF
+}
+
 traefik_deploy() {
     traefik_dirs
     local dir="${DOCKER_ROOT}/traefik"
@@ -188,34 +220,7 @@ tls:
         keyFile: /certs/wildcard.key
 DYEOF
 
-    cat > "${dir}/docker-compose.yml" << DCEOF
-services:
-  traefik:
-    image: traefik:v3.6
-    container_name: traefik
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-      - "127.0.0.1:8080:8080"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ./traefik.yml:/traefik.yml:ro
-      - ./dynamic.yml:/dynamic.yml:ro
-      - ./acme.json:/acme.json
-      - ./certs:/certs:ro
-    networks: [proxy-net]
-    security_opt: ["no-new-privileges:true"]
-    deploy:
-      resources:
-        limits:
-          memory: 256m
-          cpus: "0.5"
-        reservations:
-          memory: 64m
-networks:
-  proxy-net: { external: true }
-DCEOF
+    _traefik_write_compose
 
     docker compose -f "${dir}/docker-compose.yml" up -d \
         || log_warning "Traefik may not have started — check: docker ps"
@@ -239,6 +244,14 @@ traefik_status() {
 traefik_repair() {
     traefik_dirs
     local dir="${DOCKER_ROOT}/traefik"
+
+    # Regenerate the compose file. This module is the clearest example of why
+    # it matters: the dashboard publish was changed to "127.0.0.1:8080:8080"
+    # in code, but every existing install kept the old "8080:8080" binding —
+    # exposing the Traefik dashboard, and therefore the whole routing table,
+    # to the LAN. Docker's published ports bypass UFW, so the firewall did not
+    # cover it either. Without regenerating here that fix reached nobody.
+    _traefik_write_compose
 
     # Regenerate LAN certs if missing (e.g. after manual cleanup)
     _traefik_generate_lan_certs

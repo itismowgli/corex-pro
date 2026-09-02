@@ -149,6 +149,13 @@ immich_status() {
 }
 
 immich_repair() {
+    # Regenerate the compose file first. Without this, repair recreated the
+    # container from a compose file that could be months old, so CoreX fixes
+    # to env vars, resource limits, security_opt, published ports or Traefik
+    # labels never reached an existing install. immich_deploy is idempotent
+    # by design (see CLAUDE.md "Idempotency pattern"), so calling it here is
+    # safe and is what makes `corex doctor` able to deliver fixes at all.
+    immich_deploy
     local dir="${DOCKER_ROOT}/immich"
     [[ -f "${dir}/docker-compose.yml" ]] && \
         docker compose -f "${dir}/docker-compose.yml" up -d --force-recreate

@@ -6,6 +6,92 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.2.0] - 2026-09-02
+
+### Fixed — `repair` never delivered compose-level fixes (systemic)
+
+**14 of 16 service modules recreated their container from whatever
+`docker-compose.yml` was already on disk.** Only `nextcloud` (v2.4.2) and
+`stalwart` regenerated it. Every CoreX fix expressed in the compose file —
+environment variables, resource limits, `security_opt`, published ports,
+Traefik labels — therefore never reached an existing install. Since
+`corex doctor` / `corex manage repair` is the only mechanism users have for
+picking up fixes, this quietly blunted the entire self-healing story.
+
+The concrete casualty: the Traefik dashboard publish was changed to
+`127.0.0.1:8080:8080` in code, but deployed instances kept `8080:8080` —
+binding `0.0.0.0` and exposing the full routing table to the LAN. Docker's
+published ports are written straight into the `DOCKER-USER` iptables chain, so
+UFW's default-deny did not cover it either.
+
+Every module's `repair()` now regenerates its compose first. `coolify`
+(installs its own stack upstream) and `ups` (NUT runs on the host) are the only
+exclusions, and a test asserts they genuinely have no compose file.
+`_traefik_write_compose()` was extracted so Traefik regenerates without losing
+its existing certificate and `dynamic.yml` repair logic.
+
+### Fixed — generated secrets rotated on every run
+
+Making `repair` call `deploy` exposed a latent problem: secrets generated
+inline in `deploy` were regenerated on every invocation. A repair would have
+silently changed credentials to values nothing recorded.
+
+- **CoreX Dashboard** Basic Auth password — would have locked the operator out
+  of the GUI on any repair. Now persisted to
+  `${DOCKER_ROOT}/dashboard/.dashboard-password` (0600).
+- **Browserless token** — now persisted; a rotation would break any client
+  already configured against it.
+- **NUT monitor password** — `upsd.users` and `upsmon.conf` must agree on it, so
+  a rotation would leave `upsmon` unable to authenticate to `upsd`, silently
+  disabling the shutdown-on-battery protection the module exists to provide.
+
+### Fixed — Stalwart could never be logged into
+
+`STALWART_ADMIN_USER` / `STALWART_ADMIN_SECRET` are **not read** by current
+Stalwart images. CoreX generated a good password and passed it through
+variables the image ignores, so Stalwart fell back to bootstrap mode with its
+own random temporary password, printed once to the container log. Observed in
+the field as a mail server nobody could configure: no Stalwart entry in the
+credentials file, a 4KB data directory weeks after install, and a container
+reporting healthy throughout.
+
+Now pinned via `STALWART_RECOVERY_ADMIN` (`user:password`), the supported
+variable that Stalwart's own bootstrap message points at, and persisted to
+`${DOCKER_ROOT}/stalwart/.admin-password` (0600).
+
+### Fixed — `corex update` poisoned the repo for its owner
+
+`do_update` normally runs under `sudo`, so git wrote new objects, refs and
+`.git/config` as root. The repo owner could then never fetch again
+(`insufficient permission for adding an object`). Because a failed `git pull`
+inside a longer script is easy to miss, the repository silently stopped
+updating while deployments appeared to succeed. It now records the repo
+directory's owner and restores it on every exit path.
+
+### Added — documentation for things that had none
+
+- **CoreX Dashboard — Web GUI**: the GUI shipped in v3.0.0 with no documented
+  way to log into it. Now documents the URL, that the username is `admin`,
+  where to find the generated password, how to change it, LAN access, what
+  each tab does, and troubleshooting for 404 / 502 / auth-loop.
+- **Cloudflare Tunnel — Step-by-Step Setup**: previously two sentences. Now a
+  full walkthrough: nameserver change, tunnel creation, where the token
+  actually is, wiring it into CoreX, and a Public Hostname table. Explains why
+  the URL must be a **container name and internal port** rather than
+  `localhost` — the most common setup failure — plus what not to expose, and a
+  troubleshooting table (Error 1033, 502, HTTP 413).
+- Corrected the README's Traefik access instructions, which told users to open
+  `http://YOUR_IP:8080`. That is the Traefik dashboard, it is loopback-only by
+  design, and the line also invited exposing it. Replaced with the SSH-tunnel
+  command and a pointer distinguishing it from the CoreX Dashboard.
+
+### Added — tests
+- `test/unit/test_service_contract.bats` — asserts every `repair()` regenerates
+  its compose, that the exclusion list is honest, that the Traefik dashboard is
+  never bound to `0.0.0.0`, that generated secrets are persisted, that all
+  seven contract functions exist in every module, and that Nextcloud pins a
+  major version instead of tracking `:stable`.
+
 ## [Unreleased]
 
 ### Fixed — Nextcloud 34 broke the occ hook (outage)

@@ -34,11 +34,24 @@ dashboard_deploy() {
     dashboard_dirs
     local dir="${DOCKER_ROOT}/dashboard"
 
-    # Generate BasicAuth password if not set
+    # Generate the BasicAuth password if not set, and PERSIST it.
+    #
+    # This must be stable across re-runs: repair calls deploy (so that compose
+    # fixes actually reach existing installs), and a freshly generated password
+    # here would silently change the dashboard login to a value nothing
+    # records — locking the operator out of the GUI with no way back except
+    # reading this file. Kept out of corex-credentials.txt because that file's
+    # format is parsed by exact grep patterns in phase 0.
+    local pass_file="${dir}/.dashboard-password"
+    if [[ -z "${DASHBOARD_PASS:-}" ]] && [[ -s "$pass_file" ]]; then
+        DASHBOARD_PASS=$(cat "$pass_file")
+    fi
     if [[ -z "${DASHBOARD_PASS:-}" ]]; then
         DASHBOARD_PASS=$(openssl rand -base64 32 | tr -d '/+=' | head -c 24)
-        export DASHBOARD_PASS
     fi
+    printf '%s' "$DASHBOARD_PASS" > "$pass_file"
+    chmod 600 "$pass_file"
+    export DASHBOARD_PASS
 
     # Generate htpasswd hash for Traefik BasicAuth
     local DASHBOARD_HASH
@@ -100,6 +113,13 @@ dashboard_status() {
 }
 
 dashboard_repair() {
+    # Regenerate the compose file first. Without this, repair recreated the
+    # container from a compose file that could be months old, so CoreX fixes
+    # to env vars, resource limits, security_opt, published ports or Traefik
+    # labels never reached an existing install. dashboard_deploy is idempotent
+    # by design (see CLAUDE.md "Idempotency pattern"), so calling it here is
+    # safe and is what makes `corex doctor` able to deliver fixes at all.
+    dashboard_deploy
     local dir="${DOCKER_ROOT}/dashboard"
     [[ -f "${dir}/docker-compose.yml" ]] && \
         docker compose -f "${dir}/docker-compose.yml" up -d --force-recreate
