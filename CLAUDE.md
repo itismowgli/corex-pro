@@ -98,6 +98,39 @@ before it is pushed.
 
 ---
 
+### 3. Releases: tag and title are exactly `vX.Y.Z`
+
+Every version gets a git tag, a GitHub release, and a `CHANGELOG.md` section,
+and the release body is that section verbatim. The changelog stays the single
+source of truth; nothing is written twice.
+
+Titles had drifted through three styles at once, `CoreX Pro v3.1.0 - Resilience`,
+`v3.4.0 - credentials, Stalwart visibility`, and a bare `2.0.0`, which makes the
+release list unreadable. The title is now the tag and nothing else.
+
+```bash
+python3 tools/release-notes.py v3.12.0 > /tmp/notes.md
+git tag -a v3.12.0 -m "v3.12.0 - short summary"
+git push origin v3.12.0
+gh release create v3.12.0 --repo itismowgli/corex-pro \
+  --title v3.12.0 --notes-file /tmp/notes.md --latest
+```
+
+`tools/release-notes.py` refuses to print notes containing em dashes, an IP
+address, an email address, a bot token or a credential, because a release body
+cannot be quietly fixed later: it is what people receive in notifications.
+
+Two things to watch. **Pass `--latest` explicitly**, since `gh release create`
+awards the badge to whatever was created most recently, so backfilling an old
+version silently moves "Latest" onto it. And a release's sort key is the
+tagged **commit** date, not the publish time, so a backfilled release lands in
+its correct historical position on the page.
+
+`v0.1.0` and `v1.0.0` have no tag and cannot get one: they predate the first
+commit in this repository. They exist only as changelog history.
+
+---
+
 ## Repository Layout
 
 ```
@@ -130,6 +163,8 @@ corex-pro/
 │       ├── traefik.sh
 │       ├── adguard.sh
 │       └── ...               # Drop new service files here
+├── tools/
+│   └── release-notes.py     # Extracts a CHANGELOG section as a release body
 ├── agent/                    # Action agent and Telegram bot (Python, stdlib only)
 │   ├── corex-agent.py        # Privileged action server on a unix socket
 │   ├── corex-telegram.py     # Long-polling control bot, runs as corex-bot
