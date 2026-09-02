@@ -27,6 +27,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
   printed a bare "Aborted." and returned 0. A cron job or a `sudo -n`
   invocation therefore looked like it had updated. It now says why it cannot
   ask, returns non-zero, and accepts `--force` as the non-interactive path.
+- **`corex update` dropped its own `--force` flag.** The dispatch called
+  `do_update` with no arguments, unlike `nuke` and `migrate`, which both shift
+  and forward. So `corex update --force` behaved exactly like
+  `corex update`, and the warning telling you to use `--force` was advice you
+  could not follow. Found by trying it.
+- **`--force` could not be used without a terminal.** The terminal check ran
+  before `--force` was considered, so the one flag meant to make the update
+  non-interactive was itself blocked by the absence of a terminal.
 
 ### Added
 - `.gitignore` entries for `._*` and `.DS_Store`. Those sidecars arrive from
