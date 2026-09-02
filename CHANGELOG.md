@@ -6,6 +6,33 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.10.1] - 2026-09-02
+
+### Fixed
+- **The thermal guardian resurrected services the operator had disabled.** It
+  restarts whatever is on its shed list and knew nothing about the disabled
+  flag, so Prometheus, cAdvisor, Grafana and node-exporter came back after
+  being deliberately switched off. Prometheus alone then burned 49% CPU, a
+  large share of the heat that caused the shed in the first place: the guardian
+  was fighting the operator and losing to itself. `restore` now skips any
+  container belonging to a disabled service or component, reading both flags
+  from `state.json`, and drops it from the shed list rather than deferring it,
+  since deferring means retrying forever a container it must never start.
+
+### Notes
+- The symptom was Immich and Uptime Kuma repeatedly going down. The guardian
+  was behaving correctly; the box was oscillating. From `blackbox.log`:
+  recovering six containers took it from 70C to 94C in ninety seconds, which
+  tripped the critical shed, then it cooled to 58C and recovered six again.
+- `THERMAL_RESTORE_BATCH` is set to 1 on that machine. Three, or six in the
+  recover band, is reasonable on hardware with cooling headroom and far too
+  aggressive where each container costs several degrees.
+- Even with the AI stack removed, Stalwart uninstalled and Coolify, Twenty and
+  Grafana stopped, nineteen containers still reach 93C. That is a hardware
+  ceiling, not a tuning problem.
+
+---
+
 ## [v3.10.0] - 2026-09-02
 
 ### Added
