@@ -1,66 +1,70 @@
-<p align="center">
+<div align="center">
   <img src="https://img.shields.io/badge/CoreX_Pro-v3.2.1-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
   <img src="https://img.shields.io/badge/Ubuntu-24.04_LTS-E95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Ubuntu">
-  <img src="https://img.shields.io/badge/Docker-Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker">
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
-</p>
+</div>
 
-<h1 align="center">
-  CoreX Pro - Sovereign Hybrid Homelab
-</h1>
+# CoreX Pro
 
-<p align="center">
-  <strong>"Brains on System. Muscle on SSD."</strong><br>
-  One command. Choose your services. Zero cloud dependency. Full data sovereignty.
-</p>
+Self-hosted infrastructure for one machine at home. One command installs Docker,
+a reverse proxy with HTTPS, a firewall, encrypted backups, and whichever of the
+16 services you want.
 
-<p align="center">
-  <a href="#-quickstart">Quickstart</a> •
-  <a href="#-what-you-get">What You Get</a> •
-  <a href="#-architecture">Architecture</a> •
-  <a href="#-services--use-cases">Services</a> •
-  <a href="#-post-install-guide">Post-Install</a> •
-  <a href="#-managing-services">Managing Services</a> •
-  <a href="#-backup--restore">Backup</a> •
-  <a href="#-uninstall--rollback">Uninstall</a> •
-  <a href="#-troubleshooting">Troubleshooting</a>
-</p>
-
----
-
-## 🤔 Why CoreX Pro?
-
-You use Google Drive, Google Photos, Gmail, Bitwarden, Zapier, Vercel, ChatGPT, and a dozen other cloud services. You pay monthly for each, your data lives on someone else's servers, and you're one policy change away from losing access to your own files.
-
-CoreX Pro replaces all of them with self-hosted alternatives running on a single machine in your home. One command sets up everything — encrypted, backed up, accessible from anywhere via Cloudflare Tunnel. You choose exactly which services to install.
-
-**Who is this for?**
-
-- Developers who want a home server but don't want to spend weeks configuring it
-- Privacy-conscious users who want to own their data
-- Small teams that need shared infrastructure without SaaS costs
-- Tinkerers who want a solid foundation to build on
-
-**What you need:**
-
-- A machine running **Ubuntu 24.04 LTS Server** (mini PC, old laptop, NUC, or dedicated server)
-- **8GB+ RAM** (16GB recommended for AI services)
-- An **external SSD** (500GB minimum, 1TB recommended)
-- A **domain name** with DNS managed via Cloudflare (free tier works) — or run in local-only mode without one
-
----
-
-## ⚡ Quickstart
-
-### One-Line Install (fresh server)
+The design splits storage in two. Ubuntu and the Docker engine live on the
+internal disk. Everything you care about keeping lives on an external SSD at
+`/mnt/corex-data`. Moving to new hardware means moving one drive.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/itismowgli/corex-pro/main/corex.sh | sudo bash
 ```
 
-This downloads CoreX Pro, launches an **interactive wizard**, and lets you choose exactly which services to install. Takes about 10–15 minutes depending on your internet speed.
+## Contents
 
-### Manual Install
+- [Who this is for](#who-this-is-for)
+- [Requirements](#requirements)
+- [Quickstart](#quickstart)
+- [Services](#services)
+- [Commands](#commands)
+- [The CoreX Dashboard](#the-corex-dashboard)
+- [HTTPS and certificates](#https-and-certificates)
+- [Cloudflare Tunnel](#cloudflare-tunnel)
+- [LAN fast path](#lan-fast-path)
+- [Outbound email](#outbound-email)
+- [Thermal protection](#thermal-protection)
+- [UPS monitoring](#ups-monitoring)
+- [Backups](#backups)
+- [Security](#security)
+- [Architecture](#architecture)
+- [Troubleshooting](#troubleshooting)
+- [Ports](#ports)
+- [Uninstall](#uninstall)
+- [Adding a service](#adding-a-service)
+
+## Who this is for
+
+You can follow instructions and use a terminal, but you do not want to spend
+weeks learning nginx, ACME, Docker networking, and Linux hardening before your
+photos sync.
+
+You do not need a public IP, a static IP, or access to your router. Cloudflare
+Tunnel handles external access with an outbound connection, so CoreX works
+behind CGNAT, in a rented flat, or on a phone hotspot.
+
+## Requirements
+
+- A machine running Ubuntu 24.04 LTS with at least 8GB RAM. 16GB or more if you
+  want Immich or the AI stack.
+- An external SSD. 500GB works; 1TB or more is better if you plan to store
+  photos.
+- A domain with DNS on Cloudflare. The free plan is enough. You can also run in
+  local-only mode without a domain.
+- Root access.
+
+Mail is the one thing a home connection usually cannot do. See
+[Outbound email](#outbound-email) for how to check yours and what to do
+instead.
+
+## Quickstart
 
 ```bash
 git clone https://github.com/itismowgli/corex-pro.git
@@ -68,312 +72,321 @@ cd corex-pro
 sudo bash corex.sh install
 ```
 
-### Interactive Menu (recommended for day-to-day use)
+The installer asks for your domain, your email, a timezone, and which services
+you want, then generates every password itself. Nothing is left at a default.
+
+When it finishes, read `/root/CoreX_Dashboard_Credentials.md`. It lists every
+URL and login. Passwords are also in `/root/corex-credentials.txt`, mode 600.
+
+Re-running the installer on an existing machine is safe. It checks what is
+already there, repairs what is broken, and leaves your data alone. Passwords
+are loaded from the credentials file rather than regenerated, so you will not
+get locked out of your own databases.
+
+## Services
+
+Sixteen service modules, all optional except Traefik. A module can deploy more
+than one container: `monitoring` and `ai` each start three.
+
+| Module | What it gives you | Replaces |
+|---|---|---|
+| `traefik` | Reverse proxy, automatic HTTPS, routing by Docker label | nginx plus certbot |
+| `adguard` | Network-wide DNS with ad and tracker blocking | Pi-hole |
+| `nextcloud` | Files, calendar, contacts, photo albums, collaborative docs | Dropbox, Google Drive |
+| `immich` | Photo and video library with search and face grouping | Google Photos |
+| `vaultwarden` | Password manager, works with every Bitwarden client | 1Password, LastPass |
+| `stalwart` | Mail server with SMTP, IMAP, and JMAP | see the email section first |
+| `n8n` | Workflow automation with several hundred integrations | Zapier |
+| `coolify` | Deploy apps from Git, installed manually | Heroku, Vercel |
+| `timemachine` | Time Machine target over SMB for Macs | Time Capsule |
+| `monitoring` | Uptime Kuma, Grafana, and Prometheus | Datadog |
+| `ai` | Ollama, Open WebUI, and Browserless | ChatGPT subscription |
+| `crowdsec` | Intrusion detection that blocks attackers via iptables | Fail2ban, extended |
+| `portainer` | Container management in a browser | docker CLI |
+| `cloudflared` | Cloudflare Tunnel connector | port forwarding |
+| `dashboard` | CoreX web GUI for daily operations | SSH |
+| `ups` | Graceful shutdown on power loss, using NUT | nothing, usually |
+
+Add or remove any of them later:
 
 ```bash
-sudo bash corex.sh          # Shows context-aware menu
+sudo bash corex-manage.sh add immich
+sudo bash corex-manage.sh remove n8n
 ```
 
-The menu auto-detects whether CoreX is installed and shows relevant options.
-
-### All Commands
+## Commands
 
 ```bash
-sudo bash corex.sh install              # Install (interactive wizard)
-sudo bash corex.sh doctor               # Health check + auto-repair all services
-sudo bash corex.sh manage status        # Live status dashboard
-sudo bash corex.sh manage add <svc>     # Add a service you skipped during install
-sudo bash corex.sh manage lan-setup     # Configure LAN fast-path (full-speed local transfers)
-sudo bash corex.sh manage network-tune  # Optimize kernel for Gbps file transfers
-sudo bash corex.sh manage network-check # Test HTTPS reachability, SSL expiry, and DNS
-sudo bash corex.sh manage health        # Host hardware health (temp, SMART, dpkg, last shutdown)
-sudo bash corex.sh manage os-upgrade    # Supervised OS upgrade (refuses if too hot or unstable)
-sudo bash corex.sh manage mail-setup    # Configure Nextcloud outbound email (SMTP relay)
-sudo bash corex.sh manage cleanup       # Reclaim disk (journal, apt cache, images, networks)
-sudo bash corex.sh update               # Pull latest CoreX Pro version
-sudo bash corex.sh migrate              # Change domain across all services
-sudo bash corex.sh nuke                 # Uninstall / rollback
-sudo bash corex.sh help                 # Full command reference
+sudo bash corex.sh install              # interactive installer
+sudo bash corex.sh doctor               # health check, then repair what is broken
+sudo bash corex.sh update               # pull the latest CoreX Pro
+sudo bash corex.sh migrate              # change domain across every service
+sudo bash corex.sh nuke                 # uninstall
+
+sudo bash corex-manage.sh status        # what is running, and how it is doing
+sudo bash corex-manage.sh list          # every available service
+sudo bash corex-manage.sh add <svc>     # install one
+sudo bash corex-manage.sh remove <svc>  # remove one, asks about the data
+sudo bash corex-manage.sh update --all  # pull new images for everything
+sudo bash corex-manage.sh repair <svc>  # regenerate config and recreate
+sudo bash corex-manage.sh health        # host hardware: temperature, SMART, dpkg
+sudo bash corex-manage.sh storage       # disk usage by service
+sudo bash corex-manage.sh cleanup       # reclaim space safely
+sudo bash corex-manage.sh os-upgrade    # supervised OS upgrade with safety gates
+sudo bash corex-manage.sh mail-setup    # configure Nextcloud outbound email
+sudo bash corex-manage.sh lan-setup     # route LAN traffic locally, not via Cloudflare
+sudo bash corex-manage.sh network-tune  # kernel tuning for gigabit transfers
+sudo bash corex-manage.sh network-check # test HTTPS, certificate expiry, and DNS
 ```
 
-After install, credentials are at `/root/corex-credentials.txt` and a full guide at `/root/CoreX_Dashboard_Credentials.md`.
+`repair` regenerates a service's compose file before recreating the container,
+so a CoreX fix to an environment variable, a resource limit, or a Traefik label
+reaches an install that was set up months ago. `doctor` runs `repair` on
+anything unhealthy, which makes it the command to run after an update.
 
----
+## The CoreX Dashboard
 
-## 📦 What You Get
+A web GUI for the things you do often, so you do not need SSH for them.
 
-| Replaces               | With                     | Why Self-Host?                                                 |
-| ---------------------- | ------------------------ | -------------------------------------------------------------- |
-| Google Drive / Dropbox | **Nextcloud**            | Unlimited storage, no monthly fees, your encryption keys       |
-| Google Photos / iCloud | **Immich**               | Face recognition, ML search, no storage limits, no AI training |
-| Gmail / Outlook        | **Stalwart Mail**        | Full email server, no scanning, custom domain                  |
-| Bitwarden / 1Password  | **Vaultwarden**          | Zero-knowledge passwords, family sharing, free                 |
-| Zapier / Make          | **n8n**                  | Unlimited automations, no per-task pricing                     |
-| Vercel / Netlify       | **Coolify**              | Deploy any app, no vendor lock-in                              |
-| ChatGPT / Claude API   | **Ollama + Open WebUI**  | Local LLMs, zero API costs, full privacy                       |
-| Time Machine + NAS     | **SMB via Docker**       | Encrypted macOS backups to your own hardware                   |
-| UptimeRobot            | **Uptime Kuma**          | Beautiful status pages, unlimited monitors                     |
-| Datadog / New Relic    | **Grafana + Prometheus** | Full observability, no per-host pricing                        |
-| Cloudflare Access      | **Cloudflare Tunnel**    | Zero port-forwarding, encrypted tunnel                         |
-| Pi-hole                | **AdGuard Home**         | DNS-level ad blocking + DNS rewrites for local routing         |
-| Portainer (advanced)   | **CoreX Dashboard**      | Service-level GUI — start/stop/update/repair from a browser    |
-
----
-
-## 🏗 Architecture
-
-```
-┌─ INTERNET ──────────────────────────────────────────────────┐
-│  Cloudflare Tunnel (encrypted, zero port-forwarding)         │
-├─ SECURITY ──────────────────────────────────────────────────┤
-│  UFW → CrowdSec (community IPS) → Fail2ban (SSH jail)       │
-│  SSH on custom port + kernel hardening + auto-updates        │
-├─ DNS & ROUTING ─────────────────────────────────────────────┤
-│  AdGuard Home (DNS + ad blocking + local DNS rewrites)       │
-│  Traefik v3 (HTTPS termination, Let's Encrypt, auto-certs)  │
-├─ SERVICES ──────────────────────────────────────────────────┤
-│  15 optional Docker containers on isolated networks          │
-│  You choose which ones to install — nothing forced           │
-├─ BACKUP ────────────────────────────────────────────────────┤
-│  Restic (encrypted, deduplicated, daily at 3AM)              │
-├─ STORAGE ───────────────────────────────────────────────────┤
-│  Local Disk: OS + Docker Engine (the "Brain")                │
-│  External SSD: All data, configs, backups (the "Muscle")     │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### Network Isolation
-
-Services are deployed across three isolated Docker networks:
-
-- **`proxy-net`** - All web-facing services + Traefik + Cloudflare Tunnel
-- **`monitoring-net`** - Prometheus + Grafana + exporters (no internet access)
-- **`ai-net`** - Ollama + Open WebUI + Browserless (sandboxed)
-
-### Storage Strategy
-
-CoreX separates the "brain" (OS + Docker engine on local disk) from the "muscle" (all data on external SSD). This means:
-
-- **Fast boot**: OS disk is lean, no large data volumes
-- **Easy migration**: Unplug SSD, plug into new machine, restore
-- **Clean backups**: Everything worth backing up is on one mount point
-- **SSD failure isolation**: OS survives if SSD dies, and vice versa
-
-```
-External SSD (/dev/sdX)
-├── Partition 1 (optional) → /mnt/timemachine   # macOS Time Machine
-└── Partition 2            → /mnt/corex-data    # Everything else
-    ├── docker-configs/                          # docker-compose.yml per service
-    │   ├── traefik/
-    │   ├── nextcloud/
-    │   ├── immich/
-    │   └── ...
-    ├── service-data/                            # Persistent data
-    │   ├── nextcloud-html/
-    │   ├── immich-upload/
-    │   ├── vaultwarden/
-    │   ├── ollama/          # Downloaded LLM models
-    │   └── ...
-    └── backups/
-        └── restic-repo/                         # Encrypted backup snapshots
-```
-
-### Plugin-Style Extensibility
-
-Every service is a self-contained module in `lib/services/`. Adding a new service to CoreX requires only dropping one file:
-
-```
-lib/services/gitea.sh    ← drop this file, that's it
-```
-
-The wizard, `corex doctor`, and `corex manage` automatically discover and support it. No changes to any other file required.
-
----
-
-## 🧰 Services & Use Cases
-
-### 🔀 Traefik - Reverse Proxy & TLS
-
-**What:** Automatic HTTPS for all services. Routes `*.yourdomain.com` to the right container.
-
-**How it works:** Watches Docker socket for containers with `traefik.enable=true` labels, automatically creates routes, gets Let's Encrypt certificates via TLS-ALPN-01 challenge.
-
-**Access:** The Traefik dashboard is published on **loopback only**
-(`127.0.0.1:8080`) — it exposes your full routing table, and Docker's published
-ports bypass UFW, so it must not be bound to `0.0.0.0`. Reach it through an SSH
-tunnel:
+CoreX builds the image on your server from `dashboard/`, so there is no
+registry to depend on. The first install spends a minute or two compiling.
 
 ```bash
-ssh -L 8080:127.0.0.1:8080 youruser@YOUR_IP
-# then open http://localhost:8080 on your own machine
+sudo bash corex-manage.sh add dashboard
 ```
 
-Do not confuse this with the **CoreX Dashboard** (`https://dashboard.yourdomain.com`),
-which is the service management GUI — see [CoreX Dashboard](#-corex-dashboard--web-gui) below.
+### Signing in
 
----
+| | |
+|---|---|
+| URL | `https://dashboard.yourdomain.com` |
+| Username | `admin` |
+| Password | generated at install, see below |
 
-### 🛡 AdGuard Home - DNS & Ad Blocking
-
-**What:** Network-wide DNS server that blocks ads, trackers, and malware domains. Also serves as your local DNS for routing `*.yourdomain.com` directly to your server's LAN IP — bypassing Cloudflare for full-speed local transfers.
-
-**LAN fast-path setup (automated):**
-```bash
-sudo bash corex.sh manage lan-setup
-```
-Automatically adds the wildcard DNS rewrite `*.yourdomain.com → SERVER_IP` via the AdGuard API and prints per-device/router DNS configuration instructions.
-
-**Access:** `http://YOUR_IP:3000`
-
----
-
-### 🐳 Portainer - Docker Management
-
-**What:** Web UI for managing Docker containers, images, volumes, and networks. View logs, restart services, monitor resources — all from a browser.
-
-**Access:** `https://YOUR_IP:9443`
-
----
-
-### ☁️ Nextcloud - File Storage & Sync
-
-**What:** Self-hosted Google Drive / Dropbox. File sync, calendar, contacts, notes, video calls, kanban boards.
-
-**Video streaming:** iPhone `.mov` files (HEVC/H.265) play in all browsers via the Memories app, which transcodes on-demand to H.264 HLS. No additional setup needed — enabled automatically.
-
-**Apps to install after setup:** Calendar, Contacts, Notes, Talk, Deck, Bookmarks
-
-**Access:** `https://nextcloud.yourdomain.com`
-
----
-
-### 📸 Immich - Photo & Video Management
-
-**What:** Self-hosted Google Photos. AI-powered face recognition, smart search, automatic mobile backup. Downloads ~1GB of ML models on first start.
-
-**Access:** `https://photos.yourdomain.com`
-**Mobile:** [iOS](https://apps.apple.com/app/immich/id1613945652) / [Android](https://play.google.com/store/apps/details?id=app.alextran.immich)
-
----
-
-### 🔐 Vaultwarden - Password Manager
-
-**What:** Lightweight, self-hosted Bitwarden server. Works with all official Bitwarden clients.
-
-**Important:** Disable signups after creating your accounts (`SIGNUPS_ALLOWED: "false"`).
-
-**Access:** `https://vault.yourdomain.com` / Admin: `https://vault.yourdomain.com/admin`
-
----
-
-### ✉️ Stalwart Mail - Email Server
-
-**What:** All-in-one email server: SMTP, IMAP, CalDAV, CardDAV. Written in Rust. Admin credentials auto-captured from first-boot logs.
-
-**Note:** Self-hosted email has deliverability challenges. Consider an SMTP relay (SMTP2GO, Mailgun free tier) for outbound mail.
-
-**Access:** `https://mail.yourdomain.com`
-**Ports:** 25 (SMTP), 587 (Submission), 465 (SMTPS), 143 (IMAP), 993 (IMAPS)
-
----
-
-### 🚀 Coolify - Web Hosting PaaS
-
-**What:** Self-hosted Vercel / Netlify / Heroku. Deploy web apps with git push, managed databases, preview deployments.
-
-**Note:** Installs via a helper script (separate from CoreX Traefik to avoid port conflicts).
-
-**Access:** `http://YOUR_IP:8000`
-
----
-
-### ⚡ n8n - Workflow Automation
-
-**What:** Self-hosted Zapier / Make.com. Visual workflow builder with 400+ integrations. AI agent workflows work with Ollama.
-
-**Access:** `https://n8n.yourdomain.com`
-
----
-
-### 💾 Time Machine - macOS Backups
-
-**What:** Network Time Machine server via SMB. Your Mac backs up automatically over Wi-Fi.
-
-**Access:** `smb://YOUR_IP/CoreX_Backup` or auto-discovered in System Settings → Time Machine.
-
----
-
-### 📊 Uptime Kuma + Grafana + Prometheus - Monitoring
-
-**What:** Uptime Kuma for status pages and alerting (email, Slack, Discord, Telegram) + Grafana + Prometheus for full metrics and dashboards.
-
-**Quick start:** Import Grafana dashboard ID `1860` (Node Exporter Full).
-
-**Access:** Status at `https://status.yourdomain.com` / Grafana at `https://grafana.yourdomain.com`
-
----
-
-### 🤖 AI Stack - Ollama + Open WebUI + Browserless
-
-**What:** Run LLMs locally with a ChatGPT-like interface + headless Chrome for AI agents. `llama3.2:3b` is pulled automatically.
-
-**Recommended models:**
-
-- `llama3.2:3b` — Fast, good for chat (3GB RAM)
-- `mistral:7b` — Balanced quality/speed (7GB RAM)
-- `codellama:7b` — Coding assistant (7GB RAM)
-
-**Access:** Chat at `https://ai.yourdomain.com` / Ollama API at `http://YOUR_IP:11434`
-
----
-
-### 🖥 CoreX Dashboard - Web GUI
-
-**What:** Go + HTMX web interface for managing all CoreX services. Start, stop, update, and repair services from a browser — no SSH required. ~15MB Docker image, single binary.
-
-**Access:** `https://dashboard.yourdomain.com`
-
----
-
-### 🛡 CrowdSec - Community IPS
-
-**What:** Community-powered intrusion prevention. Detects brute force, CVE exploits, and bot abuse. Shares threat intel globally — you block attackers before they target you.
+Traefik enforces HTTP Basic auth in front of it. To read the password:
 
 ```bash
-docker exec crowdsec cscli decisions list    # View blocked IPs
-docker exec crowdsec cscli metrics           # View detection stats
+sudo cat /mnt/corex-data/docker-configs/dashboard/.dashboard-password
 ```
 
----
-
-### 📧 Outbound Email — Why You Need a Relay
-
-Nextcloud cannot send password resets, share notifications or activity digests
-until SMTP is configured, and its setup check only reports the config as "not
-set or verified" without saying what breaks.
-
-**Self-hosting mail on a home connection usually cannot work**, regardless of
-which mail server you run. Check yours before trying:
+To change it:
 
 ```bash
-# Inbound: can mail reach you at all?
-nc -z -G 8 $(curl -s https://api.ipify.org) 25 && echo "25 open" || echo "25 BLOCKED"
+sudo DASHBOARD_PASS='your-new-password' bash corex-manage.sh repair dashboard
+```
 
-# Outbound: can you deliver directly?
+The password survives repairs. It is stored in that file, mode 600, rather than
+regenerated each run.
+
+### What the tabs do
+
+The Services tab shows a health badge per service with buttons to start, stop,
+update, or repair, and streams container logs. Storage breaks usage down by
+service and can trigger a cleanup. Network lists every service URL with its
+status and certificate expiry. System shows host details and a command
+reference.
+
+Every button shells out to `corex-manage.sh`, so the GUI and the CLI cannot
+drift apart. Service names and actions are checked against an allowlist on the
+server.
+
+### Reaching it
+
+On the LAN, `dashboard.yourdomain.com` has to resolve to your server.
+`corex manage lan-setup` arranges that through AdGuard. Failing that, add a
+hosts entry on your laptop.
+
+From outside, the dashboard is not published through Cloudflare Tunnel unless
+you add a public hostname for it yourself:
+
+```
+Subdomain: dashboard    Service: http://corex-dashboard:8080
+```
+
+Think about that one before you do it. The dashboard can stop and update every
+service on the box, and Basic auth over HTTPS is all that stands in front. LAN
+only is the safer default, or put Cloudflare Access in front of the hostname.
+
+### The Traefik dashboard is a different thing
+
+Traefik has its own dashboard, and CoreX binds it to the server's loopback
+because it exposes your full routing table. Docker published ports skip UFW, so
+binding it anywhere else would put it on your LAN. Reach it over SSH:
+
+```bash
+ssh -L 8080:127.0.0.1:8080 youruser@your-server
+# then open http://localhost:8080/dashboard/ on your own machine
+```
+
+## HTTPS and certificates
+
+Traefik gets certificates from Let's Encrypt and renews them without being
+asked. Which challenge it uses matters a great deal on a home connection.
+
+### Use DNS-01 if your ISP blocks ports
+
+The default challenge, TLS-ALPN-01, needs Let's Encrypt to reach port 443 on
+your server from the internet. Most residential ISPs block that, and CGNAT
+makes it impossible either way. Check yours:
+
+```bash
+PUB=$(curl -s https://api.ipify.org)
+for p in 80 443; do nc -z -G 8 "$PUB" $p && echo "$p open" || echo "$p blocked"; done
+```
+
+If either is blocked, use DNS-01 instead. It proves you control the domain by
+writing a TXT record through the Cloudflare API, so it needs no inbound
+connectivity at all, and it can issue wildcards.
+
+1. Go to dash.cloudflare.com, then My Profile, then API Tokens, then Create
+   Token.
+2. Use the "Edit zone DNS" template.
+3. Under Zone Resources, include only your zone.
+4. Create the token and copy it.
+
+```bash
+sudo EMAIL='you@example.com' CLOUDFLARE_DNS_API_TOKEN='your-token' \
+  bash corex-manage.sh repair traefik
+```
+
+Certificates appear within a minute or so. Check:
+
+```bash
+sudo jq -r '.myresolver.Certificates | length' \
+  /mnt/corex-data/docker-configs/traefik/acme.json
+```
+
+Rotate the token whenever you like. Existing certificates keep working, since
+the token is only needed at renewal, roughly every 60 days. Create a new one,
+apply it with the same command, then delete the old one in Cloudflare.
+
+### If Let's Encrypt cannot work
+
+CoreX generates its own certificate authority and a wildcard certificate for
+your domain, and uses it as Traefik's default certificate. Install the CA on
+each device and you get a clean padlock on your LAN:
+
+```bash
+scp your-server:/mnt/corex-data/docker-configs/traefik/certs/ca.crt ~/corex-ca.crt
+
+# macOS
+sudo security add-trusted-cert -d -r trustRoot \
+  -k /Library/Keychains/System.keychain ~/corex-ca.crt
+```
+
+On iOS, AirDrop the file, then enable it under Settings, General, About,
+Certificate Trust Settings. On Android, use Settings, Security, Encryption,
+Install from storage.
+
+CoreX writes that default certificate only when no DNS token is configured. A
+wildcard default matches every hostname, which satisfies Traefik's TLS lookup
+and stops it from ever asking Let's Encrypt for anything. With a token
+present, real certificates cover every route and no device needs the CA.
+
+## Cloudflare Tunnel
+
+The `cloudflared` container opens an outbound connection to Cloudflare and
+holds it. Requests arrive over that connection, so nothing has to be reachable
+from the internet and you never touch your router. DDoS protection and the WAF
+come with it on the free plan.
+
+### Setting it up
+
+Add your domain to Cloudflare and point your registrar's nameservers at the two
+Cloudflare gives you. Wait for the dashboard to show the domain as Active.
+
+At one.dash.cloudflare.com, go to Networks, then Tunnels, then Create a tunnel.
+Pick Cloudflared as the connector and name it. On the install screen, ignore
+the install commands, because CoreX runs the connector for you. You only need
+the token, which is the long string after `--token`.
+
+```bash
+sudo CLOUDFLARE_TUNNEL_TOKEN='eyJhIjoi...' bash corex.sh install
+
+# or on an install that already exists
+sudo CLOUDFLARE_TUNNEL_TOKEN='eyJhIjoi...' bash corex-manage.sh repair cloudflared
+```
+
+Confirm the connector registered:
+
+```bash
+sudo docker logs cloudflared --tail 20   # look for "Registered tunnel connection"
+```
+
+### Public hostnames use container names
+
+For each service you want reachable from outside, add a Public Hostname under
+your tunnel:
+
+| Subdomain | Type | URL |
+|---|---|---|
+| `nextcloud` | HTTP | `http://nextcloud:80` |
+| `immich` | HTTP | `http://immich-server:2283` |
+| `vault` | HTTP | `http://vaultwarden:80` |
+| `n8n` | HTTP | `http://n8n:5678` |
+| `mail` | HTTP | `http://stalwart:8080` |
+| `dashboard` | HTTP | `http://corex-dashboard:8080` |
+
+The URL has to be the container name and its internal port. This is where most
+setups go wrong. `cloudflared` runs inside the `proxy-net` Docker network, so
+`localhost` means the cloudflared container itself, which serves nothing.
+`nextcloud:80` resolves through Docker's DNS.
+
+Use the internal port too. Grafana publishes `3002:3000` on the host, but the
+tunnel URL is `http://grafana:3000`.
+
+Cloudflare creates the DNS records for you.
+
+### What to leave off the internet
+
+Publish only what you need. AdGuard's admin panel, Portainer, and the CoreX
+Dashboard can all take control of the machine, so keep them on the LAN or put
+Cloudflare Access in front of them.
+
+## LAN fast path
+
+By default a laptop on your own network resolves `nextcloud.yourdomain.com` to
+Cloudflare, so a local upload leaves your house and comes back. `lan-setup`
+points LAN clients at the server's local address instead:
+
+```bash
+sudo bash corex-manage.sh lan-setup
+```
+
+A DNS override alone is not enough, because browsers have four other ways to
+reach Cloudflare anyway. `lan-setup` deals with all of them: SVCB and HTTPS DNS
+records that carry Cloudflare's addresses, Chrome's cached QUIC connections,
+Chrome's built-in DNS client, and IPv6 records pointing at Cloudflare's edge.
+
+Do not add a second DNS server alongside AdGuard. Some queries will go to the
+fallback, come back with a Cloudflare address, and send that traffic out over
+the internet again.
+
+## Outbound email
+
+Nextcloud cannot send password resets, share notifications, or activity digests
+until SMTP is set up. Its own warning says the configuration is "not set or
+verified" without mentioning what breaks.
+
+Self-hosting mail on a home connection usually cannot work, whichever mail
+server you run. Check before you try:
+
+```bash
+PUB=$(curl -s https://api.ipify.org)
+
+nc -z -G 8 "$PUB" 25 && echo "inbound 25 open" || echo "inbound 25 blocked"
 timeout 8 bash -c 'cat </dev/null >/dev/tcp/aspmx.l.google.com/25' \
-  && echo "outbound 25 open" || echo "outbound 25 BLOCKED"
-
-# Reverse DNS — receiving servers check this
-dig +short -x $(curl -s https://api.ipify.org)
+  && echo "outbound 25 open" || echo "outbound 25 blocked"
+dig +short -x "$PUB"    # empty means no reverse DNS
 ```
 
-Most residential ISPs block port 25 in **both** directions, and you cannot set
-a `PTR` record on a residential IP — which alone causes Gmail and Outlook to
-reject or spam-file your mail. Cloudflare Tunnel does not help: the free tunnel
-carries HTTP only, not SMTP.
+Most residential ISPs block port 25 in both directions, and you cannot set a
+PTR record on a residential address, which by itself makes Gmail and Outlook
+reject or spam-file your mail. Cloudflare Tunnel does not help here, because
+the free tunnel carries HTTP and not SMTP.
 
-Submission (587) is normally open, so **relaying through an authenticated
-provider works where direct delivery does not**:
+Submission on port 587 is normally open, so relaying through a provider works
+where direct delivery does not:
 
 ```bash
 sudo NC_SMTP_HOST=smtp.gmail.com \
@@ -382,736 +395,275 @@ sudo NC_SMTP_HOST=smtp.gmail.com \
      bash corex-manage.sh mail-setup
 ```
 
-Or run it interactively and it will prompt (password input is hidden):
+Run it without arguments to be prompted instead, with the password hidden. It
+picks the encryption mode from the port, since 587 uses STARTTLS and 465 uses
+implicit TLS, and getting that wrong is the usual cause of "email could not be
+sent". It also checks the port is reachable before you start suspecting your
+password.
+
+Gmail needs an App Password from myaccount.google.com/apppasswords, not your
+account password, and the option only appears once 2-Step Verification is on.
+Brevo, Fastmail, Resend, and Postmark all work the same way.
+
+Test it:
 
 ```bash
-sudo bash corex-manage.sh mail-setup
+sudo docker exec -u www-data nextcloud php occ mail:test you@example.com
 ```
 
-**Gmail requires an App Password**, not your account password — create one at
-[myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords)
-(needs 2-Step Verification enabled). Brevo, Fastmail, Resend and Postmark all
-work the same way.
+For incoming mail, Cloudflare Email Routing forwards `you@yourdomain.com` to a
+mailbox you already have, for free. It takes over your MX record, so a
+self-hosted mail server must not also claim it.
 
-The command verifies the port is actually reachable before you go blaming
-credentials, then:
+Stalwart is included for people who do have a public IP and can set a PTR
+record, which in practice means a small VPS. On a home line it can still serve
+mailboxes over IMAP on your LAN, but it will not exchange mail with the
+internet.
+
+## Thermal protection
+
+Small machines often use mobile CPUs in cases with limited cooling. Under
+sustained container load they reach their thermal limit and the CPU cuts power
+itself. The kernel logs nothing and flushes nothing, so you get a silent crash,
+a possibly corrupt database, and a possibly broken package database if it
+happened during an upgrade.
+
+CoreX watches the temperature every 30 seconds and sheds container load instead
+of waiting for that:
+
+| Temperature | What happens |
+|---|---|
+| 80C | logged, nothing else |
+| 85C | stops containers CoreX did not deploy, then the `ai` services |
+| 90C | also stops monitoring, productivity, storage, and backup services |
+| 97C | shuts down cleanly rather than letting the hardware cut power |
+
+Containers come back on their own once the temperature drops. Traefik, the
+security services, and mail are never stopped, so the machine stays reachable.
+Containers deployed outside CoreX go first, because they carry no resource
+limits and are usually the reason it got hot.
+
+Thresholds live in `/etc/corex/thermal.conf`. Set `THERMAL_ENABLED=false` to
+turn it off. A reading has to hold for three consecutive samples before
+anything is stopped, so a brief spike during a backup does not cost you your
+services.
+
+Alongside it, `corex-blackbox.timer` writes temperature, load, memory, and
+throttle counts to `/mnt/corex-data/blackbox.log` every 20 seconds. When a
+machine dies without warning, the last line in that file tells you what killed
+it. `corex-boot-repair.service` then runs on the next boot, before the apt
+timers, and repairs a package database left half-configured by the crash.
+
+Check the current state with:
 
 ```bash
-docker exec -u www-data nextcloud php occ mail:test you@example.com
+sudo bash corex-manage.sh health
 ```
 
-**For inbound mail**, use Cloudflare Email Routing (free) to forward
-`you@yourdomain.com` to an existing mailbox. Note that it takes ownership of
-your `MX` record, so a self-hosted mail server must not also claim it.
+## UPS monitoring
 
-**Stalwart Mail** is included for people who *do* have a public IP with a
-settable `PTR` — typically a small VPS. On a residential line it can still
-serve LAN mailboxes over IMAP, but it will not exchange mail with the internet.
-
----
-
-### 🔒 Cloudflare Tunnel — Step-by-Step Setup
-
-**What:** An encrypted tunnel from Cloudflare's edge to your server. No port
-forwarding, no static IP, no router configuration. Works behind CGNAT, in a
-rented flat, or on a hotel connection. DDoS protection and WAF included on the
-free tier.
-
-**How it works:** the `cloudflared` container makes an *outbound* connection to
-Cloudflare and holds it open. Inbound requests arrive over that existing
-connection, so nothing needs to be reachable from the internet.
-
-#### 1. Point your domain at Cloudflare
-
-Add your domain to Cloudflare (free plan is fine) and switch your registrar's
-nameservers to the two Cloudflare gives you. Wait until the dashboard shows the
-domain as **Active** — nothing below works until it does.
-
-#### 2. Create the tunnel
-
-1. Go to **[one.dash.cloudflare.com](https://one.dash.cloudflare.com)** →
-   **Networks** → **Tunnels** → **Create a tunnel**
-2. Choose **Cloudflared** as the connector type
-3. Name it (e.g. `corex`) and click **Save tunnel**
-4. On the install screen, **ignore the install commands** — CoreX runs
-   `cloudflared` for you. You only need the **token**: the long string in the
-   displayed command after `--token`
-
-#### 3. Give CoreX the token
-
-Either paste it during the interactive installer when prompted, or set it
-before running:
+CoreX installs NUT on the host rather than in a container, because `upsmon` has
+to keep working while Docker is shutting down.
 
 ```bash
-sudo CLOUDFLARE_TUNNEL_TOKEN='eyJhIjoi...' bash corex.sh install
+sudo bash corex-manage.sh add ups
 ```
 
-On an existing install:
+It detects a USB UPS automatically. On low battery it stops every container
+with a 30 second grace period, which is enough for MariaDB and PostgreSQL to
+checkpoint, then halts. Every step has a timeout, so one stuck container cannot
+spend the rest of the battery.
 
 ```bash
-sudo CLOUDFLARE_TUNNEL_TOKEN='eyJhIjoi...' bash corex-manage.sh repair cloudflared
+upsc corex-ups@localhost              # live status
+upsc corex-ups@localhost battery.runtime
+grep ups- /mnt/corex-data/blackbox.log   # events
 ```
 
-Verify the connector came up — the Cloudflare dashboard should show the tunnel
-as **Healthy**:
+Test it before you rely on it. Unplug the UPS from the wall and check that an
+ONBATT event appears in the blackbox log. Finding out during a real outage is
+not the time.
+
+If no UPS is connected, NUT is installed but left disabled, because a monitor
+configured against a device that is not there can shut the machine down for no
+reason.
+
+## Backups
+
+Restic runs nightly at 02:00 and writes an encrypted, deduplicated snapshot to
+`/mnt/corex-data/backups/restic-repo`. It keeps 7 daily, 4 weekly, and 6
+monthly snapshots.
 
 ```bash
-sudo docker logs cloudflared --tail 20    # expect "Registered tunnel connection"
+sudo /usr/local/bin/corex-backup.sh     # run one now
+sudo /usr/local/bin/corex-restore.sh    # interactive restore
+sudo restic -r /mnt/corex-data/backups/restic-repo snapshots
 ```
 
-#### 4. Add public hostnames — use container names, not localhost
+The repository password is in `/root/corex-credentials.txt`. Do not change it
+after setup, because that invalidates the repository and every snapshot in it.
 
-For each service you want reachable from outside, add a **Public Hostname**
-under your tunnel (**Tunnels** → your tunnel → **Public Hostname** → **Add**):
+A backup on the same SSD as the data protects you from mistakes and not from
+losing the drive. Copy the repository somewhere else as well, whether that is
+another disk or object storage.
 
-| Subdomain | Domain | Type | URL |
-|---|---|---|---|
-| `nextcloud` | yourdomain.com | HTTP | `http://nextcloud:80` |
-| `immich` | yourdomain.com | HTTP | `http://immich-server:2283` |
-| `vault` | yourdomain.com | HTTP | `http://vaultwarden:80` |
-| `n8n` | yourdomain.com | HTTP | `http://n8n:5678` |
-| `mail` | yourdomain.com | HTTP | `http://stalwart:8080` |
-| `dashboard` | yourdomain.com | HTTP | `http://corex-dashboard:8080` |
+## Security
 
-> **This is the single most common mistake.** The URL must be the **Docker
-> container name and its internal port** — *not* `localhost`, and *not* the
-> host-mapped port. `cloudflared` runs inside the `proxy-net` Docker network,
-> so `localhost` means *the cloudflared container itself*, which serves
-> nothing. `nextcloud:80` resolves via Docker's internal DNS.
->
-> Use the container's **internal** port too: Grafana maps `3002:3000` on the
-> host, but the tunnel URL is `http://grafana:3000`.
+The installer moves SSH to a non-default port, disables root login, and allows
+only modern ciphers and key exchange algorithms. Fail2ban runs three jails,
+including one that gives repeat offenders a 30 day ban. UFW denies inbound
+traffic by default. AppArmor is enabled. CrowdSec, if you install it, adds
+iptables DROP rules for addresses it sees attacking you.
 
-Cloudflare creates the DNS records automatically. There is no need to add
-`A`/`CNAME` records by hand.
+Kernel parameters cover both hardening and throughput: reverse path filtering,
+SYN cookies, no source routing, BBR congestion control, 64MB TCP buffers, and
+TCP Fast Open.
 
-#### 5. What NOT to expose
+`vm.dirty_ratio` is 10 rather than the Linux default. A higher value lets
+gigabytes of written data sit in RAM, and an unclean shutdown loses all of it,
+which is how databases get corrupted.
 
-Only publish what you actually need reachable from the internet. In particular:
+Unattended upgrades install security patches, but never the kernel, `libc6`, or
+`systemd`. Restricting the origin to `-security` is not enough on its own,
+because Ubuntu ships kernel updates through that origin. An unattended kernel
+upgrade interrupted by a crash can leave a machine that will not boot. Apply
+those deliberately:
 
-- **AdGuard** — a public DNS admin panel is a liability
-- **Portainer** and **CoreX Dashboard** — both can control every container;
-  keep them LAN-only, or put **Cloudflare Access** in front of them
-- **Traefik dashboard** — loopback only by design; use an SSH tunnel
+```bash
+sudo bash corex-manage.sh os-upgrade
+```
 
-#### Local traffic should not go through Cloudflare
+That command refuses to start if the CPU is above 85C, if the package database
+is already dirty, or if the machine has been up for less than 15 minutes.
 
-By default, LAN devices resolving `nextcloud.yourdomain.com` are sent out to
-Cloudflare and back — so a local upload crosses your internet connection twice.
-Run `corex manage lan-setup` to make LAN clients resolve straight to the
-server's local IP. External access continues to work unchanged. See
-[LAN Fast-Path](#-lan-fast-path-v210) for the details, including the browser
-behaviours that defeat a naive DNS override.
+## Architecture
 
-#### Troubleshooting
+```
+Internal disk                 External SSD (/mnt/corex-data)
+  Ubuntu 24.04                  docker-configs/<service>/   generated compose
+  /var/lib/docker               service-data/<service>/     databases, uploads
+    images, build cache         timemachine-data/           Mac backups
+                                backups/restic-repo/        encrypted snapshots
+                                blackbox.log                health samples
+```
+
+Three Docker networks keep things apart. `proxy-net` carries anything
+web-facing plus Traefik and the tunnel. `monitoring-net` isolates Prometheus
+and its exporters so they are not reachable from the web. `ai-net` sandboxes
+Ollama and Browserless, which matters because Browserless executes code.
+Grafana and Open WebUI sit on two networks each, deliberately.
+
+Traefik routes by Docker label, so a service becomes reachable by declaring its
+own route. `loadbalancer.server.port` is the container's internal port, not the
+host-mapped one.
+
+State lives in `/etc/corex/state.json`: which services are installed, the
+domain, the server address, and the SSH port. `corex-manage` and `doctor` read
+it to know what they are managing.
+
+## Troubleshooting
+
+Start here:
+
+```bash
+sudo bash corex.sh doctor               # service health, then auto-repair
+sudo bash corex-manage.sh health        # temperature, SMART, package integrity
+sudo bash corex-manage.sh network-check # HTTPS, certificates, DNS per service
+```
 
 | Symptom | Cause |
 |---|---|
-| **Error 1033** / tunnel unavailable | `cloudflared` is not running or cannot reach Cloudflare — check `docker logs cloudflared` |
-| **502 Bad Gateway** | Public Hostname URL is wrong — almost always `localhost` instead of a container name, or the host-mapped port instead of the internal one |
-| **Cloudflare "Active" but no response** | Public Hostname missing for that subdomain |
-| **HTTP 413 on large uploads** | Cloudflare's free plan caps request bodies at 100MB. CoreX sets Nextcloud's chunk size to 10MB for this reason (gotcha #12) |
-| Tunnel healthy, site loads slowly on LAN | Expected without `lan-setup` — traffic is round-tripping through Cloudflare |
+| Browser warns about the certificate | Let's Encrypt has issued nothing. Check `acme.json`, then use DNS-01 |
+| 502 through the tunnel | The Public Hostname points at `localhost` or a host port instead of a container name and internal port |
+| Cloudflare Error 1033 | `cloudflared` is not running or cannot reach Cloudflare |
+| Uploads over 100MB fail | Cloudflare's free plan caps request bodies at 100MB. CoreX sets Nextcloud's chunk size to 10MB for this |
+| Slow transfers on the LAN | Traffic is going out through Cloudflare. Run `lan-setup` |
+| Nextcloud returns 503 | It is in maintenance mode. `occ maintenance:mode --off`, after any pending upgrade finishes |
+| Services stopped by themselves | The thermal guardian shed load. Check `blackbox.log` and the temperature |
+| Machine crashes with nothing in the log | Almost certainly heat. The last line of `blackbox.log` will show it |
+| Traefik dashboard refuses connections | It is bound to the server's loopback. Use an SSH tunnel |
 
----
-
-## 📋 Post-Install Guide
-
-After the script completes, follow these steps **in order**:
-
-### 1. AdGuard Home (DNS) - Do This First
-
-1. Open `http://YOUR_IP:3000` and complete the setup wizard
-2. Run the automated LAN fast-path setup — it adds the wildcard DNS rewrite and prints router/device instructions:
-   ```bash
-   sudo bash corex.sh manage lan-setup
-   ```
-3. Set your **router's primary DNS to `YOUR_IP`** (printed at the end of `lan-setup`)
-4. Now all `*.yourdomain.com` lookups from LAN devices resolve to your server — file uploads, photo syncs, and vault access all stay on the local network at full speed, bypassing Cloudflare entirely
-
-### 2. Cloudflare Tunnel (External Access)
-
-In [Cloudflare Dashboard](https://one.dash.cloudflare.com) → Networks → Tunnels → Public Hostnames, add:
-
-| Hostname                   | Service | URL                  |
-| -------------------------- | ------- | -------------------- |
-| `photos.yourdomain.com`    | HTTP    | `immich-server:2283` |
-| `nextcloud.yourdomain.com` | HTTP    | `nextcloud:80`       |
-| `vault.yourdomain.com`     | HTTP    | `vaultwarden:80`     |
-| `n8n.yourdomain.com`       | HTTP    | `n8n:5678`           |
-| `mail.yourdomain.com`      | HTTP    | `stalwart:8080`      |
-| `status.yourdomain.com`    | HTTP    | `uptime-kuma:3001`   |
-| `grafana.yourdomain.com`   | HTTP    | `grafana:3000`       |
-| `ai.yourdomain.com`        | HTTP    | `open-webui:8080`    |
-
-> ⚠️ Use **container names**, not `localhost`. Cloudflared runs inside Docker on `proxy-net`. Enable **No TLS Verify** under each hostname's TLS settings.
-
-### 3. Create Admin Accounts
-
-Open each service immediately — the first visitor becomes admin:
-
-- Portainer: `https://YOUR_IP:9443`
-- Nextcloud: `https://nextcloud.yourdomain.com`
-- Immich: `https://photos.yourdomain.com`
-- Vaultwarden: `https://vault.yourdomain.com`
-- n8n: `https://n8n.yourdomain.com`
-- Uptime Kuma: `https://status.yourdomain.com`
-- Open WebUI: `https://ai.yourdomain.com`
-
-### 4. View All Credentials
+Traefik logs at INFO, which is where ACME problems show up:
 
 ```bash
-cat /root/corex-credentials.txt           # Quick reference
-cat /root/CoreX_Dashboard_Credentials.md  # Full guide with every URL and setup instruction
+sudo docker logs traefik 2>&1 | grep -i acme
 ```
 
----
+## Ports
 
-## 🔧 Managing Services
+| Port | Service | Exposure |
+|---|---|---|
+| 22 or custom | SSH | LAN, or wherever you allow it |
+| 80, 443 | Traefik | public if your ISP permits |
+| 53 | AdGuard DNS | LAN |
+| 8080 | Traefik dashboard | loopback only |
+| 445, 137-139 | Time Machine over SMB | LAN |
+| 11434 | Ollama | LAN |
+| 25, 587, 465, 143, 993 | Stalwart mail | see the email section |
 
-v2.0.0 introduced full post-install service management. v2.1.0 added LAN fast-path automation. v2.2.0 added network performance tuning and hardened security. v2.5.0 added storage management, hard resource limits, and security fixes. v3.0.0 introduced the web dashboard, CrowdSec firewall bouncer, and the `network-check` diagnostic command. v3.1.0 added thermal load shedding, boot-time dpkg self-repair, UPS monitoring, and the `health` / `os-upgrade` commands. v3.2.0 made `repair` regenerate compose files so fixes actually reach existing installs, and documented Dashboard and Cloudflare Tunnel setup. No need to re-run the installer to add, fix, or configure services.
+Everything else reaches you through Traefik on 443.
 
-### Health Check & Auto-Repair
+## Uninstall
 
 ```bash
-sudo bash corex.sh doctor
+sudo bash nuke-corex.sh --dry-run   # show what would be removed
+sudo bash nuke-corex.sh             # remove it
 ```
 
-Checks every installed service and automatically repairs any that are unhealthy — without touching data.
+The dry run is worth reading first. Removing data requires typing a
+confirmation word, and the script tells you which paths it is about to touch.
 
-```
-CoreX Pro — Service Health
-────────────────────────────────────────────────────
-  SERVICE          STATUS       ACTION
-  ──────────────────────────────────────────────────
-  traefik          HEALTHY
-  nextcloud        HEALTHY
-  immich           UNHEALTHY    → auto-repairing...
-  vaultwarden      HEALTHY
-  n8n              MISSING      → run: corex manage add n8n
-```
+## Adding a service
 
-### Add / Remove Services
+Drop one file in `lib/services/` and it appears in the installer wizard,
+`corex-manage list`, `doctor`, and `update`. No core file changes.
+
+The file declares its metadata and seven functions:
 
 ```bash
-sudo bash corex.sh manage add stalwart      # Add a service skipped during install
-sudo bash corex.sh manage add ai            # Add the full AI stack
-sudo bash corex.sh manage remove n8n        # Remove (prompts about data deletion)
-sudo bash corex.sh manage list              # List all installed + available services
+SERVICE_NAME="gitea"
+SERVICE_LABEL="Gitea, self-hosted Git"
+SERVICE_CATEGORY="productivity"   # also drives thermal shed order
+SERVICE_REQUIRED=false
+SERVICE_NEEDS_DOMAIN=true
+SERVICE_RAM_MB=512
+SERVICE_DISK_GB=5
+
+gitea_dirs()        { ... }   # directories, with the right ownership
+gitea_firewall()    { ... }   # UFW rules, if any
+gitea_deploy()      { ... }   # write compose, start, record state
+gitea_destroy()     { ... }   # stop, optionally remove data
+gitea_status()      { ... }   # HEALTHY, UNHEALTHY, or MISSING
+gitea_repair()      { ... }   # regenerate compose, then recreate
+gitea_credentials() { ... }   # lines for the summary document
 ```
 
-### Update Container Images
+`SERVICE_CATEGORY` decides when the thermal guardian stops your service, so
+pick it accurately. `repair` must regenerate the compose file, or your fixes
+will never reach anyone who installed before you shipped them.
+
+Tests run without root or Docker:
 
 ```bash
-sudo bash corex.sh manage update --all      # Update all installed services
-sudo bash corex.sh manage update nextcloud  # Update a specific service
+bats test/unit/                      # module contract and thermal logic
+bash -n install-corex-master.sh      # parse check
 ```
 
-### Start / Stop Without Removing
-
-```bash
-sudo bash corex.sh manage disable immich    # Stop container (data preserved)
-sudo bash corex.sh manage enable immich     # Start again
-```
-
-### ⚡ LAN Fast-Path (Full-Speed Local Transfers)
-
-When your devices use AdGuard (on the CoreX server) as their DNS, `*.yourdomain.com` resolves to the server's **local IP** instead of Cloudflare. File uploads, photo syncs, and vault access all stay entirely on the local network at full LAN speed (~1 Gbps), bypassing the Cloudflare Tunnel.
-
-```bash
-sudo bash corex.sh manage lan-setup
-```
-
-This command:
-- Automatically adds the wildcard `*.yourdomain.com → SERVER_IP` DNS rewrite in AdGuard via API
-- Prints step-by-step DNS configuration instructions for router, macOS, Windows, iPhone, and Android
-- Includes a verification command to confirm the fast-path is active
-
-**External access** through Cloudflare Tunnel continues to work unchanged for devices off the LAN.
-
-### 🖥 CoreX Dashboard — Web GUI
-
-A lightweight web GUI (Go + HTMX, ~20MB image, container `corex-dashboard`) for
-day-to-day operations without SSH.
-
-> **Built from source, not pulled.** The image is compiled on your server from
-> `dashboard/` on first install, so there is no registry dependency. Expect
-> `corex manage add dashboard` to take 1–2 minutes the first time.
-
-#### How to log in
-
-| | |
-|---|---|
-| **URL** | `https://dashboard.yourdomain.com` |
-| **Username** | `admin` |
-| **Password** | auto-generated — see below |
-| **Auth** | HTTP Basic, enforced by Traefik (`dash-auth` middleware) |
-
-The password is generated at install and printed in the post-install summary.
-To retrieve it later, on the server:
-
-```bash
-# Primary location (survives re-runs, mode 600)
-sudo cat /mnt/corex-data/docker-configs/dashboard/.dashboard-password
-
-# Also recorded in the credentials file
-sudo grep -A2 -i dashboard /root/corex-credentials.txt
-```
-
-To change it, set the password and repair the service:
-
-```bash
-sudo DASHBOARD_PASS='your-new-password' bash corex-manage.sh repair dashboard
-```
-
-#### Reaching it from the LAN
-
-The dashboard is routed by Traefik, so `dashboard.yourdomain.com` must resolve
-to your server. If you ran `corex manage lan-setup`, the AdGuard wildcard
-already handles this and LAN access works at full local speed. Otherwise add a
-hosts entry on your client:
-
-```
-192.168.1.100   dashboard.yourdomain.com
-```
-
-#### Reaching it from outside your network
-
-The dashboard is **not** exposed through Cloudflare Tunnel by default — you
-must add a public hostname for it deliberately. See
-[Cloudflare Tunnel setup](#-cloudflare-tunnel--step-by-step-setup):
-
-```
-Subdomain: dashboard    Service: http://corex-dashboard:8080
-```
-
-Think carefully before doing this: the dashboard can start, stop and update
-every service on the box. Basic Auth over HTTPS is the only thing in front of
-it. Prefer LAN-only access, or put Cloudflare Access in front of the hostname.
-
-#### What each tab does
-
-| Tab | Contents |
-|---|---|
-| **Services** | Health badges (HEALTHY / UNHEALTHY / MISSING), start/stop/update/repair, live log streaming via SSE |
-| **Storage** | OS disk vs SSD breakdown, per-service usage, cleanup trigger |
-| **Network** | Service URLs with status, SSL expiry countdown, LAN setup reminder |
-| **System** | Host info, kernel, uptime, Docker and CoreX versions, command reference |
-
-Every action shells out to `corex-manage.sh`, so the GUI and CLI cannot drift
-apart. Service names and actions are allowlisted server-side.
-
-#### If you cannot reach it
-
-```bash
-sudo docker ps --filter name=corex-dashboard      # is it running?
-sudo bash corex-manage.sh repair dashboard        # rebuild + re-apply config
-sudo docker logs corex-dashboard --tail 50        # why it failed
-```
-
-A `404` from Traefik usually means DNS resolves but the router did not match —
-check the hostname spelling. A `502` means Traefik matched but the container is
-down. Repeated password prompts mean the Basic Auth hash and your password
-disagree; reset it with the `DASHBOARD_PASS` command above.
-
-### 🔍 Network Check
-
-Test connectivity, SSL certificate health, and DNS routing for every installed service:
-
-```bash
-sudo bash corex.sh manage network-check
-```
-
-Output example:
-```
-CoreX Pro — Network Check
-──────────────────────────────────────────────────────
-  Domain:    example.com
-  Server IP: 192.168.1.100
-
-  SERVICE              URL                                    HTTP     CERT     DNS
-  ──────────────────────────────────────────────────────────────────────────────────
-  nextcloud            https://nextcloud.example.com          200      87d      LAN ✓
-  immich               https://photos.example.com             200      87d      LAN ✓
-  vaultwarden          https://vault.example.com              200      87d      LAN ✓
-  n8n                  https://n8n.example.com                200      87d      WAN (104.21.x.x)
-  ──────────────────────────────────────────────────────────────────────────────────
-  Results: 4 OK  0 WARN  0 DOWN
-```
-
-DNS column shows `LAN ✓` when AdGuard is routing your domain to the local IP (fast-path active), or `WAN (IP)` when traffic is going through Cloudflare.
-
-### 🚀 Network Performance Tuning (Gbps File Transfers)
-
-v2.2.0 adds comprehensive network tuning that transforms file transfer speeds from KB/s to hundreds of MB/s:
-
-```bash
-sudo bash corex.sh manage network-tune
-```
-
-This command:
-- Detects all network interfaces and their link speeds
-- Shows current vs optimal kernel network parameters
-- Applies BBR congestion control (replaces CUBIC — built by Google for high-throughput)
-- Tunes TCP buffer sizes from default ~200KB up to 64MB per socket
-- Enables TCP Fast Open, MTU path probing, and window scaling
-- Prints diagnostic tips (cable type, iperf3 testing, SMB multichannel)
-
-**What changed under the hood (automatic on new installs):**
-
-| Parameter | Before (default) | After (CoreX tuned) | Impact |
-|-----------|------------------|---------------------|--------|
-| TCP congestion | CUBIC | BBR | 2-10x throughput on LAN |
-| TCP buffer max | ~200KB | 64MB | Removes bottleneck for Gbps |
-| TCP window scaling | sometimes off | always on | Enables large transfer windows |
-| TCP Fast Open | disabled | enabled | Faster connection setup |
-| Somaxconn | 128 | 4096 | More concurrent connections |
-| Swappiness | 60 | 10 | Keeps hot data in RAM |
-
-**Time Machine (SMB) improvements:**
-- SMB3 minimum protocol enforced (disables insecure SMB1/SMB2)
-- SMB multichannel enabled (uses all NICs simultaneously)
-- 8MB read/write chunks (up from default 64KB)
-- Async I/O with sendfile for zero-copy transfers
-- Aggressive client-side caching via oplocks
-
-**Existing installs** can apply tuning without reinstalling:
-```bash
-sudo bash corex.sh manage network-tune    # Apply kernel tuning
-sudo bash corex.sh manage repair timemachine  # Rebuild SMB with optimized config
-```
-
----
-
-## 🔄 Backup & Restore
-
-CoreX uses [Restic](https://restic.net/) for encrypted, deduplicated, versioned backups.
-
-**What's backed up:** All service data (databases, uploads, mail, photos, configs, compose files).
-
-**What's NOT backed up:** Docker images (re-pulled on restore), the Restic repo itself.
-
-### Commands
-
-```bash
-sudo corex-backup.sh                    # Manual backup
-tail -20 /var/log/corex-backup.log      # View backup log
-sudo corex-restore.sh                   # Interactive restore (shows all snapshots)
-sudo corex-restore.sh abc123ef          # Restore specific snapshot
-```
-
-### Automatic Schedule
-
-Backups run daily at **3:00 AM** via cron. Retention: 7 daily, 4 weekly, 6 monthly snapshots.
-
-### Migrate to New Hardware
-
-```bash
-# On old server
-sudo corex-backup.sh
-rsync -avP /mnt/corex-data/backups/restic-repo/ new-server:/mnt/corex-data/backups/restic-repo/
-
-# On new server (after fresh CoreX install)
-sudo corex-restore.sh latest
-```
-
----
-
-## 🔒 Security
-
-CoreX implements defense-in-depth with hardened defaults:
-
-| Layer       | Tool                         | What It Does                                       |
-| ----------- | ---------------------------- | -------------------------------------------------- |
-| Firewall    | UFW                          | Default deny incoming, explicit per-port allow     |
-| SSH         | Custom port + modern ciphers | Ed25519/ChaCha20 only, root disabled, 3 max tries |
-| Brute Force | Fail2ban (3 jails)           | SSH: 24hr ban, aggressive: 7-day, recidive: 30-day|
-| IPS         | CrowdSec                     | Community threat intel, blocks known attackers     |
-| Kernel      | sysctl hardening             | Anti-spoofing, SYN flood, source route rejection   |
-| Updates     | unattended-upgrades          | Automatic security patches daily                   |
-| Containers  | no-new-privileges            | Prevents privilege escalation inside containers    |
-| DNS         | resolv.conf locked           | `chattr +i` prevents tampering                     |
-| TLS         | Let's Encrypt via Traefik    | Auto-renewed HTTPS certificates                    |
-| Tunnel      | Cloudflare                   | Zero exposed ports on router, DDoS protection      |
-| SMB         | SMB3 minimum protocol        | Disables insecure SMB1/SMB2, signing enforced      |
-
-### Hardening After Install
-
-```bash
-# 1. Set up SSH keys (from your local machine)
-ssh-copy-id -p 2222 your_user@YOUR_IP
-
-# 2. Disable password auth (on the server)
-sudo sed -i 's/^#\?PasswordAuthentication .*/PasswordAuthentication no/' /etc/ssh/sshd_config
-sudo systemctl restart sshd
-
-# 3. Disable Vaultwarden signups
-# Edit /mnt/corex-data/docker-configs/vaultwarden/docker-compose.yml
-# Change SIGNUPS_ALLOWED: "true" → "false"
-cd /mnt/corex-data/docker-configs/vaultwarden && docker compose up -d
-```
-
----
-
-## 🔧 Troubleshooting
-
-### Service won't start / is broken
-
-```bash
-# Auto-detect and repair all unhealthy services
-sudo bash corex.sh doctor
-
-# Or inspect manually
-docker ps -a | grep SERVICE_NAME
-docker logs SERVICE_NAME --tail 50
-sudo bash corex.sh manage repair SERVICE_NAME
-```
-
-### 502 Bad Gateway
-
-Usually a Docker network issue. Verify the container is on `proxy-net`:
-
-```bash
-docker network inspect proxy-net | grep SERVICE_NAME
-# If missing:
-sudo bash corex.sh manage repair SERVICE_NAME
-```
-
-### Cloudflare Tunnel returns 403
-
-- Use **container names** in the service URL (e.g., `n8n:5678` not `localhost:5678`)
-- Enable **No TLS Verify** under each hostname's TLS settings in CF Dashboard
-
-### Time Machine not connecting
-
-```bash
-ss -tlnp | grep 445               # Verify SMB is listening
-docker logs timemachine --tail 20  # Check container logs
-```
-
-### AdGuard not accessible after reboot
-
-AdGuard changes its internal port after the setup wizard (3000 → 80). Fix with:
-
-```bash
-sudo bash corex.sh manage repair adguard
-```
-
-### Prometheus restart loop
-
-```bash
-# Prometheus runs as UID 65534 (nobody) — ownership must match
-sudo chown -R 65534:65534 /mnt/corex-data/service-data/prometheus
-sudo bash corex.sh manage repair monitoring
-```
-
-### iPhone .mov videos won't play (black screen)
-
-iPhone `.mov` files use HEVC (H.265) which Chrome and Firefox cannot play natively. CoreX auto-installs the Memories app which transcodes to H.264 on-demand. If videos still show a black screen:
-
-```bash
-# Check that ffmpeg is available in the Nextcloud container
-docker exec nextcloud ffmpeg -version | head -1
-
-# If missing, install it manually
-docker exec nextcloud bash -c "apt-get update -qq && apt-get install -y -qq --no-install-recommends ffmpeg"
-
-# Verify Memories transcoding config
-docker exec -u www-data nextcloud php occ config:system:get memories.vod.disable   # should be empty or "false"
-docker exec -u www-data nextcloud php occ config:system:get memories.vod.external  # should be empty or "false"
-
-# If config is wrong, set it manually
-docker exec -u www-data nextcloud php occ config:system:set memories.vod.disable --value false --type bool
-docker exec -u www-data nextcloud php occ config:system:set memories.vod.external --value false --type bool
-```
-
-### Slow file transfer speeds (KB/s or 1 MB/s)
-
-```bash
-# 1. Apply network performance tuning
-sudo bash corex.sh manage network-tune
-
-# 2. Rebuild Time Machine with optimized SMB3 config
-sudo bash corex.sh manage repair timemachine
-
-# 3. Test raw network speed (install iperf3 if needed)
-sudo apt install -y iperf3
-iperf3 -s   # Run on server
-# Then on client: iperf3 -c SERVER_IP
-
-# 4. Check cable — Cat 5e minimum for gigabit
-# Cat 5 caps at 100Mbps!
-```
-
-### Update all containers
-
-```bash
-sudo bash corex.sh manage update --all
-```
-
----
-
-## 🗺 Port Reference
-
-| Port       | Service                         | Protocol | Exposure             |
-| ---------- | ------------------------------- | -------- | -------------------- |
-| 53         | AdGuard Home (DNS)              | TCP/UDP  | LAN                  |
-| 80         | Traefik (HTTP → HTTPS redirect) | TCP      | Public via CF Tunnel |
-| 443        | Traefik (HTTPS)                 | TCP      | Public via CF Tunnel |
-| 445        | Time Machine (SMB)              | TCP      | LAN only             |
-| 2222       | SSH                             | TCP      | LAN (or VPN)         |
-| 2283       | Immich                          | TCP      | Via Traefik          |
-| 3000       | AdGuard Home (Admin UI)         | TCP      | LAN                  |
-| 3001       | Uptime Kuma                     | TCP      | Via Traefik          |
-| 3002       | Grafana                         | TCP      | Via Traefik          |
-| 3003       | Open WebUI                      | TCP      | Via Traefik          |
-| 3005       | Browserless                     | TCP      | LAN                  |
-| 5678       | n8n                             | TCP      | Via Traefik          |
-| 8000       | Coolify                         | TCP      | LAN                  |
-| 8080       | Traefik Dashboard               | TCP      | LAN                  |
-| 9090       | Prometheus                      | TCP      | Internal             |
-| 9443       | Portainer                       | TCP      | LAN                  |
-| 11434      | Ollama API                      | TCP      | LAN only             |
-| 25/587/465 | Stalwart (SMTP)                 | TCP      | Public               |
-| 143/993    | Stalwart (IMAP)                 | TCP      | Public               |
-
----
-
-## ⬆️ Upgrading from v1
-
-If you have a v1 install (no `state.json`), run the installer once — it detects the running Traefik container, reconstructs state from your existing containers, and exits without touching anything:
-
-```bash
-sudo bash corex.sh install
-# → Detected v1 install — migrating to v2 state tracking
-# → Run: sudo bash corex.sh manage status
-```
-
-No restarts. No data changes. Just state file creation so all v2 management commands work.
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! The v2 architecture makes adding services easy.
-
-**Adding a new self-hosted service:**
-
-1. Create `lib/services/yourservice.sh` following the module contract
-2. Export metadata vars: `SERVICE_NAME`, `SERVICE_LABEL`, `SERVICE_CATEGORY`, `SERVICE_RAM_MB`
-3. Implement 6 functions: `_dirs`, `_firewall`, `_deploy`, `_destroy`, `_status`, `_repair`
-4. Drop the file — the wizard, doctor, and manage commands discover it automatically
-
-**Before submitting a PR:**
-
-1. Test on a fresh Ubuntu 24.04 LTS Server install
-2. Run `bash -n` on all modified shell files (zero errors policy)
-3. Run `shellcheck` (zero warnings policy)
-4. Add a smoke test in `test/smoke/` for any new service module
-
----
-
-## 🧹 Uninstall & Rollback
-
-CoreX Pro comes with a companion nuke script that cleanly reverses everything the installer did.
-
-```bash
-# Interactive - choose what to undo
-sudo bash corex.sh nuke
-
-# Preview what would happen (changes nothing)
-sudo bash corex.sh nuke --dry-run
-
-# Full nuke (still asks for confirmation)
-sudo bash corex.sh nuke --all
-```
-
-The nuke script has 10 phases - each asks for confirmation. You can selectively undo just containers, just firewall rules, just DNS, etc. Your SSD data is preserved unless you explicitly choose to wipe it (requires typing `WIPE MY DATA`).
-
-**Full documentation:** [NUKE.md](NUKE.md)
-
----
-
-## 📁 Repo Structure
-
-```
-corex-pro/
-├── corex.sh                    # CLI entry point (all commands)
-├── install-corex-master.sh     # Thin orchestrator (~200 lines)
-├── corex-manage.sh             # Post-install service manager
-├── nuke-corex.sh               # Uninstall/rollback (10 phases)
-├── migrate-domain.sh           # Change domain across all services
-├── CLAUDE.md                   # AI assistant context (architecture + gotchas)
-├── CHANGELOG.md
-├── README.md
-├── lib/
-│   ├── common.sh               # Logging, colors, utilities
-│   ├── state.sh                # /etc/corex/state.json management
-│   ├── wizard.sh               # Interactive setup wizard (whiptail + fallback)
-│   ├── preflight.sh            # Pre-flight checks, password generation
-│   ├── drive.sh                # SSD partitioning and mounting
-│   ├── security.sh             # SSH hardening, UFW, Fail2ban, sysctl
-│   ├── docker.sh               # Docker install, network creation
-│   ├── directories.sh          # Directory structure and ownership
-│   ├── backup.sh               # Restic setup, backup/restore scripts
-│   ├── summary.sh              # Credentials file + dashboard docs
-│   └── services/               # One file per service — drop a file to add one
-│       ├── traefik.sh
-│       ├── adguard.sh
-│       ├── portainer.sh
-│       ├── nextcloud.sh
-│       ├── immich.sh
-│       ├── vaultwarden.sh
-│       ├── n8n.sh
-│       ├── stalwart.sh
-│       ├── timemachine.sh
-│       ├── coolify.sh
-│       ├── crowdsec.sh
-│       ├── cloudflared.sh
-│       ├── monitoring.sh       # Uptime Kuma + Grafana + Prometheus bundle
-│       ├── ai.sh               # Ollama + Open WebUI + Browserless bundle
-│       └── dashboard.sh        # CoreX web dashboard (Go + HTMX)
-├── dashboard/
-│   ├── main.go                 # Go HTTP server + REST API + template rendering
-│   ├── templates/              # HTMX page templates
-│   ├── static/                 # Pre-compiled TailwindCSS
-│   └── Dockerfile              # Multi-stage build → ~15MB Alpine image
-└── test/
-    ├── Dockerfile.test         # Ubuntu 24.04 + bats + shellcheck + jq
-    ├── run-tests.sh
-    ├── unit/                   # Pure bash unit tests (no Docker/root required)
-    └── smoke/                  # Validates generated docker-compose files
-```
-
----
-
-## 🔀 Domain Migration
-
-Need to change your domain? One command updates all services:
-
-```bash
-sudo bash corex.sh migrate                               # Interactive
-sudo bash corex.sh migrate olddomain.com newdomain.com   # Direct
-sudo bash corex.sh migrate --dry-run old.com new.com     # Preview only
-```
-
-Backs up all compose files, updates every reference, clears old TLS certs (Traefik auto-renews), restarts affected services, and prints a checklist of manual steps (Cloudflare Tunnel hostnames, AdGuard DNS rewrites, mobile app server URLs).
-
----
-
-## 🙏 Credits
-
-CoreX Pro builds on these excellent open-source projects:
-
-[Traefik](https://traefik.io/) • [AdGuard Home](https://adguard.com/adguard-home.html) • [Portainer](https://www.portainer.io/) • [Nextcloud](https://nextcloud.com/) • [Immich](https://immich.app/) • [Vaultwarden](https://github.com/dani-garcia/vaultwarden) • [Stalwart Mail](https://stalw.art/) • [Coolify](https://coolify.io/) • [n8n](https://n8n.io/) • [Ollama](https://ollama.com/) • [Open WebUI](https://openwebui.com/) • [Browserless](https://www.browserless.io/) • [Uptime Kuma](https://uptime.kuma.pet/) • [Grafana](https://grafana.com/) • [Prometheus](https://prometheus.io/) • [CrowdSec](https://www.crowdsec.net/) • [Restic](https://restic.net/) • [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)
-
-Inspired by the self-hosting philosophy of [NetworkChuck](https://www.youtube.com/@NetworkChuck), [Techno Tim](https://www.youtube.com/@TechnoTim), and the [r/selfhosted](https://www.reddit.com/r/selfhosted/) community.
-
----
-
-<p align="center">
-  <strong>Own your data. Own your stack.</strong>
-</p>
-<p align="center">
-  <strong>Made with ❤️ in 🇮🇳</strong>
-</p>
+## Version history
+
+v1.0.0 shipped a single-file installer with 14 services and Restic backups.
+v2.0.0 replaced it with a modular `lib/` layout, a wizard, `state.json`, and
+plugin-style services. v2.1.0 automated the LAN fast path. v2.2.0 added network
+tuning and hardened SSH, Fail2ban, and the kernel. v2.3.0 and v2.4.x fixed
+Nextcloud performance and upload failures. v2.5.0 added storage management and
+resource limits. v3.0.0 introduced the web dashboard, a working CrowdSec
+bouncer, and `network-check`. v3.1.0 added thermal load shedding, boot-time
+package repair, and UPS monitoring. v3.2.x made `repair` regenerate compose
+files so fixes reach existing installs, fixed certificate issuance behind
+blocked ports, and documented the dashboard and Cloudflare setup.
+
+See [CHANGELOG.md](CHANGELOG.md) for the detail.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
