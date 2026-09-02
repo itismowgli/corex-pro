@@ -129,197 +129,15 @@ LimitRequestBody 0
 </IfModule>
 APEOF
 
-    # ── Nextcloud config.php injection hook ──────────────────────────
-    # Runs on every container start; adds APCu local cache if missing.
-    # The Nextcloud image auto-configures Redis via REDIS_HOST env var
-    # but does NOT add APCu as local memcache — this hook fixes that.
-    #
-    # Also sets max_chunk_size to 10MB for Cloudflare compatibility.
-    # Nextcloud default is 100MB, but Cloudflare free plan rejects
-    # request bodies > 100MB, causing HTTP 413 on large uploads when
-    # accessed through the tunnel. 10MB is safe for all Cloudflare plans.
-    mkdir -p "${dir}/hooks/before-starting"
-    cat > "${dir}/hooks/before-starting/corex-memcache.sh" << 'HOOKEOF'
-#!/bin/bash
-# CoreX Pro — configure Nextcloud via occ (idempotent, injection-safe)
-#
-# All config changes use occ instead of sed to avoid fragile PHP array
-# manipulation. config:system:set writes to config.php (no DB needed);
-# config:app:set writes to the database (retry loop handles DB readiness).
-#
-# occ must run as www-data (uid 33): Nextcloud refuses to run it as root, and
-# running it as root also leaves root-owned session/cache artifacts that break
-# later calls. Dropping privileges is compatible with no-new-privileges.
-#
-# Nextcloud 34 REMOVED gosu from the image. Hardcoding it meant every occ call
-# failed with "gosu: command not found", which combined with the retry loop
-# blocked container startup for minutes and applied no configuration at all
-# (Traefik served 502 throughout).
-#
-# Each candidate is TESTED rather than assumed: a binary can be present yet
-# still fail to yield uid 33 under the container's security policy, and
-# probing with `command -v` alone was not sufficient in practice. The chosen
-# mechanism is logged so a future failure is diagnosable from the container
-# logs alone.
-CONFIG="/var/www/html/config/config.php"
-[ -f "$CONFIG" ] || exit 0
-
-_RUNAS=""
-for _cand in "gosu www-data" \
-             "setpriv --reuid=33 --regid=33 --clear-groups" \
-             "runuser -u www-data --"; do
-    # shellcheck disable=SC2086
-    set -- $_cand
-    command -v "$1" >/dev/null 2>&1 || continue
-    if [ "$($_cand id -u 2>/dev/null)" = "33" ]; then
-        _RUNAS="$_cand"
-        break
-    fi
-done
-
-# su takes a single command string rather than argv, so it needs a separate
-# code path and is kept as the last resort.
-if [ -z "$_RUNAS" ] && command -v su >/dev/null 2>&1; then
-    if [ "$(su -s /bin/sh -p www-data -c 'id -u' 2>/dev/null)" = "33" ]; then
-        _RUNAS="SU"
-    fi
-fi
-
-if [ -z "$_RUNAS" ]; then
-    echo "[corex] WARNING: no working way to drop privileges to www-data (uid 33)." >&2
-    echo "[corex] Tried gosu, setpriv, runuser, su. Skipping config hook." >&2
-    echo "[corex] Apply settings manually:" >&2
-    echo "[corex]   docker exec -u www-data nextcloud php occ <command>" >&2
-    exit 0
-fi
-echo "[corex] dropping privileges via: ${_RUNAS}"
-
-# _occ: run an occ command as www-data with up to 6 retries (30s total).
-# config:system:set calls usually succeed on the first attempt.
-# config:app:set calls may need retries while the database is initialising.
-_occ() {
-    _i=1
-    while [ "$_i" -le 6 ]; do
-        if [ "$_RUNAS" = "SU" ]; then
-            if su -s /bin/sh -p www-data -c "php /var/www/html/occ $*" 2>&1; then
-                return 0
-            fi
-        # shellcheck disable=SC2086
-        elif $_RUNAS php /var/www/html/occ "$@" 2>&1; then
-            return 0
-        fi
-        _i=$((_i + 1))
-        sleep 5
-    done
-    echo "[corex] WARNING: occ $* failed after retries" >&2
-    return 1
-}
-
-# APCu as local (single-server) memory cache — speeds up metadata lookups
-_occ config:system:set memcache.local --value '\OC\Memcache\APCu' || true
-
-# Redis for distributed file locking — prevents corruption on parallel access
-_occ config:system:set memcache.locking --value '\OC\Memcache\Redis' || true
-
-# Suppress admin panel "default_phone_region not set" warning
-_occ config:system:set default_phone_region --value 'US' || true
-
-# Set max_chunk_size to 10MB for Cloudflare compatibility.
-# Default 100MB exceeds Cloudflare free plan's body limit → HTTP 413.
-# config:app:set writes to DB — retry loop covers DB startup delay.
-_occ config:app:set files max_chunk_size --value 10485760 || true
-
-# ── Maintenance window ───────────────────────────────────────────────
-# Without this, Nextcloud runs heavy daily jobs (file scans, previews,
-# cleanup) whenever cron fires, including peak usage. On a mini server
-# those jobs are also a thermal event, so pinning them to 01:00 UTC
-# matters more here than on rented hardware. Value is an hour 0-23 UTC.
-_occ config:system:set maintenance_window_start --type=integer --value=1 || true
-
-# ── Bound Nextcloud's own log ────────────────────────────────────────
-# nextcloud.log is written by PHP, not Docker, so the daemon's
-# json-file rotation does not apply and it grows unbounded — observed
-# at 91MB in the field. 10MB with rotation keeps it useful but finite.
-_occ config:system:set log_rotate_size --type=integer --value=10485760 || true
-
-# ── Add missing database indices ─────────────────────────────────────
-# Nextcloud and its apps add indices over time but never apply them
-# automatically, so the admin panel accrues "Database missing indices"
-# warnings and queries stay slow. This is idempotent and a no-op when
-# nothing is missing, so it is safe on every deploy.
-# NOTE: the mimetype migration (occ maintenance:repair --include-expensive)
-# is deliberately NOT run here — it can take a very long time on a large
-# instance. Run it by hand during a maintenance window.
-_occ db:add-missing-indices || true
-
-# ── Whiteboard real-time collaboration ───────────────────────────────
-# The app works standalone for basic drawing, but multi-user real-time
-# editing needs the WebSocket backend, and Nextcloud reports
-# "WebSocket server URL is not configured" until collabBackendUrl is
-# set. Both values are no-ops if the whiteboard app is not enabled.
-#
-# The browser connects to this URL directly, so it must be reachable
-# from the client: on the LAN that works via the AdGuard wildcard plus
-# Traefik, but external access also needs a Cloudflare Tunnel public
-# hostname for whiteboard.DOMAIN -> nextcloud-whiteboard:3002.
-if [ -n "${WHITEBOARD_SECRET:-}" ] && [ -n "${COREX_DOMAIN:-}" ]; then
-    _occ config:app:set whiteboard collabBackendUrl --value "https://whiteboard.${COREX_DOMAIN}" || true
-    _occ config:app:set whiteboard jwt_secret_key --value "${WHITEBOARD_SECRET}" || true
-fi
-
-# ── Patch .htaccess for LimitRequestBody (Umbrel pattern) ────────
-# Nextcloud regenerates .htaccess on startup and updates. The
-# APACHE_BODY_LIMIT env var handles the Apache config, but .htaccess
-# can override it (AllowOverride All). This background process waits
-# for .htaccess to exist and injects LimitRequestBody 0 if missing.
-# Ref: https://github.com/getumbrel/umbrel-apps/blob/master/nextcloud/hooks/post-start
-(
-    HTACCESS="/var/www/html/.htaccess"
-    # Wait up to 30 seconds for .htaccess to be created
-    for attempt in $(seq 1 300); do
-        [ -f "$HTACCESS" ] && break
-        sleep 0.1
-    done
-    if [ -f "$HTACCESS" ] && ! grep -q '^LimitRequestBody' "$HTACCESS"; then
-        echo "" >> "$HTACCESS"
-        echo "# CoreX Pro — allow unlimited upload body size (PHP enforces limits)" >> "$HTACCESS"
-        echo "LimitRequestBody 0" >> "$HTACCESS"
-    fi
-) &
-
-# ── Install ffmpeg for Memories video transcoding ──
-# Memories v7+ ships its own go-vod binary (bin-ext/go-vod-amd64) and
-# runs it internally — no external container needed. But go-vod calls
-# ffmpeg as a subprocess, so ffmpeg must be in the container.
-# Check first to skip on container restarts (only slow on recreate).
-if ! command -v ffmpeg &>/dev/null; then
-    apt-get update -qq >/dev/null 2>&1
-    apt-get install -y -qq --no-install-recommends ffmpeg >/dev/null 2>&1
-fi
-
-# ── Install Memories for HEVC video streaming (HLS transcoding) ──
-# iPhone .mov files use HEVC (H.265) which Chrome/Firefox cannot play
-# natively — only Safari supports it. Memories v7 ships go-vod internally
-# and transcodes on-demand to H.264 HLS adaptive bitrate streams.
-# Falls back to the original stream if transcoding fails.
-gosu www-data php occ app:install memories 2>/dev/null || true
-gosu www-data php occ app:enable memories 2>/dev/null || true
-
-# Configure transcoding via system config (config.php), NOT app config.
-# Memories reads vod settings from config:system, not config:app.
-# vod.external=false (default) = Memories runs its own go-vod from bin-ext/.
-# No vod.connect needed — internal mode uses 127.0.0.1:47788 by default.
-gosu www-data php occ config:system:set memories.vod.disable --value false --type bool 2>/dev/null || true
-gosu www-data php occ config:system:set memories.vod.external --value false --type bool 2>/dev/null || true
-HOOKEOF
-    chmod +x "${dir}/hooks/before-starting/corex-memcache.sh"
+    # occ-based settings (APCu, Redis locking, chunk size, maintenance
+    # window, log rotation, indices) are applied host-side after the
+    # container is up — see _nextcloud_apply_occ.
 }
 
 # ── Functions ─────────────────────────────────────────────────────────────────
 
 nextcloud_dirs() {
     mkdir -p "${DOCKER_ROOT}/nextcloud"
-    mkdir -p "${DOCKER_ROOT}/nextcloud/hooks/before-starting"
     mkdir -p "${DATA_ROOT}/nextcloud-html" "${DATA_ROOT}/nextcloud-db"
     # www-data inside the Nextcloud container runs as uid 33
     chown -R 33:33 "${DATA_ROOT}/nextcloud-html"
@@ -408,7 +226,6 @@ services:
       - ${DATA_ROOT}/nextcloud-html:/var/www/html
       - ./zzz-corex-performance.ini:/usr/local/etc/php/conf.d/zzz-corex-performance.ini:ro
       - ./corex-apache-perf.conf:/etc/apache2/conf-enabled/corex-perf.conf:ro
-      - ./hooks/before-starting:/docker-entrypoint-hooks.d/before-starting:ro
     environment:
       MYSQL_PASSWORD: "${NEXTCLOUD_DB_PASS}"
       MYSQL_DATABASE: nextcloud
@@ -528,6 +345,65 @@ networks:
 DCEOF
 }
 
+# ── Apply Nextcloud settings from the host ────────────────────────────────────
+# This used to run as a before-starting hook inside the container. That was the
+# wrong place: the hook fires before Nextcloud and the database are ready, it
+# has to drop privileges to www-data in a context where gosu (removed in 34),
+# setpriv, runuser and su all failed to yield uid 33, and when it went wrong the
+# retry loop blocked container startup for minutes while Traefik served 502.
+#
+# `docker exec -u www-data` from the host does the same job, works reliably,
+# runs only after the container is actually up, and cannot stall startup.
+# Settings persist in config.php and the database, so applying them on deploy
+# and repair is sufficient — a plain `docker restart` does not lose them.
+_nextcloud_apply_occ() {
+    local occ_ok=false i
+    # Wait for occ to become usable (DB up, no pending upgrade).
+    for i in $(seq 1 24); do
+        if docker exec -u www-data nextcloud php occ status >/dev/null 2>&1; then
+            occ_ok=true
+            break
+        fi
+        sleep 5
+    done
+    if [[ "$occ_ok" != "true" ]]; then
+        log_warning "occ not usable after 2 minutes — settings not applied."
+        echo "    Check: docker exec -u www-data nextcloud php occ status"
+        echo "    If it reports a pending upgrade: docker exec -u www-data nextcloud php occ upgrade"
+        return 0
+    fi
+
+    local _o=(docker exec -u www-data nextcloud php occ)
+
+    # APCu as local (single-server) memory cache — speeds up metadata lookups
+    "${_o[@]}" config:system:set memcache.local --value '\OC\Memcache\APCu' >/dev/null 2>&1 || true
+    # Redis for distributed file locking — prevents corruption on parallel access
+    "${_o[@]}" config:system:set memcache.locking --value '\OC\Memcache\Redis' >/dev/null 2>&1 || true
+    # Suppress admin panel "default_phone_region not set" warning
+    "${_o[@]}" config:system:set default_phone_region --value 'US' >/dev/null 2>&1 || true
+    # 10MB chunks: the 100MB default exceeds Cloudflare's body limit (HTTP 413)
+    "${_o[@]}" config:app:set files max_chunk_size --value 10485760 >/dev/null 2>&1 || true
+    # Run heavy daily jobs at 01:00 UTC, not during peak use (also a thermal win)
+    "${_o[@]}" config:system:set maintenance_window_start --type=integer --value=1 >/dev/null 2>&1 || true
+    # nextcloud.log is written by PHP, so Docker's json-file rotation never
+    # applies to it and it grows unbounded — 91MB observed in the field.
+    "${_o[@]}" config:system:set log_rotate_size --type=integer --value=10485760 >/dev/null 2>&1 || true
+    # Idempotent; a no-op when nothing is missing.
+    "${_o[@]}" db:add-missing-indices >/dev/null 2>&1 || true
+
+    # Point the Whiteboard app at its WebSocket backend. No-ops if the app is
+    # not enabled. The browser connects to this URL directly, so external
+    # access also needs a Cloudflare Tunnel hostname for whiteboard.DOMAIN.
+    if [[ -n "${WHITEBOARD_SECRET:-}" && -n "${DOMAIN:-}" ]]; then
+        "${_o[@]}" config:app:set whiteboard collabBackendUrl \
+            --value "https://whiteboard.${DOMAIN}" >/dev/null 2>&1 || true
+        "${_o[@]}" config:app:set whiteboard jwt_secret_key \
+            --value "${WHITEBOARD_SECRET}" >/dev/null 2>&1 || true
+    fi
+
+    log_success "Nextcloud settings applied via occ"
+}
+
 nextcloud_deploy() {
     nextcloud_dirs
     _nextcloud_write_perf_configs
@@ -536,6 +412,7 @@ nextcloud_deploy() {
     local dir="${DOCKER_ROOT}/nextcloud"
     docker compose -f "${dir}/docker-compose.yml" up -d \
         || log_warning "Nextcloud may not have started — check: docker ps"
+    _nextcloud_apply_occ
     state_service_installed "nextcloud"
     log_success "Nextcloud deployed (nextcloud.${DOMAIN})"
 }
@@ -560,6 +437,7 @@ nextcloud_repair() {
     _nextcloud_write_compose
     local dir="${DOCKER_ROOT}/nextcloud"
     docker compose -f "${dir}/docker-compose.yml" up -d --force-recreate --remove-orphans
+    _nextcloud_apply_occ
 }
 
 nextcloud_credentials() {
