@@ -1811,7 +1811,7 @@ http:
 RTEOF
             log_success "Route added: https://${host} -> ${backend}"
             log_info "Traefik watches this directory, so it applies within seconds."
-            log_info "Verify: curl -sk -o /dev/null -w '%{http_code}\\n' https://${SERVER_IP} -H 'Host: ${host}'"
+            log_info "Verify: curl -skI https://${SERVER_IP} -H 'Host: ${host}' | head -1"
             ;;
         remove)
             local host="${2:-}"
