@@ -156,21 +156,22 @@ _load_config() {
     export DOMAIN SERVER_IP EMAIL TIMEZONE SSH_PORT CLOUDFLARE_TUNNEL_TOKEN
     export MOUNT_POOL DOCKER_ROOT DATA_ROOT BACKUP_ROOT CRED_FILE
 
-    # Load passwords from credential file.
-    # Uses sed 's/^[^:]*: //' to capture everything after the first ': ',
-    # which handles passwords that contain spaces (awk would truncate them).
+    # Load passwords from the credential file via cred_get, which trims the
+    # column padding the file uses for alignment and keeps internal spaces.
+    # See the comment on cred_get in lib/common.sh: getting this wrong locks
+    # services out of their own databases.
     if [[ -f "$CRED_FILE" ]]; then
-        MYSQL_ROOT_PASS=$(grep "MySQL Root:" "$CRED_FILE" | sed 's/^[^:]*: //')
-        NEXTCLOUD_DB_PASS=$(grep "Nextcloud DB:" "$CRED_FILE" | sed 's/^[^:]*: //')
-        N8N_ENCRYPTION_KEY=$(grep "n8n Encryption:" "$CRED_FILE" | sed 's/^[^:]*: //')
-        TM_PASSWORD=$(grep "Time Machine:" "$CRED_FILE" | sed 's/^[^:]*: //')
-        VAULTWARDEN_ADMIN_TOKEN=$(grep "Vaultwarden:" "$CRED_FILE" | sed 's/^[^:]*: //')
-        GRAFANA_ADMIN_PASS=$(grep "Grafana Admin:" "$CRED_FILE" | sed 's/^[^:]*: //')
-        RESTIC_PASSWORD=$(grep "Restic Backup:" "$CRED_FILE" | sed 's/^[^:]*: //')
-        IMMICH_DB_PASS=$(grep "Immich DB:" "$CRED_FILE" | sed 's/^[^:]*: //')
-        WEBUI_SECRET_KEY=$(grep "AI WebUI Secret:" "$CRED_FILE" | sed 's/^[^:]*: //')
-        STALWART_ADMIN_PASS=$(grep "Stalwart Admin:" "$CRED_FILE" | sed 's/^[^:]*: //')
-        BROWSERLESS_TOKEN=$(grep "Browserless Token:" "$CRED_FILE" | sed 's/^[^:]*: //')
+        MYSQL_ROOT_PASS=$(cred_get "MySQL Root:")
+        NEXTCLOUD_DB_PASS=$(cred_get "Nextcloud DB:")
+        N8N_ENCRYPTION_KEY=$(cred_get "n8n Encryption:")
+        TM_PASSWORD=$(cred_get "Time Machine:")
+        VAULTWARDEN_ADMIN_TOKEN=$(cred_get "Vaultwarden:")
+        GRAFANA_ADMIN_PASS=$(cred_get "Grafana Admin:")
+        RESTIC_PASSWORD=$(cred_get "Restic Backup:")
+        IMMICH_DB_PASS=$(cred_get "Immich DB:")
+        WEBUI_SECRET_KEY=$(cred_get "AI WebUI Secret:")
+        STALWART_ADMIN_PASS=$(cred_get "Stalwart Admin:")
+        BROWSERLESS_TOKEN=$(cred_get "Browserless Token:")
         export MYSQL_ROOT_PASS NEXTCLOUD_DB_PASS N8N_ENCRYPTION_KEY TM_PASSWORD
         export VAULTWARDEN_ADMIN_TOKEN GRAFANA_ADMIN_PASS RESTIC_PASSWORD
         export IMMICH_DB_PASS WEBUI_SECRET_KEY STALWART_ADMIN_PASS BROWSERLESS_TOKEN

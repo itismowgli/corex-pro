@@ -29,6 +29,33 @@ log_error()   { echo -e "${RED}[FAIL]${NC} $1" >&2; exit 1; }
 # (Old approach used 24 bytes; stripping chars reduced entropy below 24.)
 generate_pass() { openssl rand -base64 32 | tr -d '/+=' | head -c 32; }
 
+# ── cred_get ──────────────────────────────────────────────────────────────────
+# Read one value out of /root/corex-credentials.txt.
+#
+# Usage: cred_get "Immich DB:"        # uses $CRED_FILE
+#        cred_get "Immich DB:" /path/to/file
+#
+# The file is column-aligned, so a value carries padding after the label:
+#
+#     Immich DB:       nJBrU8gc2EwCg384wv5FLLRb
+#
+# Everything after the first colon is the value, with surrounding whitespace
+# trimmed and internal spaces kept. Both parts matter. Keeping the padding
+# sends "      nJBrU8gc..." as the password, which fails authentication
+# against a database initialised with the trimmed value. Splitting on
+# whitespace instead truncates any password that contains a space.
+#
+# One helper, so the installer and corex-manage cannot disagree about what a
+# credential is. They did, and Immich stopped being able to reach its own
+# database on repair.
+cred_get() {
+    local label="$1"
+    local file="${2:-${CRED_FILE:-/root/corex-credentials.txt}}"
+    [[ -f "$file" ]] || return 1
+    grep -m1 -F "$label" "$file" \
+        | sed -e 's/^[^:]*:[[:space:]]*//' -e 's/[[:space:]]*$//'
+}
+
 # Verify the script is running as root; exit with error if not.
 check_root() {
     if [[ $EUID -ne 0 ]]; then

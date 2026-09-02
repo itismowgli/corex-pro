@@ -30,18 +30,25 @@ phase0_precheck() {
     # 3. Load or generate passwords
     if [[ -f "$CRED_FILE" ]]; then
         log_info "Loading existing credentials from $CRED_FILE..."
-        MYSQL_ROOT_PASS=$(grep "MySQL Root:" "$CRED_FILE" | awk '{print $3}')
-        NEXTCLOUD_DB_PASS=$(grep "Nextcloud DB:" "$CRED_FILE" | awk '{print $3}')
-        N8N_ENCRYPTION_KEY=$(grep "n8n Encryption:" "$CRED_FILE" | awk '{print $3}')
-        TM_PASSWORD=$(grep "Time Machine:" "$CRED_FILE" | awk '{print $3}')
-        VAULTWARDEN_ADMIN_TOKEN=$(grep "Vaultwarden:" "$CRED_FILE" | awk '{print $2}')
-        GRAFANA_ADMIN_PASS=$(grep "Grafana Admin:" "$CRED_FILE" | awk '{print $3}')
-        RESTIC_PASSWORD=$(grep "Restic Backup:" "$CRED_FILE" | awk '{print $3}')
-        IMMICH_DB_PASS=$(grep "Immich DB:" "$CRED_FILE" | awk '{print $3}')
-        WEBUI_SECRET_KEY=$(grep "AI WebUI Secret:" "$CRED_FILE" | awk '{print $4}')
-        STALWART_ADMIN_PASS=$(grep "Stalwart Admin:" "$CRED_FILE" | awk '{print $4}')
+        # cred_get, not awk on a field number. Splitting on whitespace
+        # truncates any password containing a space, and the correct field
+        # number differs per label because the labels differ in word count,
+        # which is why Vaultwarden read $2 while the rest read $3 or $4.
+        # corex-manage must resolve a credential to exactly the same string
+        # this does, or a repair hands a service the wrong password for its
+        # own database.
+        MYSQL_ROOT_PASS=$(cred_get "MySQL Root:")
+        NEXTCLOUD_DB_PASS=$(cred_get "Nextcloud DB:")
+        N8N_ENCRYPTION_KEY=$(cred_get "n8n Encryption:")
+        TM_PASSWORD=$(cred_get "Time Machine:")
+        VAULTWARDEN_ADMIN_TOKEN=$(cred_get "Vaultwarden:")
+        GRAFANA_ADMIN_PASS=$(cred_get "Grafana Admin:")
+        RESTIC_PASSWORD=$(cred_get "Restic Backup:")
+        IMMICH_DB_PASS=$(cred_get "Immich DB:")
+        WEBUI_SECRET_KEY=$(cred_get "AI WebUI Secret:")
+        STALWART_ADMIN_PASS=$(cred_get "Stalwart Admin:")
         [[ -z "$STALWART_ADMIN_PASS" ]] && \
-            STALWART_ADMIN_PASS="(unknown — check: docker logs stalwart | grep password)"
+            STALWART_ADMIN_PASS="(unknown, check: docker logs stalwart | grep password)"
         log_success "Existing passwords loaded."
     else
         log_info "First run — generating secure passwords..."

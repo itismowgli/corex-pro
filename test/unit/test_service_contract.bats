@@ -378,3 +378,41 @@ _repair_body() {
         false
     }
 }
+
+# ─── Credential loading must be identical everywhere ─────────────────────────
+
+@test "cred_get trims column padding and keeps internal spaces" {
+    # The credentials file is column-aligned. Keeping the padding sends
+    # "      nJBrU8gc..." as a password, which fails against a database
+    # initialised with the trimmed value. Splitting on whitespace instead
+    # truncates any password containing a space.
+    export CRED_FILE="${BATS_TEST_TMPDIR}/creds.txt"
+    printf 'MySQL Root:      abc123XYZ\n'            > "$CRED_FILE"
+    printf 'Immich DB:       nJBrU8gc2EwCg384\n'    >> "$CRED_FILE"
+    printf 'Time Machine:    pass with spaces\n'    >> "$CRED_FILE"
+    printf 'Vaultwarden:     tok_9\n'               >> "$CRED_FILE"
+    # shellcheck disable=SC1090
+    source "${REPO_ROOT}/lib/common.sh"
+
+    [ "$(cred_get 'MySQL Root:')"   = "abc123XYZ" ]
+    [ "$(cred_get 'Immich DB:')"    = "nJBrU8gc2EwCg384" ]
+    [ "$(cred_get 'Time Machine:')" = "pass with spaces" ]
+    [ "$(cred_get 'Vaultwarden:')"  = "tok_9" ]
+}
+
+@test "no script parses the credentials file by hand" {
+    # lib/preflight.sh used awk on a field number while corex-manage.sh used
+    # sed that kept the padding, so the two resolved the same credential to
+    # different strings. Immich lost access to its own database on repair.
+    local offenders=""
+    for f in "${REPO_ROOT}"/*.sh "${REPO_ROOT}"/lib/*.sh; do
+        [ -f "$f" ] || continue
+        grep -qE 'grep "[^"]+:" "\$CRED_FILE" \| (awk|sed)' "$f" \
+            && offenders+=" $(basename "$f")"
+    done
+    [ -z "$offenders" ] || {
+        echo "hand-rolled credential parsing in:$offenders"
+        echo "Fix: use cred_get from lib/common.sh."
+        false
+    }
+}
