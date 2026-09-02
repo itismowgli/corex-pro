@@ -130,9 +130,22 @@ state_service_installed() {
     local tmp
     tmp="$(mktemp)"
     trap 'rm -f "${tmp:-}"' RETURN
+    # Merge, do not replace. Assigning a fresh object here wiped every other
+    # field on the service, and deploy calls this on each run: a repair
+    # therefore discarded disabled_components and silently restarted a
+    # component that had been deliberately stopped. It would also have reset
+    # enabled to true, undoing a disable on the next repair.
+    #
+    # installed_at is preserved once set, so it keeps meaning "first
+    # installed" rather than "last repaired". It can use // because a string
+    # is never falsy; enabled cannot, because `false // true` is `true`.
     jq --arg svc "$svc" \
         --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        '.services[$svc] = { installed: true, enabled: true, installed_at: $ts }' \
+        '.services[$svc] = ((.services[$svc] // {})
+            + { installed: true }
+            + { enabled: (if (.services[$svc].enabled) == null
+                          then true else (.services[$svc].enabled) end) }
+            + { installed_at: ((.services[$svc].installed_at) // $ts) })' \
         "$COREX_STATE_FILE" > "$tmp" && mv "$tmp" "$COREX_STATE_FILE" \
         && chmod 644 "$COREX_STATE_FILE"
 }
@@ -146,6 +159,8 @@ state_service_removed() {
     local tmp
     tmp="$(mktemp)"
     trap 'rm -f "${tmp:-}"' RETURN
+    # Removal is the one case where discarding the rest is right: component
+    # choices for a service that is gone are noise.
     jq --arg svc "$svc" \
         '.services[$svc] = { installed: false, enabled: false }' \
         "$COREX_STATE_FILE" > "$tmp" && mv "$tmp" "$COREX_STATE_FILE" \

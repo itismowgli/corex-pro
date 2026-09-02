@@ -729,7 +729,10 @@ _repair_body() {
     local offenders=""
     for f in "${REPO_ROOT}"/lib/*.sh "${REPO_ROOT}"/*.sh; do
         [ -f "$f" ] || continue
-        grep -qE '\.(enabled|installed)[[:space:]]*//' "$f" && offenders+=" $(basename "$f")"
+        # Allow for a closing paren before the operator: `.enabled) //` is the
+        # same trap and the narrower pattern missed it, which let the bug back
+        # in via state_service_installed.
+        grep -qE '\.enabled\)?[[:space:]]*//' "$f" && offenders+=" $(basename "$f")"
     done
     [ -z "$offenders" ] || {
         echo "jq // used on a boolean field in:$offenders"
