@@ -511,3 +511,13 @@ _repair_body() {
     [ -n "$tty_line" ]
     [ "$force_line" -lt "$tty_line" ]
 }
+
+@test "update dispatch forwards its flags to do_update" {
+    # The case branch called do_update with no arguments, so --force never
+    # arrived and `corex update --force` behaved exactly like `corex update`.
+    # The warning told the user to run a flag that could not work.
+    local branch
+    branch=$(awk '/^    update\)/,/^        ;;/' "${REPO_ROOT}/corex.sh")
+    echo "$branch" | grep -q 'shift'
+    echo "$branch" | grep -qE 'do_update "\$@"'
+}

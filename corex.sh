@@ -371,13 +371,13 @@ do_update() {
             && bash -n "${REPO_DIR}/corex.sh" 2>/dev/null; then
             echo -e "${GREEN}Updated to v${REMOTE_VERSION} ($(git rev-parse --short HEAD)). Scripts validated OK.${NC}"
             echo ""
-            # Deliberately do NOT re-exec here. "$@" inside this function is the
-            # function's own arguments, and every call site invokes do_update
-            # with none, so re-execing ran corex.sh with an empty argument list
-            # and dropped the user on the interactive-setup screen — which reads
-            # as though the update had launched the installer. Nothing follows an
-            # update anyway, so there is nothing to re-exec for: the new code is
-            # already on disk and the next invocation picks it up.
+            # Deliberately do NOT re-exec here. "$@" inside this function is
+            # the function's own arguments, which are the update flags and not
+            # a command, so re-execing ran corex.sh with nothing useful and
+            # dropped the user on the interactive-setup screen, reading as
+            # though the update had launched the installer. Nothing follows an
+            # update anyway: the new code is already on disk and the next
+            # invocation picks it up.
             echo -e "  Run ${BOLD}sudo bash ${REPO_DIR}/corex.sh${NC} to use the new version."
             echo ""
             _restore_repo_owner
@@ -474,7 +474,11 @@ case "$COMMAND" in
         ;;
     update)
         show_banner
-        do_update
+        # shift, so --force reaches do_update. Without it the flag was dropped
+        # and `corex update --force` behaved exactly like `corex update`, which
+        # made the "Use --force to proceed anyway" advice impossible to follow.
+        shift
+        do_update "$@"
         ;;
     doctor)
         show_banner
