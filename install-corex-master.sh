@@ -210,6 +210,7 @@ main() {
     log_step "═══ PHASE 5b: Resilience & Self-Healing ═══"
     thermal_install
     selfheal_install
+    selfheal_install_blackbox
     selfheal_delay_docker_start
 
     # ── Phase 6: Backup ───────────────────────────────────────────────────────

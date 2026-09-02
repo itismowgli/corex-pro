@@ -244,69 +244,6 @@ JEOF
     systemctl restart systemd-journald 2>/dev/null || true
     log_success "Journal capped at 500M, 1 month retention"
 
-    # ── Crash forensics recorder ─────────────────────────────────────────────
-    # An unclean shutdown (power loss, thermal trip, hard hang) leaves nothing
-    # in the journal, because journald never gets to flush. This samples health
-    # to a plain file on the SSD every 20s, so the last line before a crash
-    # tells you the temperature, load and memory state at that moment.
-    log_info "Installing crash forensics recorder..."
-    cat > /usr/local/bin/corex-blackbox.sh << 'BBEOF'
-#!/bin/bash
-# Appends a health sample to the blackbox log. Survives unclean shutdown.
-LOG="/mnt/corex-data/blackbox.log"
-mkdir -p "$(dirname "$LOG")" 2>/dev/null
-temp=""
-if command -v sensors &>/dev/null; then
-    temp=$(sensors 2>/dev/null | grep -oE 'Tctl:.*?\+[0-9.]+' | grep -oE '[0-9.]+' | head -1)
-fi
-if [[ -z "$temp" ]]; then
-    for z in /sys/class/thermal/thermal_zone*/temp; do
-        [[ -r "$z" ]] && temp=$(( $(cat "$z" 2>/dev/null) / 1000 )) && break
-    done
-fi
-read -r l1 l5 l15 _ < /proc/loadavg
-mem=$(free -m | awk '/^Mem:/{printf "%d/%dMB", $3, $2}')
-swap=$(free -m | awk '/^Swap:/{printf "%d/%dMB", $3, $2}')
-throttle=$(cat /sys/devices/system/cpu/cpu0/thermal_throttle/core_throttle_count 2>/dev/null || echo "-")
-printf '%s temp=%sC load=%s/%s/%s mem=%s swap=%s throttle=%s containers=%s\n' \
-    "$(date -Is)" "${temp:-?}" "$l1" "$l5" "$l15" "$mem" "$swap" "$throttle" \
-    "$(docker ps -q 2>/dev/null | wc -l)" >> "$LOG"
-# Keep the file bounded (~last 3 days at 20s cadence).
-if [[ $(stat -c%s "$LOG" 2>/dev/null || echo 0) -gt 20000000 ]]; then
-    tail -n 100000 "$LOG" > "${LOG}.tmp" && mv "${LOG}.tmp" "$LOG"
-fi
-BBEOF
-    chmod +x /usr/local/bin/corex-blackbox.sh
-
-    cat > /etc/systemd/system/corex-blackbox.service << BBSEOF
-[Unit]
-Description=CoreX blackbox health recorder
-After=docker.service
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/corex-blackbox.sh
-BBSEOF
-
-    cat > /etc/systemd/system/corex-blackbox.timer << BBTEOF
-[Unit]
-Description=Sample CoreX health every 20s for post-crash forensics
-
-[Timer]
-OnBootSec=30s
-OnUnitActiveSec=20s
-AccuracySec=1s
-Persistent=false
-
-[Install]
-WantedBy=timers.target
-BBTEOF
-    systemctl daemon-reload 2>/dev/null || true
-    systemctl enable --now corex-blackbox.timer 2>/dev/null || true
-
-    # Detect sensors non-interactively so temperatures are actually available.
-    command -v sensors-detect &>/dev/null && yes | sensors-detect --auto &>/dev/null || true
-    log_success "Blackbox recorder active (/mnt/corex-data/blackbox.log)"
 
     # ── Hardware watchdog ────────────────────────────────────────────────────
     # If the kernel hard-hangs, systemd's watchdog resets the box instead of
