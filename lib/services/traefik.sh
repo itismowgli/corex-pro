@@ -285,8 +285,31 @@ TEOF
     # Traefik uses this as the fallback cert when no ACME cert matches.
     # LAN clients hitting *.DOMAIN via AdGuard DNS rewrite get a valid
     # cert (once the CA is trusted on the client device).
+    #
+    # serversTransports.insecure-backend exists for services that speak HTTPS
+    # internally with a self-signed certificate. Portainer is the case in
+    # point: its cert is issued for 0.0.0.0, so Traefik's verification fails
+    # against the container IP and every request returns
+    #
+    #   500 Internal Server Error
+    #   tls: failed to verify certificate: x509: certificate is valid for
+    #   0.0.0.0, not 172.18.0.6
+    #
+    # which reads like a Portainer fault even though Portainer answers 200 on
+    # 9443 directly. A serversTransport cannot be declared with Docker labels
+    # in Traefik v3, so it has to live here in the file provider; the service
+    # then opts in with
+    # traefik.http.services.<name>.loadbalancer.serverstransport=insecure-backend@file
+    #
+    # Scoped deliberately: setting serversTransport.insecureSkipVerify in
+    # traefik.yml would disable backend verification for every route.
     cat > "${dir}/dynamic.yml" << DYEOF
 ${tls_default_block}
+
+http:
+  serversTransports:
+    insecure-backend:
+      insecureSkipVerify: true
 DYEOF
 }
 

@@ -61,6 +61,10 @@ services:
       - "traefik.http.routers.portainer.tls.certresolver=myresolver"
       - "traefik.http.services.portainer.loadbalancer.server.port=9443"
       - "traefik.http.services.portainer.loadbalancer.server.scheme=https"
+      # Portainer's self-signed cert is issued for 0.0.0.0, so Traefik cannot
+      # verify it against the container IP and returns 500 for every request.
+      # insecure-backend@file skips verification for this backend only.
+      - "traefik.http.services.portainer.loadbalancer.serverstransport=insecure-backend@file"
 networks:
   proxy-net: { external: true }
 DCEOF
