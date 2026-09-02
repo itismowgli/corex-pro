@@ -684,6 +684,37 @@ elif command -v setpriv >/dev/null 2>&1; then ...
 when privilege-dropping is impossible rather than retrying 30s per call — a
 retry loop around an unsatisfiable command turns a warning into an outage.
 
+### 20. Nextcloud gets stuck in maintenance mode, serving HTTP 503
+
+`occ upgrade` finishes by printing **"Maintenance mode is kept active"** and
+leaves the flag set. An upgrade interrupted by a crash does the same. While it
+is set:
+
+- Nextcloud serves **HTTP 503** to every request (Traefik included), so the
+  service is fully down.
+- Every `occ config:*` command fails with *"Nextcloud is in maintenance mode,
+  only AppAPI commands are loaded"*.
+
+That second point is the trap: a configuration run during maintenance mode
+fails on every single setting. If those calls are written as
+`occ ... >/dev/null 2>&1 || true`, the run looks **identical to success** while
+applying nothing at all. Check the flag before applying settings, and count
+failures rather than swallowing them:
+
+```bash
+occ config:system:get maintenance      # true => clear it first
+occ status | grep needsDbUpgrade       # false => safe to clear
+occ maintenance:mode --off
+```
+
+Order matters: finish any pending schema upgrade first, then clear maintenance
+mode, then apply settings. `_nextcloud_apply_occ` does exactly this.
+
+**Related — pulling an image puts the DB behind the code.** After any Nextcloud
+image update, `needsDbUpgrade: true` until `occ upgrade` runs, and occ refuses
+most commands meanwhile. `corex manage update` does not run it, so a plain
+image update leaves the instance in a degraded, quietly-limited state.
+
 ---
 
 ## What NOT to Do

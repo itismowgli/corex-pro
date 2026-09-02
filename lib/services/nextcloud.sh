@@ -357,43 +357,74 @@ DCEOF
 # Settings persist in config.php and the database, so applying them on deploy
 # and repair is sufficient — a plain `docker restart` does not lose them.
 _nextcloud_apply_occ() {
-    local occ_ok=false i
-    # Wait for occ to become usable (DB up, no pending upgrade).
+    local _o=(docker exec -u www-data nextcloud php occ)
+    local i
+
+    # 1. Wait for occ to respond at all (database startup).
+    local ready=false
     for i in $(seq 1 24); do
-        if docker exec -u www-data nextcloud php occ status >/dev/null 2>&1; then
-            occ_ok=true
-            break
-        fi
+        if "${_o[@]}" status >/dev/null 2>&1; then ready=true; break; fi
         sleep 5
     done
-    if [[ "$occ_ok" != "true" ]]; then
-        log_warning "occ not usable after 2 minutes — settings not applied."
+    if [[ "$ready" != "true" ]]; then
+        log_warning "occ did not respond within 2 minutes — settings not applied."
         echo "    Check: docker exec -u www-data nextcloud php occ status"
-        echo "    If it reports a pending upgrade: docker exec -u www-data nextcloud php occ upgrade"
         return 0
     fi
 
-    local _o=(docker exec -u www-data nextcloud php occ)
+    # 2. Finish a pending schema upgrade. Pulling a new image leaves the
+    #    database behind the code, and occ refuses almost every command until
+    #    this completes — silently, which is how a stale instance goes
+    #    unnoticed.
+    if "${_o[@]}" status 2>/dev/null | grep -q 'needsDbUpgrade: true'; then
+        log_step "Nextcloud needs a database upgrade — running occ upgrade..."
+        "${_o[@]}" upgrade 2>&1 | tail -5 | sed 's/^/    /' || true
+    fi
+
+    # 3. Clear maintenance mode if it is stuck on. occ upgrade prints
+    #    "Maintenance mode is kept active" and leaves the flag set, and an
+    #    upgrade interrupted by a crash does the same. While it is set,
+    #    Nextcloud serves HTTP 503 and every config command fails with
+    #    "only AppAPI commands are loaded" — so this must be cleared BEFORE
+    #    applying settings, or they all fail invisibly.
+    if [[ "$("${_o[@]}" config:system:get maintenance 2>/dev/null)" == "true" ]]; then
+        if "${_o[@]}" status 2>/dev/null | grep -q 'needsDbUpgrade: true'; then
+            log_warning "Maintenance mode on and upgrade still pending — leaving it."
+            return 0
+        fi
+        log_step "Clearing stuck maintenance mode (site returns 503 while set)..."
+        "${_o[@]}" maintenance:mode --off 2>&1 | sed 's/^/    /' || true
+    fi
+
+    # 4. Apply settings. Failures are counted rather than swallowed: an
+    #    earlier version sent everything to /dev/null with "|| true", so a run
+    #    in which every single setting failed looked identical to success.
+    local failed=0
+    _set() {
+        if ! "${_o[@]}" "$@" >/dev/null 2>&1; then
+            log_warning "occ $1 ${2:-} failed"
+            failed=$((failed + 1))
+        fi
+    }
 
     # APCu as local (single-server) memory cache — speeds up metadata lookups
-    "${_o[@]}" config:system:set memcache.local --value '\OC\Memcache\APCu' >/dev/null 2>&1 || true
+    _set config:system:set memcache.local --value '\OC\Memcache\APCu'
     # Redis for distributed file locking — prevents corruption on parallel access
-    "${_o[@]}" config:system:set memcache.locking --value '\OC\Memcache\Redis' >/dev/null 2>&1 || true
+    _set config:system:set memcache.locking --value '\OC\Memcache\Redis'
     # Suppress admin panel "default_phone_region not set" warning
-    "${_o[@]}" config:system:set default_phone_region --value 'US' >/dev/null 2>&1 || true
+    _set config:system:set default_phone_region --value 'US'
     # 10MB chunks: the 100MB default exceeds Cloudflare's body limit (HTTP 413)
-    "${_o[@]}" config:app:set files max_chunk_size --value 10485760 >/dev/null 2>&1 || true
+    _set config:app:set files max_chunk_size --value 10485760
     # Run heavy daily jobs at 01:00 UTC, not during peak use (also a thermal win)
-    "${_o[@]}" config:system:set maintenance_window_start --type=integer --value=1 >/dev/null 2>&1 || true
+    _set config:system:set maintenance_window_start --type=integer --value=1
     # nextcloud.log is written by PHP, so Docker's json-file rotation never
     # applies to it and it grows unbounded — 91MB observed in the field.
-    "${_o[@]}" config:system:set log_rotate_size --type=integer --value=10485760 >/dev/null 2>&1 || true
+    _set config:system:set log_rotate_size --type=integer --value=10485760
     # Idempotent; a no-op when nothing is missing.
     "${_o[@]}" db:add-missing-indices >/dev/null 2>&1 || true
 
-    # Point the Whiteboard app at its WebSocket backend. No-ops if the app is
-    # not enabled. The browser connects to this URL directly, so external
-    # access also needs a Cloudflare Tunnel hostname for whiteboard.DOMAIN.
+    # Point the Whiteboard app at its WebSocket backend. Skipped silently when
+    # the app is not enabled, which is why this one is not counted as failure.
     if [[ -n "${WHITEBOARD_SECRET:-}" && -n "${DOMAIN:-}" ]]; then
         "${_o[@]}" config:app:set whiteboard collabBackendUrl \
             --value "https://whiteboard.${DOMAIN}" >/dev/null 2>&1 || true
@@ -401,7 +432,12 @@ _nextcloud_apply_occ() {
             --value "${WHITEBOARD_SECRET}" >/dev/null 2>&1 || true
     fi
 
-    log_success "Nextcloud settings applied via occ"
+    if (( failed > 0 )); then
+        log_warning "${failed} Nextcloud setting(s) failed to apply."
+        echo "    Check: docker exec -u www-data nextcloud php occ status"
+    else
+        log_success "Nextcloud settings applied via occ"
+    fi
 }
 
 nextcloud_deploy() {
