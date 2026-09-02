@@ -236,12 +236,38 @@ shed() {
 # this cycle stays on the list, so the next sample sees the new temperature
 # before more load returns. Restoring the full list in one pass is what turned
 # a single shed event into a loop.
+# Containers belonging to a service, or component, the operator disabled.
+#
+# The guardian restarts whatever is on its shed list, and knew nothing about
+# the disabled flag, so it resurrected services that had been deliberately
+# switched off. Observed: Prometheus and cAdvisor were brought back and
+# Prometheus alone then burned 49% CPU, which is a large share of the heat that
+# caused the shed in the first place. The guardian was fighting the operator
+# and losing to itself.
+_disabled_containers() {
+    [[ -r /etc/corex/state.json ]] || return 0
+    command -v jq >/dev/null 2>&1 || return 0
+    jq -r '[ .services | to_entries[]
+             | (if (.value.enabled == false) then .key else empty end),
+               ((.value.disabled_components // [])[]) ] | unique[]' \
+        /etc/corex/state.json 2>/dev/null || true
+}
+
 restore() {
     [[ -s "$SHED_LIST" ]] || return 0
     local batch="${1:-$THERMAL_RESTORE_BATCH}"
     local c restored=0 remaining=""
+    local disabled
+    disabled=$(_disabled_containers)
     while read -r c; do
         [[ -z "$c" ]] && continue
+        # Drop it from the list rather than deferring it, or the guardian
+        # retries a container it must never start for as long as the list
+        # lives.
+        if [[ -n "$disabled" ]] && printf '%s\n' "$disabled" | grep -qxF "$c"; then
+            say "SKIP ${c}: disabled by the operator, not restarting"
+            continue
+        fi
         if (( restored >= batch )); then
             remaining+="${c}"$'\n'
             continue

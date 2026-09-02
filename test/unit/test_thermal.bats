@@ -280,3 +280,34 @@ setup() {
     grep -q 'Added missing ${k} to thermal.conf' "$THERMAL_LIB"
     grep -qE 'for k in THERMAL_WARN_C' "$THERMAL_LIB"
 }
+
+@test "the guardian does not restart a deliberately disabled service" {
+    # It restarts whatever is on its shed list and knew nothing about the
+    # disabled flag, so it resurrected services that had been switched off.
+    # Prometheus came back and burned 49% CPU, a large share of the heat that
+    # caused the shed in the first place: the guardian was fighting the
+    # operator and losing to itself.
+    local out="${BATS_TEST_TMPDIR:-/tmp}/guard-disabled.sh"
+    awk "/cat > \/usr\/local\/bin\/corex-thermal-guard.sh << 'TGEOF'/{f=1;next} /^TGEOF$/{f=0} f" \
+        "$THERMAL_LIB" > "$out"
+    [ -s "$out" ]
+    grep -q '_disabled_containers' "$out"
+    # It must read both the module flag and the component list.
+    grep -q 'enabled == false' "$out"
+    grep -q 'disabled_components' "$out"
+    # And restore() must consult it.
+    awk '/^restore\(\)/,/^}/' "$out" | grep -q 'disabled'
+}
+
+@test "a skipped container is dropped from the shed list, not deferred" {
+    # Deferring it means the guardian retries a container it must never start
+    # for as long as the list lives.
+    local out="${BATS_TEST_TMPDIR:-/tmp}/guard-drop.sh"
+    awk "/cat > \/usr\/local\/bin\/corex-thermal-guard.sh << 'TGEOF'/{f=1;next} /^TGEOF$/{f=0} f" \
+        "$THERMAL_LIB" > "$out"
+    local body
+    body=$(awk '/^restore\(\)/,/^}/' "$out")
+    # The disabled branch continues without appending to remaining.
+    echo "$body" | grep -A 2 'disabled by the operator' | grep -q 'continue'
+    echo "$body" | grep -A 2 'disabled by the operator' | grep -qv 'remaining+='
+}
