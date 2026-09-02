@@ -1115,33 +1115,33 @@ where a Ryzen 9 5900HX thermal-tripped every ~5 minutes.
 ## [v2.5.0] - 2026-06-04
 
 ### Security Fixes (Critical)
-- **Bash injection via eval in wizard.sh** — replaced with safe `printf+IFS read` pattern (no eval)
-- **Traefik dashboard on all interfaces** — bound to `127.0.0.1:8080` only; UFW rule for 8080 removed
-- **Vaultwarden open signup** — `SIGNUPS_ALLOWED` now defaults to `false`
-- **Stalwart password from Docker logs** — pre-generated, passed via `STALWART_ADMIN_SECRET` env var
-- **Restic password in world-readable backup script** — single-quoted heredoc; runtime read from credentials file
-- **Temp file leaks in state.sh** — `trap 'rm -f "$tmp"' RETURN` added to all 5 `mktemp` functions
+- **Bash injection via eval in wizard.sh**: replaced with safe `printf+IFS read` pattern (no eval)
+- **Traefik dashboard on all interfaces**: bound to `127.0.0.1:8080` only; UFW rule for 8080 removed
+- **Vaultwarden open signup**: `SIGNUPS_ALLOWED` now defaults to `false`
+- **Stalwart password from Docker logs**: pre-generated, passed via `STALWART_ADMIN_SECRET` env var
+- **Restic password in world-readable backup script**: single-quoted heredoc; runtime read from credentials file
+- **Temp file leaks in state.sh**: `trap 'rm -f "$tmp"' RETURN` added to all 5 `mktemp` functions
 
 ### Security Fixes (High)
-- **awk credential parsing** — replaced with `sed 's/^[^:]*: //'` (handles passwords with spaces)
-- **Dangerous glob in rm -rf** — `"${DATA_ROOT}/${svc}"*` → exact path, no glob
-- **Silent `git reset --hard` on update** — confirmation flow, `git pull --ff-only`, `bash -n` post-validation
-- **`log_warning` undefined in corex.sh** — added standard logging functions block
+- **awk credential parsing**: replaced with `sed 's/^[^:]*: //'` (handles passwords with spaces)
+- **Dangerous glob in rm -rf**: `"${DATA_ROOT}/${svc}"*` → exact path, no glob
+- **Silent `git reset --hard` on update**: confirmation flow, `git pull --ff-only`, `bash -n` post-validation
+- **`log_warning` undefined in corex.sh**: added standard logging functions block
 
 ### Added
 - Docker log rotation: `json-file` driver, `max-size: 10m`, `max-file: 3` (30MB cap per container)
 - Docker on SSD opt-in via wizard (`DOCKER_ON_SSD` state, `data-root` in daemon.json)
 - Per-service resource limits: `deploy.resources.limits` on all 14 service containers
-- `corex manage storage` — OS disk, SSD, per-service data breakdown, Docker usage
-- `corex manage cleanup [--dry-run]` — safe image/cache cleanup (no `docker system prune`)
+- `corex manage storage`, OS disk, SSD, per-service data breakdown, Docker usage
+- `corex manage cleanup [--dry-run]`, safe image/cache cleanup (no `docker system prune`)
 - Prometheus disk alerts: SSD < 15% free, OS disk < 10% free (`alerts.yml`)
 - Backup integrity verification: `restic check --read-data-subset=5%` after each backup
 - Restore `--list` (snapshots only) and `--dry-run` (preview) flags
 - Immich DB health check: `pg_isready -U postgres` with 30s start period
 - Separate `BROWSERLESS_TOKEN` credential (was shared with `WEBUI_SECRET_KEY`)
 - CrowdSec `crowdsecurity/nextcloud` collection added
-- `lib/services/dashboard.sh` — plugin stub for upcoming Go+HTMX web UI (v3.0.0)
-- Conditional directory creation — only creates dirs for selected services
+- `lib/services/dashboard.sh`, plugin stub for upcoming Go+HTMX web UI (v3.0.0)
+- Conditional directory creation, only creates dirs for selected services
 
 ### Changed
 - `state.sh` `_COREX_VERSION`: `2.0.0` → `2.4.2` (version sync fix)
@@ -1152,7 +1152,6 @@ where a Ryzen 9 5900HX thermal-tripped every ~5 minutes.
 - Unattended upgrades: proper `/etc/apt/apt.conf.d/50unattended-upgrades` (security-only, no auto-reboot)
 
 ---
-
 ## [v2.4.2] - 2026-03-09
 
 ### Added
@@ -1177,26 +1176,25 @@ where a Ryzen 9 5900HX thermal-tripped every ~5 minutes.
 
 ### Fixed
 
-- **Nextcloud "Unknown error during upload"** — Multiple issues caused file uploads to fail silently:
-  - **`APACHE_BODY_LIMIT` not set** — Apache 2.4.54+ changed the default `LimitRequestBody` from unlimited to 1GB. The Nextcloud Docker image inherits this default, silently rejecting uploads >1GB. Now explicitly set to `0` (unlimited) via the official `APACHE_BODY_LIMIT` env var.
-  - **`.htaccess` overrides server config** — Nextcloud regenerates `.htaccess` on every startup, and `AllowOverride All` means it can override `conf-enabled/` settings. Before-starting hook now patches `.htaccess` with `LimitRequestBody 0` after Nextcloud creates it (background process, adapted from Umbrel's post-start hook pattern).
-  - **`max_chunk_size` occ command ran as root** — Created cache files with wrong ownership and failed silently (`2>/dev/null || true`). Now runs via `gosu www-data` with a 30-second retry loop for database readiness.
-  - **PHP JIT instability** — `opcache.jit=1255` (aggressive tracing mode) known to cause segfaults in Nextcloud's chunked upload and WebDAV code paths. Disabled JIT — OPcache without JIT provides 95% of the performance benefit for I/O-bound workloads.
+- **Nextcloud "Unknown error during upload"**: Multiple issues caused file uploads to fail silently:
+  - **`APACHE_BODY_LIMIT` not set**: Apache 2.4.54+ changed the default `LimitRequestBody` from unlimited to 1GB. The Nextcloud Docker image inherits this default, silently rejecting uploads >1GB. Now explicitly set to `0` (unlimited) via the official `APACHE_BODY_LIMIT` env var.
+  - **`.htaccess` overrides server config**: Nextcloud regenerates `.htaccess` on every startup, and `AllowOverride All` means it can override `conf-enabled/` settings. Before-starting hook now patches `.htaccess` with `LimitRequestBody 0` after Nextcloud creates it (background process, adapted from Umbrel's post-start hook pattern).
+  - **`max_chunk_size` occ command ran as root**: Created cache files with wrong ownership and failed silently (`2>/dev/null || true`). Now runs via `gosu www-data` with a 30-second retry loop for database readiness.
+  - **PHP JIT instability**: `opcache.jit=1255` (aggressive tracing mode) known to cause segfaults in Nextcloud's chunked upload and WebDAV code paths. Disabled JIT, OPcache without JIT provides 95% of the performance benefit for I/O-bound workloads.
 
 ### Added
 
-- **MariaDB health check** — `healthcheck.sh --connect --innodb_initialized` with 30s start period ensures database is ready before Nextcloud starts. Before-starting hooks that run `occ` commands now reliably find the database.
-- **Redis health check** — `redis-cli ping` with 5s start period. Combined with `depends_on: condition: service_healthy` for proper startup ordering.
-- **Nextcloud cron container** — Dedicated `nextcloud-cron` container runs background jobs (`/cron.sh`) so they don't compete with web request PHP workers. Shares the same data volume and image.
-- **Security headers** — Added `X-Robots-Tag: noindex,nofollow` (prevents search engine indexing) and `Permissions-Policy: interest-cohort=()` (blocks FLoC tracking) via Traefik middleware.
+- **MariaDB health check**: `healthcheck.sh --connect --innodb_initialized` with 30s start period ensures database is ready before Nextcloud starts. Before-starting hooks that run `occ` commands now reliably find the database.
+- **Redis health check**: `redis-cli ping` with 5s start period. Combined with `depends_on: condition: service_healthy` for proper startup ordering.
+- **Nextcloud cron container**: Dedicated `nextcloud-cron` container runs background jobs (`/cron.sh`) so they don't compete with web request PHP workers. Shares the same data volume and image.
+- **Security headers**: Added `X-Robots-Tag: noindex,nofollow` (prevents search engine indexing) and `Permissions-Policy: interest-cohort=()` (blocks FLoC tracking) via Traefik middleware.
 
 ### Changed
 
-- **`depends_on` with health checks** — Nextcloud app and cron containers now use `condition: service_healthy` instead of simple service dependency, eliminating the race condition where hooks fail because the database isn't ready.
-- **Triple-layer body limit fix** — `APACHE_BODY_LIMIT=0` env var + `LimitRequestBody 0` in `conf-enabled/` + `.htaccess` patching. Defense in depth against Apache's 1GB default.
+- **`depends_on` with health checks**: Nextcloud app and cron containers now use `condition: service_healthy` instead of simple service dependency, eliminating the race condition where hooks fail because the database isn't ready.
+- **Triple-layer body limit fix**: `APACHE_BODY_LIMIT=0` env var + `LimitRequestBody 0` in `conf-enabled/` + `.htaccess` patching. Defense in depth against Apache's 1GB default.
 
 ---
-
 ## [v2.4.0] - 2026-03-07
 
 ### Fixed
@@ -1301,30 +1299,30 @@ The fix: stream (don't buffer), skip compression on binary content, and remove a
 
 ### Added
 
-- **Network performance tuning** (`corex manage network-tune`) — New command that diagnoses network interfaces, displays current vs optimal kernel parameters, and applies high-performance tuning. Transforms file transfer speeds from KB/s to hundreds of MB/s on gigabit+ networks.
+- **Network performance tuning** (`corex manage network-tune`): New command that diagnoses network interfaces, displays current vs optimal kernel parameters, and applies high-performance tuning. Transforms file transfer speeds from KB/s to hundreds of MB/s on gigabit+ networks.
   - Detects all ethernet and wireless interfaces with link speed, state, and MTU
   - Shows 14 critical kernel network parameters with current values
   - Applies BBR congestion control (Google's algorithm, 2-10x better than CUBIC on LAN)
   - Tunes TCP buffer sizes from ~200KB default up to 64MB max per socket
   - Enables TCP Fast Open, MTU path probing, window scaling, and SACK
   - Prints diagnostic speed tips (cable check, iperf3 testing, SMB multichannel verification)
-  - Safe to re-run — detects if tuning is already applied
+  - Safe to re-run, detects if tuning is already applied
 
-- **High-performance SMB3 for Time Machine** — Rebuilt the Time Machine service with optimized Samba configuration for multi-gigabit LAN transfers:
+- **High-performance SMB3 for Time Machine**: Rebuilt the Time Machine service with optimized Samba configuration for multi-gigabit LAN transfers:
   - SMB3 minimum protocol enforced (disables insecure SMB1/SMB2)
   - SMB multichannel enabled (uses all available NICs simultaneously)
-  - 8MB read/write chunks per SMB request (up from default 64KB — 128x larger)
+  - 8MB read/write chunks per SMB request (up from default 64KB, 128x larger)
   - 2MB socket buffers with TCP_NODELAY for low-latency transfers
   - Async I/O via sendfile for zero-copy kernel-level file transfers
   - Aggressive client caching via level2 oplocks
   - Custom `smb-performance.conf` overlay bind-mounted into the container
   - Increased file descriptor limits (ulimits 65536)
 
-- **Interactive menu option 4** — "Network tune" added to `corex.sh` interactive menu
+- **Interactive menu option 4**: "Network tune" added to `corex.sh` interactive menu
 
 ### Changed
 
-- **Kernel network parameters** (lib/security.sh) — Expanded from 14 security-only params to 50+ params covering both security and performance:
+- **Kernel network parameters** (lib/security.sh): Expanded from 14 security-only params to 50+ params covering both security and performance:
   - TCP buffer auto-tuning: min 4KB → default 256KB → max 64MB
   - BBR congestion control with fq qdisc (replaces CUBIC + pfifo_fast)
   - Connection handling: somaxconn 4096, netdev_max_backlog 16384
@@ -1336,7 +1334,7 @@ The fix: stream (don't buffer), skip compression on binary content, and remove a
 
 ### Security Hardened
 
-- **SSH ciphers restricted** — Only modern, audited algorithms allowed:
+- **SSH ciphers restricted**: Only modern, audited algorithms allowed:
   - KEX: curve25519-sha256, diffie-hellman-group16/18-sha512
   - Ciphers: chacha20-poly1305, aes256-gcm, aes128-gcm
   - MACs: hmac-sha2-512-etm, hmac-sha2-256-etm
@@ -1344,13 +1342,12 @@ The fix: stream (don't buffer), skip compression on binary content, and remove a
   - Client alive interval 300s with max 2 probes (auto-disconnect idle sessions)
 
 - **Fail2ban upgraded to 3-jail system**:
-  - `sshd`: Standard jail — 3 failures in 10min → 24hr ban
-  - `sshd-aggressive`: Aggressive detection — 2 failures in 1hr → 7-day ban
-  - `recidive`: Repeat offender jail — 3 Fail2ban bans in 24hrs → 30-day ban
+  - `sshd`: Standard jail, 3 failures in 10min → 24hr ban
+  - `sshd-aggressive`: Aggressive detection, 2 failures in 1hr → 7-day ban
+  - `recidive`: Repeat offender jail, 3 Fail2ban bans in 24hrs → 30-day ban
   - Ban action changed from iptables to UFW for consistent firewall management
 
 ---
-
 ## [v2.1.1] - 2026-03-02
 
 ### Fixed
@@ -1365,24 +1362,23 @@ The fix: stream (don't buffer), skip compression on binary content, and remove a
 
 ### Added
 
-- **LAN fast-path setup** (`corex manage lan-setup`) — New command that eliminates the manual AdGuard DNS rewrite step and prints complete router/device DNS configuration instructions.
+- **LAN fast-path setup** (`corex manage lan-setup`): New command that eliminates the manual AdGuard DNS rewrite step and prints complete router/device DNS configuration instructions.
   - Automatically detects the AdGuard admin port from `AdGuardHome.yaml`
   - Calls AdGuard's REST API (`POST /control/rewrite/add`) to register a wildcard `*.yourdomain.com → SERVER_IP` DNS rewrite
   - Prompts for AdGuard credentials if the API requires auth (post-wizard state)
   - Falls back to manual instructions if the API call fails
   - Prints step-by-step DNS setup instructions for router, macOS, Windows, iPhone, and Android
   - Includes a verification step (`nslookup nextcloud.domain`) to confirm the fast-path is working
-- **Interactive menu option 3** — "LAN fast-path setup" added to `corex.sh` interactive menu for post-install systems
-- **Post-install guide updated** — `lib/summary.sh` now shows `lan-setup` as step 2 in "First Things To Do" (replacing the old manual AdGuard UI instruction)
+- **Interactive menu option 3**: "LAN fast-path setup" added to `corex.sh` interactive menu for post-install systems
+- **Post-install guide updated**: `lib/summary.sh` now shows `lan-setup` as step 2 in "First Things To Do" (replacing the old manual AdGuard UI instruction)
 
 ### How it works
 
-When devices on your LAN use AdGuard (running on the CoreX server) as their DNS server, `*.yourdomain.com` resolves to the server's local IP instead of Cloudflare. All traffic — file uploads to Nextcloud, photo syncs with Immich, Vaultwarden vault access — stays entirely on the local network at full LAN speed (~1 Gbps), bypassing the Cloudflare Tunnel entirely.
+When devices on your LAN use AdGuard (running on the CoreX server) as their DNS server, `*.yourdomain.com` resolves to the server's local IP instead of Cloudflare. All traffic, file uploads to Nextcloud, photo syncs with Immich, Vaultwarden vault access, stays entirely on the local network at full LAN speed (~1 Gbps), bypassing the Cloudflare Tunnel entirely.
 
 External access through Cloudflare Tunnel continues to work unchanged for devices off the LAN.
 
 ---
-
 ## [v2.0.1] - 2026-02-22
 
 ### Fixed
