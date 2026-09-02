@@ -263,3 +263,14 @@ _repair_body() {
     dupes=$(echo "$body" | sort | uniq -d | grep -c . || true)
     [ "$dupes" = "0" ]
 }
+
+@test "banned-proxy check scopes its log window to the container start time" {
+    # Stalwart's ban list is in memory, so a fixed --since window keeps
+    # reporting a ban that the last restart already cleared.
+    local body
+    body=$(awk '/^_stalwart_proxy_banned\(\)/,/^}/' \
+        "${REPO_ROOT}/lib/services/stalwart.sh")
+    echo "$body" | grep -q 'State.StartedAt'
+    run bash -c "echo '$body' | grep -c 'docker logs --since 24h'"
+    [ "$output" = "0" ]
+}

@@ -154,10 +154,13 @@ _stalwart_proxy_banned() {
     done
     [[ -n "${proxy_ips// /}" ]] || return 1
 
-    # Only consider bans since the container last started; a restart clears
-    # Stalwart's in-memory ban list.
-    local recent
-    recent=$(docker logs --since 24h stalwart 2>&1 \
+    # Only consider bans since the container last started. Stalwart's ban list
+    # is in memory, so a restart clears it — a fixed --since window reports a
+    # ban that no longer exists.
+    local started recent
+    started=$(docker inspect stalwart --format '{{.State.StartedAt}}' 2>/dev/null)
+    [[ -n "$started" ]] || return 1
+    recent=$(docker logs --since "$started" stalwart 2>&1 \
         | grep -E "security.scan-ban|security.ip-blocked" | tail -50)
     [[ -n "$recent" ]] || return 1
 
