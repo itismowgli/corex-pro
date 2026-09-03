@@ -46,10 +46,24 @@ window.console = {
   debug: () => {},
 }
 
+// The entry is discovered from index.html rather than assumed, the way a
+// browser finds it. Asset names carry a content hash, so hardcoding one means
+// the check silently tests the wrong file, or an absent one, after any build.
+const entry = html.match(/<script[^>]+src="([^"]+\.js)"/)?.[1]
+if (!entry) {
+  console.error("render-check FAILED\n  - index.html has no module script to run")
+  process.exit(1)
+}
+const entryPath = path.join(dist, entry.replace(/^\//, ""))
+if (!fs.existsSync(entryPath)) {
+  console.error("render-check FAILED\n  - index.html references " + entry + ", which was not emitted")
+  process.exit(1)
+}
+
 try {
-  window.eval(fs.readFileSync(path.join(dist, "assets/app.js"), "utf8"))
+  window.eval(fs.readFileSync(entryPath, "utf8"))
 } catch (e) {
-  failures.push("threw while loading the bundle: " + (e.stack || e.message))
+  failures.push("threw while loading " + entry + ": " + (e.stack || e.message))
 }
 
 setTimeout(() => {

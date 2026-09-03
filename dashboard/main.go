@@ -252,8 +252,13 @@ func spaHandler(dist fs.FS) http.Handler {
 			r = r.Clone(r.Context())
 			r.URL.Path = "/"
 		}
-		// Hashed asset names are immutable; index.html must not be, or a
-		// deploy leaves browsers on the previous app.
+		// Only safe because the asset names carry a content hash: a new build
+		// is a new name, so nothing can hold a stale copy. Fixing the names
+		// while sending this header pinned the old bundle in Cloudflare's
+		// cache for a year and served it next to the new index.html.
+		//
+		// index.html itself must never be immutable, or a deploy leaves
+		// browsers on the previous app.
 		if strings.HasPrefix(name, "assets/") {
 			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		} else {

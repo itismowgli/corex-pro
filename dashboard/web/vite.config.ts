@@ -19,14 +19,20 @@ export default defineConfig({
     // runs, which is a blank page with only a console entry to show for it.
     // This is an admin page, not a demo; reach is worth more than bytes.
     target: ["es2020", "chrome90", "firefox90", "safari14", "edge90"],
-    // One JS and one CSS file rather than a graph of chunks. There is no code
-    // splitting worth having in a four-tab admin page, and a single asset is
-    // one less thing the embedded file server has to get right.
+    // One JS and one CSS file rather than a graph of chunks: there is no code
+    // splitting worth having in a four-tab admin page.
+    //
+    // The names keep their content hash, which is not cosmetic. The first
+    // version of this fixed the names as assets/app.js while the server sent
+    // `Cache-Control: immutable, max-age=31536000` for everything under
+    // assets/, and those two together pin the first build forever. Cloudflare
+    // held the old bundle (cf-cache-status: HIT, age 1040) and served it
+    // alongside the new index.html, so the fix for a blank page could not
+    // reach the browser that needed it, and no amount of redeploying would
+    // have changed that. A hash in the name is what makes immutable true.
     rollupOptions: {
       output: {
         manualChunks: undefined,
-        entryFileNames: "assets/app.js",
-        assetFileNames: "assets/app.[ext]",
       },
     },
   },

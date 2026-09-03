@@ -47,6 +47,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
   93.4C, a degree and a half from the guardian's shed threshold. `GOMAXPROCS=4`
   in both stages sets heat; `nice` only ever set priority.
 
+- **The fix for the blank page could not have reached the browser, because
+  the asset names had no content hash while the server called them
+  immutable.** `Cache-Control: public, max-age=31536000, immutable` on a name
+  fixed as `assets/app.js` pins the first build for a year: Cloudflare held
+  the old bundle and served it alongside the new `index.html`
+  (`cf-cache-status: HIT`, `age: 1040`), so redeploying changed nothing a
+  browser could see. Vite's content hashing is restored, which is what makes
+  the immutable header true, and `index.html` stays `no-cache` so it always
+  names the current build.
+
 ### Added
 - **`npm run smoke`, a render check that runs as part of the build.** It mounts
   the built bundle in a DOM with the network disabled and fails if the page
