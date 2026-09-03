@@ -94,7 +94,7 @@ export function JobPanel({
             failed && "text-destructive"
           )}
         >
-          {job.output?.trim() ? job.output : running ? "waiting for output…" : "(no output)"}
+          {job.output?.trim() ? job.output : running ? "waiting for output..." : "(no output)"}
         </pre>
       </CardContent>
     </Card>
