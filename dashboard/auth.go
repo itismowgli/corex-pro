@@ -543,12 +543,23 @@ func (l *limiter) prune(key string, now time.Time, window time.Duration) []time.
 
 // clientIP is what the rate limiter counts against.
 //
-// Traefik is the only intended path in, so X-Forwarded-For is the real client.
-// A caller reaching the container directly on proxy-net can forge that header,
+// Cf-Connecting-Ip first, because the published path is Cloudflare Tunnel and
+// that header is the only one carrying the actual visitor. Traefik replaces
+// X-Forwarded-For with its own peer address unless told to trust the sender,
+// so on a tunnelled request that header reads as cloudflared's container
+// address. Everyone on the internet then shares one bucket, which is worse
+// than it sounds: it is not just poor attribution, it lets one attacker spend
+// the whole allowance and lock every other account out of the login.
+//
+// Both headers are still only as good as the hop that set them. A caller
+// reaching this container directly on proxy-net can put anything in either,
 // which lets it dodge its own per-address bucket, so every limit that matters
 // has a second bucket keyed on something the caller does not choose: the
 // username, or a global ceiling.
 func clientIP(r *http.Request) string {
+	if cf := strings.TrimSpace(r.Header.Get("Cf-Connecting-Ip")); cf != "" {
+		return cf
+	}
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		if first, _, ok := strings.Cut(xff, ","); ok {
 			return strings.TrimSpace(first)
