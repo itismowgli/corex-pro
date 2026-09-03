@@ -32,8 +32,22 @@ const TABS = [
 
 // Dark by default, because this is looked at in a terminal-shaped context and
 // the previous dashboard was dark only. The choice is remembered per browser.
+//
+// Both halves are guarded. Reading localStorage throws, not returns null, in a
+// browser with site data blocked, and this read is in a useState initialiser:
+// an exception there happens during the first render, so React unmounts the
+// tree and the page goes completely blank with no visible cause. A remembered
+// theme is not worth a blank dashboard.
+function readTheme(): boolean {
+  try {
+    return localStorage.getItem("corex-theme") !== "light"
+  } catch {
+    return true
+  }
+}
+
 function useTheme() {
-  const [dark, setDark] = React.useState(() => localStorage.getItem("corex-theme") !== "light")
+  const [dark, setDark] = React.useState(readTheme)
   React.useEffect(() => {
     document.documentElement.classList.toggle("dark", dark)
     try {

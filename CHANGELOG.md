@@ -6,6 +6,37 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.15.1] - 2026-09-03
+
+### Fixed
+- **The new dashboard rendered a blank page, and every check that had been run
+  passed.** The bundle built, the types checked, the server answered 200 with
+  the right content types through Traefik, and the assets were the right size.
+  None of that executes the page.
+
+  Two causes, both now fixed. `useTheme` read `localStorage` inside a
+  `useState` initialiser, and reading it throws rather than returning null in
+  a browser with site data blocked: an exception during the first render makes
+  React unmount the tree, so the page goes completely blank with no visible
+  cause. And the build target was Vite's default of whatever is baseline
+  widely available, which is newer than an older Safari or the browser on a
+  phone; a module the browser cannot parse is a SyntaxError before any of the
+  app's own code runs.
+
+- **A blank page can no longer happen silently.** `index.html` ships an inline
+  styled placeholder that says the script did not run, plus a `window.onerror`
+  handler that paints the message into the page, which catches the failures
+  React never sees because it never starts. A React error boundary catches the
+  rest and prints the stack instead of unmounting to nothing.
+
+### Added
+- **`npm run smoke`, a render check that runs as part of the build.** It mounts
+  the built bundle in a DOM with the network disabled and fails if the page
+  comes out empty, if the boot placeholder was never replaced, or if the error
+  boundary caught anything. Verified against three negative cases: a bundle
+  that throws, an empty bundle, and the real one. The Dockerfile runs it, so a
+  dashboard that does not render cannot become an image.
+
 ## [v3.15.0] - 2026-09-03
 
 ### Fixed

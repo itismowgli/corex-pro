@@ -5,9 +5,45 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark light" />
     <title>CoreX Dashboard</title>
+    <style>
+      /* Inline, so this is styled even if the stylesheet is the thing that
+         failed to load. */
+      html { background: #111; color: #eee; }
+      #boot { padding: 24px; font: 13px/1.6 ui-monospace, monospace; }
+      #boot code { opacity: 0.8; }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div id="boot">
+        Loading the CoreX dashboard&hellip;
+        <p>
+          If this message stays, the page script did not run. Check the browser console, and
+          <code>/api/state</code> to confirm the server itself is answering.
+        </p>
+      </div>
+    </div>
+    <noscript>
+      <div style="padding: 24px; font: 13px/1.6 ui-monospace, monospace">
+        This dashboard needs JavaScript. Without it, use
+        <code>corex manage status</code> over SSH.
+      </div>
+    </noscript>
+    <script>
+      // A syntax error or a failed module fetch never reaches the error
+      // boundary, because React never starts. This does, and it is why the
+      // first version of this page could go blank with nothing to go on.
+      window.addEventListener("error", function (e) {
+        var boot = document.getElementById("boot")
+        if (!boot) return
+        boot.innerHTML =
+          "<strong>The dashboard script failed to load or run.</strong>" +
+          "<pre style='white-space:pre-wrap'>" +
+          String((e && (e.message || e.type)) || "unknown error").replace(/[<>&]/g, "") +
+          "</pre>" +
+          "<p>The server may still be fine. Check <code>/api/state</code>.</p>"
+      })
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
