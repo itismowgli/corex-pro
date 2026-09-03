@@ -28,7 +28,7 @@ learning nginx, SSL, Docker networking, or Linux hardening.
 - Re-run on existing server = health-check + repair broken services only
 - No live server required for testing (Docker-in-Docker + bats)
 
-**Current version:** v3.17.0
+**Current version:** v3.18.0
 **Current service modules:** 17 (Traefik, AdGuard, Portainer, Nextcloud,
 Immich, Vaultwarden, Stalwart Mail, Coolify, n8n, Cal.com, Time Machine,
 Uptime Kuma + Grafana + Prometheus (monitoring), Ollama + OpenWebUI +
@@ -171,7 +171,8 @@ corex-pro/
 │   ├── corex-telegram.py     # Long-polling control bot, runs as corex-bot
 │   ├── corex-agentctl.py     # CLI client, used by corex manage agent test
 │   ├── corex-usersctl.py     # Dashboard accounts, behind corex manage dashboard-user
-│   ├── corex_users.py        # Dashboard user store: hashing, reset mail
+│   ├── corex_users.py        # Dashboard user store: hashing, reset mail, access log
+│   ├── corex_metrics.py      # Host vitals, disks, series, Kuma states, as data
 │   └── corex_common.py       # Shared helpers, installed to /usr/local/lib/corex
 └── test/
     ├── Dockerfile.test       # Ubuntu 24.04 test container
@@ -196,7 +197,8 @@ corex-pro/
 | `/etc/corex/watchdog.conf` | Watchdog thresholds and Kuma push tokens (0640) |
 | `/etc/corex/agent.conf` | Action agent config (0640 root:corex-agent) |
 | `/etc/corex/agent.token` | Agent bearer token (0640 root:corex-agent) |
-| `/etc/corex/dashboard-users.json` | Dashboard accounts and PBKDF2 hashes (0600 root) |
+| `/etc/corex/dashboard-users.json` | Dashboard accounts, PBKDF2 hashes, passkeys (0600 root) |
+| `/var/log/corex-dashboard-auth.log` | Append-only dashboard access log (0640 root) |
 | `/etc/corex/telegram.conf` | Bot token and authorised chat id (0640 root:corex-bot) |
 | `/run/corex/agent.sock` | Agent socket (0660 root:corex-agent) |
 | `/usr/local/bin/corex-watchdog.sh` | Resource watchdog, run every 60s by timer |
@@ -1458,6 +1460,92 @@ second. And an empty Traefik `middlewares` label is rejected outright, so with
 the app login on and LAN-only off the chain is empty and the label has to be
 left out rather than emitted blank.
 
+### 37. A dashboard that renders reports is not a dashboard
+
+The Storage tab opened with `[0;36m[1mCoreX Storage Report[0m`, because the
+panel put a command's output in a `<pre>` and the `Ansi` component next door
+went unused. Health printed the same hardware report twice. Both were a
+monospace wall a reader had to parse to find out whether anything was wrong.
+
+Showing a command's own output is right for a command someone ran: those
+commands are the source of truth for the CLI too, and a paraphrase is a second
+place for the answer to be wrong. It is not right for a temperature, a disk
+percentage or a two-hour trend. Those are numbers, and a number rendered as
+text in a fixed-width font is a number nobody reads.
+
+**The history was already being collected.** `blackbox.log` records
+temperature, load, memory, swap, throttling and container count every twenty
+seconds because it is the only evidence that survives an unclean shutdown
+(gotcha #16). That is a time series, so the graphs read it rather than adding
+a second sampler. Two hours is 360 samples, which is the window that answers
+"what happened just before it got hot".
+
+**Host numbers have to come from the agent.** The container sees its own
+filesystem, so `df` in there measures the wrong thing entirely. Bind-mounting
+`/mnt/corex-data` to fix that would hand a web-facing container Vaultwarden's
+vault, Immich's photos and the Telegram bot token inside Kuma's `notification`
+table. `corex_metrics.py` runs privileged and returns numbers; its Kuma reader
+takes monitor names and heartbeats and never opens that table. `du` is cached
+for fifteen minutes and computed in a background thread, because walking a
+photo library takes far longer than a dashboard poll should.
+
+**A nil slice is not an empty array.** `var urls []string` marshals to JSON
+`null`, the client typed it `string[]`, and `svc.urls.length` threw into the
+error boundary, so one service with no browsable address blanked every tab.
+Any field the client types as an array has to leave Go as one.
+
+**And the check that existed to catch a blank page could not see it.**
+`render-check.mjs` failed every fetch, so each tab rendered its error state and
+not one service card was ever constructed. It now runs every tab twice, against
+fixtures shaped like the real responses and with the server down, and the
+fixtures carry the awkward cases on purpose: a null `urls`, a disk at 94%, a
+monitor that is down. When changing it, put a bug back and confirm it fails.
+
+### 38. Parse a log line against real logs, or not at all
+
+Container logs were one undifferentiated block, so the error you opened the
+dialog to find read exactly like the two hundred routine lines around it. They
+are parsed now, and every fault in the first parser was invisible until it ran
+against lines this box actually emits:
+
+| Line | What went wrong |
+|---|---|
+| Traefik `WRN` | the level pattern knew `WARNING` and `WARN`, so every warning read as no level |
+| `[03/Sep/2026:18:09:57 +0000]` | taking the first `HH:MM:SS` gave `26:18:09`, out of the middle of the year |
+| the same line, after removal | the pattern matched the date but not its brackets, leaving a bare `[]` |
+| `[MONITOR] WARN: ...` | a generic leading-bracket strip made it `MONITOR] WARN: ...` |
+
+None of that is visible to a type check or to a render check, because the
+output is still a string and the page still draws it. Each timestamp pattern
+now removes itself and its own delimiters, anything unrecognised is passed
+through untouched, and `logline-check.mjs` runs in the build over shapes taken
+off the running box. One case matters in the other direction: the word "error"
+inside a URL must not paint a routine request red.
+
+### 39. Count failures, not attempts, and know who the caller is
+
+Two rate-limiting faults in the dashboard's login, both of which look like
+working code.
+
+**Counting successful sign-ins locks out the person you are protecting.** Five
+attempts per quarter hour includes the phone, the laptop and the tab already
+open, so an operator who has done nothing wrong is shut out of their own
+control panel for fifteen minutes. Only failures count now, and a correct
+password forgives the bucket.
+
+**Behind the tunnel, every visitor is the same address.** Traefik replaces
+`X-Forwarded-For` with its own peer unless told to trust the sender, so the
+first login from outside logged `signed in from 172.18.0.7`, which is
+cloudflared. Everyone on the internet then shared one bucket. That was never a
+way in, because the per-username and global buckets still held; it was a way
+to deny the way in, since one attacker guessing at any name could spend the
+whole allowance. `Cf-Connecting-Ip` is read first.
+
+Both headers are only as good as the hop that set them, and anything reaching
+the container directly on proxy-net can forge either. That is why every limit
+that matters keeps a second bucket keyed on something the caller does not
+choose: the username, or a global ceiling.
+
 ---
 
 ## What NOT to Do
@@ -1517,7 +1605,17 @@ Each test: sets env vars, sources service module, calls `_deploy()` with docker
 mocked, validates generated `docker-compose.yml` has correct values and passes
 `docker compose config` validation.
 
-### 4. Dashboard login, end to end (needs Docker)
+### 4. Frontend checks that run in the build
+```bash
+cd dashboard/web && npm run build
+```
+`tsc`, then `vite build`, then two checks. `logline-check.mjs` parses log lines
+taken off a running box, and `render-check.mjs` mounts every tab twice, once
+against fixtures shaped like the real API responses and once with every fetch
+failing. Both had to be added after a bug they should have caught: see gotchas
+#37 and #38.
+
+### 5. Dashboard login, end to end (needs Docker)
 ```bash
 ./test/e2e/dashboard-auth.sh
 ```
@@ -1527,7 +1625,7 @@ spent recovery code, a replayed reset code, and an unreachable user store. A
 login that is subtly wrong looks exactly like one that works, so this is the
 check that has to exist.
 
-### 5. Full integration test (Docker-in-Docker)
+### 6. Full integration test (Docker-in-Docker)
 ```bash
 docker run --privileged \
   -v /var/run/docker.sock:/var/run/docker.sock \
@@ -1537,13 +1635,13 @@ docker run --privileged \
   corex-test bash install-corex-master.sh
 ```
 
-### 6. Compose validation on live server (read-only, safe)
+### 7. Compose validation on live server (read-only, safe)
 ```bash
 cd /mnt/corex-data/docker-configs/<service>
 docker compose config   # Validates and prints resolved compose file
 ```
 
-### 7. Dry-run mode
+### 8. Dry-run mode
 `nuke-corex.sh --dry-run` and `migrate-domain.sh --dry-run` show changes
 without applying them. Add `--dry-run` to `install-corex-master.sh` as well
 (planned for v2).

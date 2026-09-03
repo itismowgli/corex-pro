@@ -807,6 +807,22 @@ with `mail-setup`, and two-factor with an authenticator app. Enrolment shows a
 QR code drawn in the page itself and ten single-use recovery codes; save them,
 because they are hashed the moment they are stored and cannot be shown again.
 
+You can also add a passkey, which is your fingerprint, face or a security key
+and replaces the password and the code in one step. A passkey cannot be
+phished: the browser will only sign for the address the key was made on, so a
+convincing copy of this page on another hostname gets nothing. Signing in with
+one asks for no username at all.
+
+Adding a passkey does not remove the password, on purpose. A passkey lives in
+one authenticator, and being locked out because a phone was lost is the failure
+this design exists to avoid.
+
+The Account tab also lists the devices holding a session, with the address each
+signed in from and when it was last active, and can sign the others out. Below
+that is the account's own history: sign-ins, refusals, lockouts, password
+changes and passkey changes. The first sign that an account is not yours any
+more is a sign-in you do not recognise.
+
 Accounts live in `/etc/corex/dashboard-users.json`, mode 600 root. Passwords,
 recovery codes and reset codes are PBKDF2-HMAC-SHA256 with a per-account salt.
 Sessions are held in the dashboard's memory, so restarting the container signs
@@ -833,30 +849,45 @@ sudo bash corex-manage.sh dashboard-user disable-auth
 
 ### What the tabs do
 
-Seven tabs, covering what you would otherwise SSH for.
+Eight tabs, covering what you would otherwise SSH for.
+
+Overview is the one it opens on, because the question you have when you open a
+control panel is whether anything is wrong. Temperature, load, memory and
+container count across the top, each with two hours of history behind it; both
+disks with how much is purgeable; the containers using the most; every uptime
+check; and what the resource watchdog has logged. Anything already wrong is
+collected into a banner at the top so it cannot be scrolled past.
+
+The graphs cost nothing to collect. `blackbox.log` already records temperature,
+load, memory and throttling every twenty seconds, because it is the only
+evidence that survives a power cut, so the charts read that rather than
+sampling again.
 
 Services is a card per installed service: its health, the addresses it answers
 on, and buttons for start, stop, restart, repair and update, plus a live log
 stream.
 
-Health is the half of monitoring that a reachability check cannot see. CPU
-temperature, SMART status per disk, the dpkg state and whether the last
-shutdown was clean, then the resource watchdog: memory, disk, heat, a
-container stopped while its restart policy says otherwise, one whose restart
-count is climbing, one that was OOM killed. None of those changes an HTTP
-response. Doctor lives here too, since it is health-check plus repair.
+Health is the half of monitoring a reachability check cannot see. Heat with its
+own trend and how close it is to the shed threshold, SMART per disk, the
+package database, and what the watchdog has found: a container stopped while
+its restart policy says otherwise, one whose restart count is climbing, one
+that was killed for memory. None of those changes an HTTP response. Doctor
+lives here too, since it is a health check plus repair.
 
-Storage breaks usage down by service and can preview or run a cleanup.
+Storage shows both disks, a Docker usage table with a purgeable column, and
+space per service. Cleanup can be previewed before it runs.
 
 Network lists every address with its status, then checks them: HTTP status,
 certificate expiry, and whether DNS resolves to the server or out through
 Cloudflare. The table says what a hostname should be; the check says what it
 does. Extra Traefik routes are listed here as well.
 
-Catalogue is every service module CoreX has, installed or not, with what each
-one replaces, its RAM and disk estimate, and whether it needs a domain. The
-metadata is read from the modules themselves, so it cannot drift from
-`corex manage list` and a new module appears with no other change.
+Catalogue is every service module CoreX has, installed or not, with a category
+sidebar, a search and a filter for what you do and do not have. Each entry
+shows what it replaces, its RAM and disk estimate, and the address it answers
+on or would answer on once installed. The metadata is read from the modules
+themselves, so it cannot drift from `corex manage list` and a new module
+appears with no other change.
 
 System shows host details, the SSH command with the right port, the direct
 ports for the services you actually have, a command reference, and update-all.
@@ -865,10 +896,19 @@ Account appears once the dashboard has accounts of its own: change your
 password, your display name and the address a reset code goes to, and turn
 two-factor on or off.
 
-Command output is shown as the command's own output, colour and alignment
-intact, rather than a summary of it. These commands are the source of truth
-for the CLI too, and a dashboard that paraphrases them is a second place for
-the answer to be wrong.
+Account is where you change your password and display name, add a passkey, turn
+two-factor on, and see where you are signed in.
+
+A command you ran is shown as its own output, colour and alignment intact,
+rather than summarised. Those commands are the source of truth for the CLI too,
+and paraphrasing them is a second place for the answer to be wrong. Numbers are
+the exception: a temperature or a disk percentage is not prose, and reading one
+out of a monospace block is work nobody should have to do.
+
+Container logs are parsed into a clock, a level and a message, with errors and
+warnings tinted and counted, and a filter, level toggles, wrap and follow. Every
+image writes its own format, and left as one block the line you went looking
+for reads exactly like the ones you did not.
 
 Statuses refresh by themselves every fifteen seconds, and immediately after an
 action finishes. An earlier version left every badge stale until you clicked a

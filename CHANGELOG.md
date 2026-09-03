@@ -6,6 +6,100 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.18.0] - 2026-09-03
+
+### Added
+- **An Overview tab that shows the box rather than reporting on it.** The
+  question this page is opened to answer is "is anything wrong", so that is now
+  what it leads with. Temperature, load, memory and container count across the
+  top, each with two hours of history; both disks with what is purgeable; the
+  heaviest containers; every Uptime Kuma check; and what the resource watchdog
+  has logged.
+
+  Anything already wrong is gathered into a banner so it cannot be scrolled
+  past: past the shed threshold, throttled recently, containers shed by the
+  thermal guardian, an uptime check down, a SMART failure, a half-configured
+  dpkg, a disk over 90%, a container restarting in a loop, or an unreachable
+  agent.
+
+  The history was free. `blackbox.log` already records temperature, load,
+  memory, swap, throttling and container count every twenty seconds, because it
+  is the only evidence that survives an unclean shutdown. The graphs read it
+  instead of adding a second sampler.
+
+- **Passkeys.** WebAuthn, replacing the password and the second factor in one
+  step. They cannot be phished: the browser only signs for the origin the key
+  was created on, so a convincing copy of the page on another hostname gets
+  nothing. Enrolment is discoverable, so signing in asks for no username at
+  all. An authenticator whose signature counter goes backwards is refused,
+  because that is the documented signal of a cloned key.
+
+  The password stays when a passkey is added. A passkey lives in one
+  authenticator, and an operator locked out because a phone was lost is the
+  failure this whole design exists to avoid.
+
+- **A record of who signed in from where.** The account page lists the devices
+  holding a session, with address and last activity, and can sign the others
+  out. Below it is the account's own history: sign-ins, refusals, lockouts,
+  password changes, two-factor changes and passkey changes, each with the
+  address and the device it came from.
+
+  The log is append-only and lives on the privileged side. That is the point
+  rather than an implementation detail: a record of who signed in is worth
+  something only if the thing being audited cannot quietly edit it.
+
+- **A `metrics` action on the agent**, returning temperature, load, both disks,
+  Docker's reclaimable space, the blackbox series, watchdog findings, SMART,
+  the dpkg state and Kuma's monitor states as data. It is privileged because
+  the container sees its own filesystem rather than the host's, so `df` in
+  there measures the wrong thing, and bind-mounting the data root instead would
+  hand a web-facing container every service's files and the bot token inside
+  Kuma's notification config.
+
+- **`corex manage kuma-seed`** now has a dispatch entry, so the HTTP checks each
+  module declares can be created again at any time.
+
+### Changed
+- **Storage and Health show numbers instead of terminal output.** Storage
+  opened with `[0;36m[1mCoreX Storage Report[0m`, because the panel rendered
+  escape codes literally, and Health printed the same hardware report twice.
+  Both are structured now: disk meters, a Docker usage table with a purgeable
+  column, space per service, and heat with its own trend. The report each is
+  rendered from is still one click away, because those commands remain the
+  source of truth.
+
+- **Logs are parsed rather than dumped.** A clock, a level and the message,
+  aligned, with errors and warnings tinted and counted, plus a filter, level
+  toggles, wrap, follow and copy. Four parsing faults were only visible against
+  lines this box actually emits: Traefik's `WRN` was read as having no level,
+  an access log's clock came out of the middle of the year, removing that
+  timestamp left a bare `[]`, and a generic bracket strip turned `[MONITOR]`
+  into `MONITOR]`.
+
+- **The Catalogue has a category sidebar with counts, a search and a state
+  filter**, and every entry shows the address it answers on, or would answer on
+  once installed. "Needs a domain" was not something anyone could act on.
+
+- **The Go builder moves to 1.25** for the WebAuthn library, which is this
+  binary's first external dependency. `go.sum` is committed so the build
+  resolves to the versions that were tested.
+
+### Fixed
+- A service with no browsable address blanked the entire dashboard. Go marshals
+  a nil slice as JSON `null`, three services have no address, and
+  `svc.urls.length` threw into the error boundary. The server now always emits
+  an array and the components no longer assume.
+- Rate limiting counted every internet visitor as one address. Traefik replaces
+  `X-Forwarded-For` with its own peer unless told to trust the sender, so
+  everyone shared a bucket and one attacker could lock every account out of the
+  login. `Cf-Connecting-Ip` is read first.
+- Rate limiting also counted successful sign-ins, so five logins across a phone
+  and a laptop locked the operator out for fifteen minutes. Only failures
+  count, and a correct password forgives the bucket.
+- The longest service label pushed the status badge off its card. `CardHeader`
+  is a grid, so `CardTitle` defaults to `min-width:auto` and would not shrink.
+- `test/e2e/dashboard-auth.sh` was committed without its executable bit.
+
 ## [v3.17.0] - 2026-09-03
 
 ### Added
