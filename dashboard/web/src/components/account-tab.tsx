@@ -11,6 +11,8 @@ import {
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Field, Input } from "@/components/ui/input"
+import { ActivityCard } from "@/components/activity-card"
+import { PasskeyCard } from "@/components/passkey-card"
 import { auth, type Me } from "@/lib/api"
 
 // A small form wrapper: one busy flag, one error line, one confirmation. Every
@@ -380,8 +382,10 @@ export function AccountTab({ me, refresh }: { me: Me | null; refresh: () => void
   return (
     <div className="grid gap-4">
       <ProfileCard key={me.username + me.display_name + me.email} me={me} refresh={refresh} />
+      <PasskeyCard refresh={refresh} />
       <PasswordCard refresh={refresh} />
       <TOTPCard me={me} refresh={refresh} />
+      <ActivityCard onSignedOut={refresh} />
     </div>
   )
 }

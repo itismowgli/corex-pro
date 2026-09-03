@@ -118,6 +118,33 @@ export type Me = {
   email: string
   totp_enabled: boolean
   recovery_left: number
+  passkeys: number
+}
+
+export type SessionView = {
+  id: string
+  current: boolean
+  ip: string
+  user_agent: string
+  created: string
+  last_seen: string
+  awaiting_totp: boolean
+}
+
+export type Passkey = {
+  id: string
+  name: string
+  added: number
+  last_used: number
+}
+
+export type ActivityRow = {
+  t: number
+  event: string
+  user: string
+  ip: string
+  ua: string
+  detail: string
 }
 
 export const auth = {
@@ -149,6 +176,36 @@ export const auth = {
     post<{ ok: boolean }>("/api/auth/reset/request", { username }),
   resetComplete: (username: string, code: string, password: string) =>
     post<{ ok: boolean }>("/api/auth/reset/complete", { username, code, password }),
+  sessions: () => req<SessionView[]>("/api/auth/sessions"),
+  passkeys: () =>
+    req<{ passkeys: Passkey[]; rp_id: string; origin: string; available: boolean }>(
+      "/api/auth/passkey/list"
+    ),
+  passkeyBegin: () =>
+    post<{ ceremony: string; options: PublicKeyCredentialCreationOptions }>(
+      "/api/auth/passkey/begin",
+      {}
+    ),
+  passkeyFinish: (ceremony: string, name: string, response: unknown) =>
+    post<{ ok: boolean; id: string; name: string }>("/api/auth/passkey/finish", {
+      ceremony,
+      name,
+      response,
+    }),
+  passkeyDelete: (id: string) => post<{ ok: boolean }>("/api/auth/passkey/delete", { id }),
+  passkeyLoginBegin: () =>
+    post<{ ceremony: string; options: PublicKeyCredentialRequestOptions }>(
+      "/api/auth/passkey/login/begin",
+      {}
+    ),
+  passkeyLoginFinish: (ceremony: string, response: unknown) =>
+    post<{ ok: boolean; display_name: string }>("/api/auth/passkey/login/finish", {
+      ceremony,
+      response,
+    }),
+  revoke: (opts: { id?: string; others?: boolean }) =>
+    post<{ ok: boolean; dropped: number }>("/api/auth/sessions/revoke", opts),
+  activity: () => req<ActivityRow[]>("/api/auth/activity"),
 }
 
 

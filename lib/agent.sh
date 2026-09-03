@@ -108,9 +108,11 @@ _agent_files() {
 
     # The bot cannot create its own log file under ProtectSystem=strict, so it
     # is created here with the right owner.
-    touch /var/log/corex-agent.log /var/log/corex-telegram.log
-    chmod 0640 /var/log/corex-agent.log /var/log/corex-telegram.log
-    chown root:root      /var/log/corex-agent.log
+    touch /var/log/corex-agent.log /var/log/corex-telegram.log \
+          /var/log/corex-dashboard-auth.log
+    chmod 0640 /var/log/corex-agent.log /var/log/corex-telegram.log \
+               /var/log/corex-dashboard-auth.log
+    chown root:root      /var/log/corex-agent.log /var/log/corex-dashboard-auth.log
     chown "${AGENT_USER}:${AGENT_USER}" /var/log/corex-telegram.log 2>/dev/null || true
 
     # Generated once and kept. Regenerating it on every re-run would lock out
@@ -175,6 +177,7 @@ _agent_logrotate() {
     cat > /etc/logrotate.d/corex-agent << LREOF
 /var/log/corex-agent.log
 /var/log/corex-telegram.log
+/var/log/corex-dashboard-auth.log
 {
     su root syslog
     weekly

@@ -22,18 +22,19 @@ if [ "${IN_CONTAINER:-}" != "1" ]; then
     work=$(mktemp -d)
     trap 'rm -rf "$work"' EXIT
     cp "$repo"/dashboard/main.go "$repo"/dashboard/auth.go \
+       "$repo"/dashboard/overview.go "$repo"/dashboard/passkey.go \
        "$repo"/dashboard/auth_test.go "$repo"/dashboard/go.mod \
-       "$repo"/agent/corex_users.py "$work/"
+       "$repo"/dashboard/go.sum "$repo"/agent/corex_users.py "$work/"
     cp "$repo"/test/e2e/fake-agent.py "$work/fakeagent.py"
     cp "$repo"/test/e2e/dashboard-auth.sh "$work/run.sh"
     exec docker run --rm -e IN_CONTAINER=1 -v "$work":/work -w /work \
-        golang:1.24-alpine sh /work/run.sh
+        golang:1.25-alpine sh /work/run.sh
 fi
 
 cd /work
 mkdir -p web/dist && echo '<html><body><div id="root"></div></body></html>' > web/dist/index.html
 head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > /work/token
-apk add --no-cache python3 curl >/dev/null
+apk add --no-cache python3 curl git >/dev/null
 go build -o /tmp/dash . 
 python3 fakeagent.py & sleep 1
 COREX_AGENT_SOCKET=/run/corex/agent.sock COREX_AGENT_TOKEN_FILE=/work/token \

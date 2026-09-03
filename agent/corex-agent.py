@@ -428,7 +428,8 @@ def handle(req):
     if action == "services":
         return {"ok": True, "services": sorted(SERVICES),
                 "actions": sorted(ACTIONS) + ["logs", "metrics", "users-get",
-                                              "users-put", "auth-reset"]}
+                                              "users-put", "auth-reset",
+                                              "auth-log"]}
 
     if action == "logs":
         if not valid_service(service, action):
@@ -450,6 +451,21 @@ def handle(req):
         except Exception as exc:                    # never take the agent down
             say("metrics failed: %r" % (exc,))
             return {"ok": False, "error": "could not collect metrics"}
+
+    if action == "auth-log":
+        # Two directions on one action: a caller either records an event or
+        # reads the tail. Both are cheap and neither can rewrite history.
+        if req.get("event"):
+            ok = cu.auth_log_append(
+                str(req.get("event")), req.get("username", ""),
+                req.get("ip", ""), req.get("user_agent", ""),
+                req.get("detail", ""))
+            return {"ok": bool(ok)}
+        try:
+            limit = max(1, min(500, int(req.get("limit", 200))))
+        except (TypeError, ValueError):
+            limit = 200
+        return {"ok": True, "events": cu.auth_log_read(limit)}
 
     if action in ("users-get", "users-put", "auth-reset"):
         return handle_users(action, req)

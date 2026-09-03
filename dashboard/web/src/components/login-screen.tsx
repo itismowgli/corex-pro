@@ -1,10 +1,17 @@
 import * as React from "react"
-import { AlertTriangleIcon, KeyRoundIcon, LoaderCircleIcon, ShieldIcon } from "lucide-react"
+import {
+  AlertTriangleIcon,
+  FingerprintIcon,
+  KeyRoundIcon,
+  LoaderCircleIcon,
+  ShieldIcon,
+} from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Field, Input } from "@/components/ui/input"
 import { auth, type Me } from "@/lib/api"
+import { explain, get as webauthnGet, supported as webauthnSupported } from "@/lib/webauthn"
 
 // The four things this screen can be showing. It is one screen rather than
 // four routes because the dashboard is a single page behind one hostname and a
@@ -30,6 +37,7 @@ export function LoginScreen({
   const [busy, setBusy] = React.useState(false)
   const [problem, setProblem] = React.useState<string | null>(null)
   const [notice, setNotice] = React.useState<string | null>(null)
+  const canPasskey = React.useMemo(webauthnSupported, [])
 
   // A session that reached the second factor and then reloaded arrives here
   // already half signed in, so the form has to follow the server rather than
@@ -45,10 +53,29 @@ export function LoginScreen({
       await fn()
       after()
     } catch (e) {
-      setProblem(e instanceof Error ? e.message : String(e))
+      // explain() turns a WebAuthn exception into something readable and
+      // passes anything else straight through, so both paths report the same
+      // way.
+      setProblem(explain(e))
     } finally {
       setBusy(false)
     }
+  }
+
+  // A passkey is the password and the second factor at once, so this lands a
+  // fully signed-in session rather than one owing a code. No username is
+  // asked for: the credential is discoverable, so the authenticator offers
+  // the account itself.
+  const signInWithPasskey = () => {
+    void attempt(
+      async () => {
+        const started = await auth.passkeyLoginBegin()
+        const response = await webauthnGet(started.options)
+        await auth.passkeyLoginFinish(started.ceremony, response)
+        onSignedIn()
+      },
+      () => {}
+    ).catch(() => {})
   }
 
   const submitPassword = (e: React.FormEvent) => {
@@ -178,6 +205,24 @@ export function LoginScreen({
                   {busy && <LoaderCircleIcon className="animate-spin" />}
                   Sign in
                 </Button>
+                {canPasskey && (
+                  <>
+                    <div className="text-muted-foreground flex items-center gap-2 text-xs">
+                      <span className="bg-border h-px flex-1" />
+                      or
+                      <span className="bg-border h-px flex-1" />
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={busy}
+                      onClick={signInWithPasskey}
+                    >
+                      <FingerprintIcon />
+                      Use a passkey
+                    </Button>
+                  </>
+                )}
                 <button
                   type="button"
                   className="text-muted-foreground hover:text-foreground text-xs underline-offset-4 hover:underline"

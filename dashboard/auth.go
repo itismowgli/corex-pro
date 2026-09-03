@@ -50,6 +50,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -98,6 +99,12 @@ type authUser struct {
 	PasswordChanged int64        `json:"password_changed"`
 	TOTP            totpConfig   `json:"totp"`
 	Reset           *resetRecord `json:"reset,omitempty"`
+
+	// WebAuthn. The handle is opaque and stable: it travels to the
+	// authenticator and is stored there, so it must not be the username,
+	// which can change and which says who you are to anyone holding the key.
+	WebAuthnID string          `json:"webauthn_id,omitempty"`
+	Passkeys   []storedPasskey `json:"passkeys,omitempty"`
 }
 
 type usersDoc struct {
@@ -367,6 +374,12 @@ type session struct {
 	// True between a correct password and a correct second factor. Such a
 	// session can do exactly one thing: present a code.
 	AwaitingTOTP bool
+
+	// Where it signed in from, so the account page can list the devices that
+	// hold a session and let one be dropped. The user agent is attacker
+	// controlled text, so it is trimmed and never rendered as markup.
+	IP        string
+	UserAgent string
 }
 
 var sessions = struct {
@@ -389,14 +402,17 @@ func newSessionID() (string, error) {
 	return hex.EncodeToString(buf), nil
 }
 
-func startSession(w http.ResponseWriter, user string, awaitingTOTP bool) error {
+func startSession(w http.ResponseWriter, r *http.Request, user string, awaitingTOTP bool) error {
 	id, err := newSessionID()
 	if err != nil {
 		return err
 	}
 	now := time.Now()
 	sessions.Lock()
-	sessions.m[id] = &session{User: user, Created: now, Seen: now, AwaitingTOTP: awaitingTOTP}
+	sessions.m[id] = &session{
+		User: user, Created: now, Seen: now, AwaitingTOTP: awaitingTOTP,
+		IP: clientIP(r), UserAgent: trimUA(r.UserAgent()),
+	}
 	// Opportunistic sweep, so an unbounded map cannot grow out of a 128MB
 	// container on a login page someone is hammering.
 	for k, s := range sessions.m {
@@ -465,6 +481,41 @@ func dropSessionsFor(user string, keep string) {
 		}
 	}
 	sessions.Unlock()
+}
+
+// trimUA keeps a user agent short and free of control characters. It is
+// attacker-controlled text on its way into a file an operator reads, and a
+// browser's own is long enough to bury the rest of a log line.
+func trimUA(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return ' '
+		}
+		return r
+	}, s)
+	if len(s) > 180 {
+		s = s[:180]
+	}
+	return s
+}
+
+// record writes one line to the agent's append-only access log.
+//
+// Fire and forget, in a goroutine: an unwritable log must never be the reason
+// a login is slow or fails. The log lives on the privileged side because a
+// record of who signed in is worth something only if the thing being audited
+// cannot quietly edit it.
+func record(r *http.Request, event, user, detail string) {
+	ip, ua := clientIP(r), trimUA(r.UserAgent())
+	go func() {
+		_, err := agentCall(map[string]interface{}{
+			"action": "auth-log", "event": event, "username": user,
+			"ip": ip, "user_agent": ua, "detail": detail,
+		}, 10*time.Second)
+		if err != nil {
+			log.Printf("auth: could not record %q: %v", event, err)
+		}
+	}()
 }
 
 // ── Rate limiting ─────────────────────────────────────────────────────────────
@@ -635,6 +686,7 @@ type meResponse struct {
 	Email         string `json:"email"`
 	TOTPEnabled   bool   `json:"totp_enabled"`
 	RecoveryLeft  int    `json:"recovery_left"`
+	Passkeys      int    `json:"passkeys"`
 }
 
 func authMeHandler(w http.ResponseWriter, r *http.Request) {
@@ -662,6 +714,7 @@ func authMeHandler(w http.ResponseWriter, r *http.Request) {
 			out.DisplayName = u.DisplayName
 			out.Email = u.Email
 			out.TOTPEnabled = u.TOTP.Enabled
+			out.Passkeys = len(u.Passkeys)
 			for _, c := range u.TOTP.Recovery {
 				if !c.Used {
 					out.RecoveryLeft++
@@ -692,13 +745,15 @@ func authLoginHandler(w http.ResponseWriter, r *http.Request) {
 	if !limits.check(ipKey, 10, 15*time.Minute) ||
 		!limits.check(userKey, 5, 15*time.Minute) ||
 		!limits.check("login:all", 60, 15*time.Minute) {
+		record(r, "locked-out", body.Username, "too many failed sign-ins")
 		writeErr(w, http.StatusTooManyRequests, "too many attempts, wait a few minutes")
 		return
 	}
-	refuse := func() {
+	refuse := func(why string) {
 		limits.hit(ipKey)
 		limits.hit(userKey)
 		limits.hit("login:all")
+		record(r, "login-failed", body.Username, why)
 		writeErr(w, http.StatusUnauthorized, "that username and password do not match")
 	}
 
@@ -710,20 +765,23 @@ func authLoginHandler(w http.ResponseWriter, r *http.Request) {
 	u := doc.Users[body.Username]
 	if u == nil {
 		dummyVerify(body.Password)
-		refuse()
+		refuse("no such account")
 		return
 	}
 	if !verifyHash(u.Password, body.Password) {
-		refuse()
+		refuse("wrong password")
 		return
 	}
 	limits.clear(ipKey, userKey)
 
-	if err := startSession(w, body.Username, u.TOTP.Enabled); err != nil {
+	if err := startSession(w, r, body.Username, u.TOTP.Enabled); err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not start a session")
 		return
 	}
 	log.Printf("auth: %s signed in from %s", body.Username, ip)
+	if !u.TOTP.Enabled {
+		record(r, "login", body.Username, "password")
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"ok":            true,
 		"awaiting_totp": u.TOTP.Enabled,
@@ -790,6 +848,7 @@ func authTOTPHandler(w http.ResponseWriter, r *http.Request) {
 		s.AwaitingTOTP = false
 		sessions.Unlock()
 		limits.clear(totpKey)
+		record(r, "login", s.User, "password and two-factor")
 		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
 		return
 	}
@@ -818,6 +877,8 @@ func authTOTPHandler(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			log.Printf("auth: %s used a recovery code, %d left", s.User, left)
+			record(r, "recovery-code-used", s.User, fmt.Sprintf("%d codes left", left))
+			record(r, "login", s.User, "recovery code")
 			writeJSON(w, http.StatusOK, map[string]interface{}{
 				"ok": true, "used_recovery": true, "recovery_left": left,
 			})
@@ -828,6 +889,9 @@ func authTOTPHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func authLogoutHandler(w http.ResponseWriter, r *http.Request) {
+	if _, s := currentSession(r); s != nil {
+		record(r, "logout", s.User, "")
+	}
 	clearSession(w, r)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
 }
@@ -912,6 +976,7 @@ func authPasswordHandler(w http.ResponseWriter, r *http.Request) {
 	id, _ := currentSession(r)
 	dropSessionsFor(s.User, id)
 	log.Printf("auth: %s changed their password", s.User)
+	record(r, "password-changed", s.User, "from the account page")
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
 }
 
@@ -1047,6 +1112,7 @@ func authTOTPEnableHandler(w http.ResponseWriter, r *http.Request) {
 	totpUsed.m[s.User] = counter
 	totpUsed.Unlock()
 	log.Printf("auth: %s turned on two-factor", s.User)
+	record(r, "totp-enabled", s.User, "")
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"ok": true, "recovery_codes": plain,
 	})
@@ -1081,6 +1147,7 @@ func authTOTPDisableHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Printf("auth: %s turned off two-factor", s.User)
+	record(r, "totp-disabled", s.User, "")
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
 }
 
@@ -1103,6 +1170,7 @@ func authResetRequestHandler(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusTooManyRequests, "too many requests, try again later")
 		return
 	}
+	record(r, "reset-requested", username, "")
 	res, err := agentCall(map[string]interface{}{
 		"action": "auth-reset", "username": username,
 	}, 60*time.Second)
@@ -1198,7 +1266,136 @@ func authResetCompleteHandler(w http.ResponseWriter, r *http.Request) {
 	dropSessionsFor(username, "")
 	limits.clear(doKey, "login:user:"+username)
 	log.Printf("auth: %s reset their password from %s", username, ip)
+	record(r, "password-reset", username, "by emailed code")
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
+}
+
+// ── Sessions and access history, the account's own audit page ────────────────
+
+type sessionView struct {
+	ID        string `json:"id"`
+	Current   bool   `json:"current"`
+	IP        string `json:"ip"`
+	UserAgent string `json:"user_agent"`
+	Created   string `json:"created"`
+	Seen      string `json:"last_seen"`
+	Pending   bool   `json:"awaiting_totp"`
+}
+
+// authSessionsHandler lists the devices holding a session for this account.
+//
+// The id is truncated on the way out. It is a bearer token: sending the whole
+// of one to a page so that page can offer a "sign out" button would mean any
+// script that reads the DOM can take over every other session. Eight
+// characters identify a row and cannot be replayed.
+func authSessionsHandler(w http.ResponseWriter, r *http.Request) {
+	id, s := currentSession(r)
+	if s == nil || s.AwaitingTOTP {
+		writeErr(w, http.StatusUnauthorized, "sign in to continue")
+		return
+	}
+	out := []sessionView{}
+	sessions.Lock()
+	for k, v := range sessions.m {
+		if v.User != s.User {
+			continue
+		}
+		out = append(out, sessionView{
+			ID:        k[:8],
+			Current:   k == id,
+			IP:        v.IP,
+			UserAgent: v.UserAgent,
+			Created:   v.Created.Format(time.RFC3339),
+			Seen:      v.Seen.Format(time.RFC3339),
+			Pending:   v.AwaitingTOTP,
+		})
+	}
+	sessions.Unlock()
+	sort.Slice(out, func(i, j int) bool { return out[i].Seen > out[j].Seen })
+	writeJSON(w, http.StatusOK, out)
+}
+
+// authRevokeHandler drops one session, or every session but this one.
+func authRevokeHandler(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ID     string `json:"id"`
+		Others bool   `json:"others"`
+	}
+	if !readJSONBody(w, r, &body) {
+		return
+	}
+	id, s := currentSession(r)
+	if s == nil || s.AwaitingTOTP {
+		writeErr(w, http.StatusUnauthorized, "sign in to continue")
+		return
+	}
+	dropped := 0
+	sessions.Lock()
+	for k, v := range sessions.m {
+		if v.User != s.User || k == id {
+			continue
+		}
+		if body.Others || (body.ID != "" && strings.HasPrefix(k, body.ID)) {
+			delete(sessions.m, k)
+			dropped++
+		}
+	}
+	sessions.Unlock()
+	if dropped > 0 {
+		record(r, "session-revoked", s.User, fmt.Sprintf("%d session(s)", dropped))
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "dropped": dropped})
+}
+
+type activityRow struct {
+	T         int64  `json:"t"`
+	Event     string `json:"event"`
+	User      string `json:"user"`
+	IP        string `json:"ip"`
+	UserAgent string `json:"ua"`
+	Detail    string `json:"detail"`
+}
+
+// authActivityHandler returns the account's own sign-in history: what
+// happened, when, and from where. The same question a mail provider answers
+// with a "recent activity" page, and for the same reason: the first sign that
+// an account is not yours any more is a sign-in you do not recognise.
+func authActivityHandler(w http.ResponseWriter, r *http.Request) {
+	_, s := currentSession(r)
+	if s == nil || s.AwaitingTOTP {
+		writeErr(w, http.StatusUnauthorized, "sign in to continue")
+		return
+	}
+	res, err := agentCall(map[string]interface{}{
+		"action": "auth-log", "limit": 300,
+	}, 20*time.Second)
+	if err != nil {
+		writeErr(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	if !agentOK(res) {
+		writeErr(w, http.StatusServiceUnavailable, agentString(res, "error"))
+		return
+	}
+	raw, err := json.Marshal(res["events"])
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not read the history")
+		return
+	}
+	var rows []activityRow
+	if err := json.Unmarshal(raw, &rows); err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not read the history")
+		return
+	}
+	// One account per box in practice, but the filter is not optional: this
+	// page must never become a way to read another account's sign-ins.
+	out := []activityRow{}
+	for _, row := range rows {
+		if row.User == "" || row.User == s.User {
+			out = append(out, row)
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func registerAuthRoutes(mux *http.ServeMux) {
@@ -1213,4 +1410,8 @@ func registerAuthRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/auth/totp/disable", authTOTPDisableHandler)
 	mux.HandleFunc("/api/auth/reset/request", authResetRequestHandler)
 	mux.HandleFunc("/api/auth/reset/complete", authResetCompleteHandler)
+	mux.HandleFunc("/api/auth/sessions", authSessionsHandler)
+	mux.HandleFunc("/api/auth/sessions/revoke", authRevokeHandler)
+	mux.HandleFunc("/api/auth/activity", authActivityHandler)
+	registerPasskeyRoutes(mux)
 }

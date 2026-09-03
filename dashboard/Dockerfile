@@ -42,21 +42,27 @@ COPY web/ ./
 RUN npm run build
 
 # ── Stage 2: the Go binary, with the built assets embedded ───────────────────
-# Go 1.24, not 1.22: crypto/pbkdf2 entered the standard library in 1.24, and
-# the dashboard's own login hashes passwords, recovery codes and reset tokens
-# with it. The alternatives were golang.org/x/crypto, which would be this
-# binary's first external dependency, or forty lines of hand-written key
-# derivation in the one place where a subtle mistake is invisible.
-FROM golang:1.24-alpine AS builder
+# Go 1.25. Two reasons, in the order they arrived: crypto/pbkdf2 entered the
+# standard library in 1.24 and the login hashes passwords with it, and
+# go-webauthn requires 1.25. Alpine also needs git here, because the module
+# download fetches from source hosts.
+FROM golang:1.25-alpine AS builder
 
 # Same reason as the web stage: bound the compiler's parallelism.
 ENV GOMAXPROCS=4
 
+# git, because module resolution fetches from source hosts.
+RUN apk add --no-cache git
+
 WORKDIR /build
 
-# No external Go dependencies, stdlib only, so there is no go.sum.
-COPY go.mod ./
-COPY main.go auth.go overview.go auth_test.go ./
+# go.sum is committed and copied, so the build resolves to exactly the
+# versions that were tested rather than whatever is current. The one external
+# dependency is the WebAuthn implementation; see dashboard/passkey.go for why
+# that is the single place a library beats standard library here.
+COPY go.mod go.sum ./
+RUN go mod download
+COPY main.go auth.go overview.go passkey.go auth_test.go ./
 COPY --from=web /web/dist ./web/dist
 
 # The tests run here, not somewhere else, for the same reason the frontend's

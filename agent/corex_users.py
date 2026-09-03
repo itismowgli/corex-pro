@@ -350,3 +350,73 @@ def request_reset(doc, username, domain="", conf=None, now=None):
         % (username, code, where, RESET_TTL // 60),
     )
     return True
+
+
+# ── The access log ──────────────────────────────────────────────────────────
+#
+# Append only, on the privileged side, for the same reason the user store is:
+# a record of who signed in from where is worth something only if the thing
+# being audited cannot quietly edit it. The dashboard can add a line and read
+# the tail; it cannot rewrite one.
+
+AUTH_LOG = "/var/log/corex-dashboard-auth.log"
+AUTH_LOG_MAX = 5000
+
+# What a caller is allowed to record. An open-ended string would let a
+# web-facing process write whatever it liked into the operator's audit trail.
+AUTH_EVENTS = {
+    "login", "login-failed", "logout", "session-revoked", "session-expired",
+    "password-changed", "password-reset", "reset-requested",
+    "totp-enabled", "totp-disabled", "recovery-code-used",
+    "passkey-added", "passkey-removed", "passkey-login",
+    "locked-out",
+}
+
+
+def auth_log_append(event, username="", ip="", user_agent="", detail="", path=None):
+    """Record one event. Never raises: an unwritable log must not block a login."""
+    path = path or AUTH_LOG
+    if event not in AUTH_EVENTS:
+        return False
+    row = {
+        "t": int(time.time()),
+        "event": event,
+        "user": str(username)[:64],
+        "ip": str(ip)[:64],
+        # Trimmed hard. This is attacker-controlled text being written to a
+        # file an operator will read, and a browser user agent is long enough
+        # to bury the rest of the line.
+        "ua": re.sub(r"[\x00-\x1f]", " ", str(user_agent))[:180],
+        "detail": re.sub(r"[\x00-\x1f]", " ", str(detail))[:200],
+    }
+    try:
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row, sort_keys=True) + "\n")
+        os.chmod(path, 0o640)
+    except OSError:
+        return False
+    return True
+
+
+def auth_log_read(limit=200, path=None):
+    """The most recent events, newest first."""
+    path = path or AUTH_LOG
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            lines = fh.readlines()[-AUTH_LOG_MAX:]
+    except OSError:
+        return []
+    out = []
+    for line in reversed(lines):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict):
+            out.append(row)
+        if len(out) >= limit:
+            break
+    return out
