@@ -6,6 +6,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.14.2] - 2026-09-03
+
+### Fixed
+- **Every Cal.com booking page returned 404, because v3.14.1 silenced a
+  warning that was doing something.** Setting `ALLOWED_HOSTNAMES` stopped the
+  "Match of WEBAPP_URL with ALLOWED_HOSTNAMES failed" line, and that line is
+  the branch of `getOrgSlug` which returns null and makes the instance a plain
+  one rather than an organization. With the bare domain in the list,
+  `cal.DOMAIN` matches `DOMAIN`, the remainder `cal` becomes an organization
+  slug, and every profile is then looked up inside an organization that does
+  not exist. `/username` answered 404 saying the username was still available
+  while the account was present, ADMIN, and fully onboarded.
+
+  The variable is now deliberately unset, with the reason recorded in the
+  compose comment and as gotcha #34. The warning stays. Log volume is a
+  rotation problem and `/etc/logrotate.d/corex` already handles it.
+
 ## [v3.14.1] - 2026-09-03
 
 ### Fixed

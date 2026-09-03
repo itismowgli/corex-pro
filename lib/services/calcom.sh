@@ -678,11 +678,19 @@ services:
       CRON_SECRET: "${CALCOM_CRON_SECRET}"
       CALCOM_TELEMETRY_DISABLED: "1"
       NEXT_PUBLIC_DISABLE_SIGNUP: "${disable_signup}"
-      # Not optional in practice. Left empty, the app logs "Match of
-      # WEBAPP_URL with ALLOWED_HOSTNAMES failed" at WARN several times per
-      # page render, which buries everything else in the log. It is a list
-      # of bare hostnames, double quoted and comma separated, parsed as JSON.
-      ALLOWED_HOSTNAMES: '"${DOMAIN}","${sub}.${DOMAIN}"'
+      # ALLOWED_HOSTNAMES is deliberately NOT set. Leaving it empty makes
+      # the app log "Match of WEBAPP_URL with ALLOWED_HOSTNAMES failed" at
+      # WARN on every page render, and that warning is load-bearing: it is
+      # the branch of getOrgSlug that returns null, which is what makes this
+      # a plain instance rather than an organization.
+      #
+      # Setting it to the bare domain silences the warning and breaks every
+      # booking page. getOrgSlug looks for an entry the hostname is a
+      # subdomain of, so cal.DOMAIN matching DOMAIN leaves the slug "cal",
+      # and Cal.com then resolves every profile inside an organization named
+      # cal that does not exist. /username answers 404 saying the username
+      # is still available, while the account is right there in the
+      # database. See CLAUDE.md gotcha #34.
       # Node's process timezone stays UTC, which is what upstream sets and
       # what the schema assumes. Every user picks their own timezone in the
       # app, and the booking pages convert for the visitor, so setting this to

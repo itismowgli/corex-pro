@@ -28,7 +28,7 @@ learning nginx, SSL, Docker networking, or Linux hardening.
 - Re-run on existing server = health-check + repair broken services only
 - No live server required for testing (Docker-in-Docker + bats)
 
-**Current version:** v3.14.1
+**Current version:** v3.14.2
 **Current service modules:** 17 (Traefik, AdGuard, Portainer, Nextcloud,
 Immich, Vaultwarden, Stalwart Mail, Coolify, n8n, Cal.com, Time Machine,
 Uptime Kuma + Grafana + Prometheus (monitoring), Ollama + OpenWebUI +
@@ -1339,6 +1339,28 @@ check lives. The variable is inlined into the client bundle at build time, so
 a runtime value never reaches the page and the form may still render; the
 signup API reads `process.env` and answers 403, so the refusal is real even
 though the form looks available.
+
+### 34. A warning can be the branch that keeps the behaviour correct
+
+Cal.com logs "Match of WEBAPP_URL with ALLOWED_HOSTNAMES failed" at WARN on
+every page render when `ALLOWED_HOSTNAMES` is empty, which on a busy page is
+dozens of lines. Setting it to the domain silences the warning and 404s every
+booking page on the instance.
+
+`getOrgSlug` in `packages/features/ee/organizations/lib/orgDomains.ts` looks
+for an entry in that list which the current hostname is a subdomain of. With
+`vyom.cloud` in the list, `cal.vyom.cloud` matches, the remainder is `cal`, and
+the instance decides it is serving an organization called `cal`. Every profile
+lookup then happens inside that organization, so `/username` answers 404 with
+"The username is still available" while the account is present in the
+database, the account is an ADMIN, and onboarding is complete. The log line
+was the branch that returned null and made it a plain instance.
+
+The general shape: a warning emitted on a fallback path is documentation of
+that path, not a defect. Before silencing one, find the branch it is reporting
+and check what changes when the condition it complains about is satisfied. Log
+volume is a rotation problem, and `/etc/logrotate.d/corex` already exists for
+exactly that.
 
 ---
 
