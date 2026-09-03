@@ -764,7 +764,13 @@ uptime.
 A web GUI for the things you do often, so you do not need SSH for them.
 
 CoreX builds the image on your server from `dashboard/`, so there is no
-registry to depend on. The first install spends a minute or two compiling.
+registry to depend on. The build has two compilers in it, npm for the interface
+and Go for the server, so the first install spends a few minutes on it, at the
+lowest priority and refusing to start above 85C.
+
+Nothing is fetched when the page loads. The stylesheet, the JavaScript and the
+icons are all compiled into the binary, because the dashboard is what you open
+when the box is in trouble and that is the worst moment to depend on a CDN.
 
 ```bash
 sudo bash corex-manage.sh add dashboard
@@ -795,15 +801,31 @@ regenerated each run.
 
 ### What the tabs do
 
-The Services tab shows a health badge per service with buttons to start, stop,
-update, or repair, and streams container logs. Storage breaks usage down by
-service and can trigger a cleanup. Network lists every service URL with its
-status and certificate expiry. System shows host details and a command
-reference.
+Services is a card per installed service: its health, the addresses it answers
+on, and buttons for start, stop, restart, repair and update, plus a live log
+stream. Storage breaks usage down by service and can preview or run a cleanup.
+Network lists every address with its status. System shows host details, the
+SSH command with the right port, the direct ports for the services you
+actually have, and a command reference.
 
-Every button shells out to `corex-manage.sh`, so the GUI and the CLI cannot
-drift apart. Service names and actions are checked against an allowlist on the
-server.
+Statuses refresh by themselves every fifteen seconds, and immediately after an
+action finishes. An earlier version left every badge stale until you clicked a
+tab again, so a service that had come back up kept being reported as down.
+
+A running action reports into one panel at the top of the page, which polls
+until the job ends and then says what changed. Actions are asynchronous
+because repair and update outlast any sensible request timeout, and a button
+that appears to hang is how you end up clicking it twice.
+
+Every button goes to the same privileged agent the Telegram bot uses, so the
+GUI, the bot and the CLI cannot drift apart, and neither the GUI nor the bot
+can do more than the agent's own whitelist. Service names and actions are
+checked twice, once here and once in the agent. If the socket is unreachable
+the page says so at the top, rather than letting each button fail on its own:
+"the action failed" and "no action can ever work here" need different answers.
+
+The interface is React with shadcn/ui components and Tailwind, dark by default
+with a light theme, remembered per browser.
 
 ### Reaching it
 

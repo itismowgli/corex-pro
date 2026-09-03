@@ -30,6 +30,33 @@ dashboard_firewall() {
     : # Traefik handles all HTTPS; no extra ports needed
 }
 
+# ── Thermal gate ──────────────────────────────────────────────────────────────
+# The image build compiles a TypeScript app and a Go binary, which is minutes
+# of full-CPU work, and this class of hardware trips at TjMax with no warning
+# (gotcha #17). Starting one on an already-hot box is how a dashboard rebuild
+# becomes an unplanned power cut, so it is refused rather than merely logged.
+_dashboard_thermal_gate() {
+    local t=0 z v
+    if command -v sensors &>/dev/null; then
+        t=$(sensors -u 2>/dev/null | awk '/^(Tctl|Tdie|Package id 0):/{getline; print $2; exit}')
+    fi
+    if [[ -z "${t:-}" || "$t" == "0" ]]; then
+        for z in /sys/class/thermal/thermal_zone*/temp; do
+            [[ -r "$z" ]] || continue
+            v=$(( $(cat "$z" 2>/dev/null || echo 0) / 1000 ))
+            (( v > ${t%%.*} )) && t=$v
+        done
+    fi
+    t=${t%%.*}; t=${t:-0}
+    (( t == 0 )) && return 0          # no sensor is not a reason to refuse
+
+    if (( t >= 85 )); then
+        log_error "CPU is at ${t}C. The dashboard build would very likely trip the thermal cutout. Let it cool and retry."
+    elif (( t >= 78 )); then
+        log_warning "CPU is at ${t}C before a multi-minute build. Watch: corex manage health"
+    fi
+}
+
 dashboard_deploy() {
     dashboard_dirs
     local dir="${DOCKER_ROOT}/dashboard"
@@ -82,10 +109,10 @@ services:
     # ghcr.io/itismowgli/corex-dashboard:latest was never published — pulling
     # it fails with "error from registry: denied", which meant the dashboard
     # documented as auto-installed since v3.0.0 had in fact never started for
-    # anyone. All the sources are in dashboard/ (main.go plus templates and
-    # static embedded via //go:embed), so building locally removes the
-    # registry dependency entirely. pull_policy: build stops Compose trying
-    # the registry first. First install spends ~1-2 min compiling.
+    # anyone. All the sources are in dashboard/: a Vite and React app under
+    # web/, built in the first Dockerfile stage, then embedded into the Go
+    # binary with //go:embed. pull_policy: build stops Compose trying the
+    # registry first. First install spends a few minutes compiling.
     image: corex-dashboard:local
     build:
       context: ${SCRIPT_DIR:-/opt/corex-pro}/dashboard
@@ -135,9 +162,16 @@ networks:
   proxy-net: { external: true }
 DCEOF
 
-    # Build + start. The build can take a couple of minutes on first install.
-    log_info "Building the dashboard image (first run takes 1-2 minutes)..."
-    docker compose -f "${dir}/docker-compose.yml" up -d --build 2>&1 | tail -5
+    # Build, then start. Two compilers run here, npm and go, so it is the
+    # second hottest thing CoreX does after a service with no published image
+    # (gotcha #31). It is refused outright on an already-hot box and runs at
+    # the lowest priority either way, so the thermal guardian wins any
+    # argument with it. BuildKit ignores --cpuset-cpus, which is why nice is
+    # the lever here rather than a CPU mask.
+    _dashboard_thermal_gate
+    log_info "Building the dashboard image (npm then go, a few minutes on first install)..."
+    nice -n 19 docker compose -f "${dir}/docker-compose.yml" build 2>&1 | tail -5
+    docker compose -f "${dir}/docker-compose.yml" up -d 2>&1 | tail -5
 
     # Verify it is ACTUALLY running before claiming success. The previous
     # version logged "deployed" even when the image pull had failed, so a

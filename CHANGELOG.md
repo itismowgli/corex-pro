@@ -6,6 +6,66 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.15.0] - 2026-09-03
+
+### Fixed
+- **Every button on the dashboard was inert, and had been.** The layout loaded
+  htmx from unpkg with an `integrity` attribute of 63 characters, where a
+  base64 sha384 is 64, and the value did not match the file. Browsers refuse
+  to execute a script that fails Subresource Integrity and they do it
+  silently, so htmx never loaded, every `hx-post` attribute on the page did
+  nothing, and the tabs kept working because they were plain links. Recorded
+  as gotcha #35, with the one-line command that computes a real hash.
+
+### Changed
+- **The dashboard is rebuilt as a React and shadcn/ui interface**, in place of
+  server-rendered templates with Tailwind's Play CDN. Cards, badges, tabs,
+  tables and the log dialog are shadcn components over Tailwind v4 tokens,
+  dark by default with a light theme remembered per browser.
+
+  Nothing is fetched at page load any more. The stylesheet, the JavaScript and
+  the icons are compiled and embedded into the Go binary with `go:embed`,
+  which removes both CDN dependencies: a dashboard whose stylesheet lives on
+  the internet is unstyled exactly when the tunnel is down, which is when it
+  is needed.
+
+- **The server is a JSON API rather than an HTML fragment renderer.**
+  `/api/state`, `/api/services`, `/api/storage`, `/api/ports`, the action and
+  job endpoints, and the existing log stream. The agent contract is unchanged,
+  so the dashboard, the Telegram bot and the CLI still cannot drift apart, and
+  the dashboard still cannot do more than the agent's whitelist allows.
+
+- **Statuses refresh on their own** every fifteen seconds and immediately
+  after an action completes. They used to stay stale until the operator
+  clicked a tab again, so a service that had come back up went on being
+  reported as down.
+
+- **An unreachable agent is now reported once, at the top of the page,**
+  instead of each button failing separately. "The action failed" and "no
+  action can ever work here" need different answers.
+
+- **A deliberately stopped service reads as DISABLED, not UNHEALTHY.** Docker
+  keeps the last health verdict on a stopped container forever, and treating a
+  deliberate stop as a fault is how a status colour stops meaning anything.
+
+- **The direct-ports table lists only installed services.** It was hardcoded
+  in the template, so it advertised Grafana and Open WebUI on boxes that had
+  neither.
+
+- **The dashboard build has a thermal gate and runs at `nice -n 19`.** It now
+  has two compilers in it, npm and Go, which makes it the second hottest thing
+  CoreX does; it refuses to start above 85C (gotcha #17 and #31). BuildKit
+  ignores `--cpuset-cpus`, so priority is the lever.
+
+### Removed
+- `dashboard/templates/` and `dashboard/static/`, replaced by `dashboard/web/`.
+  The 991-byte `static/tailwind.min.css` was not Tailwind, and the layout also
+  carried an Alpine.js `x-cloak` rule for a library the page never loaded.
+- The stale `/opt/corex-pro` clone on the server, four months behind at
+  commit 4ff4621. Nothing ran from it: the agent's default repo path is
+  overridden in `/etc/corex/agent.conf`, and the dashboard container's
+  `/opt/corex-pro` is a mount of the live checkout.
+
 ## [v3.14.2] - 2026-09-03
 
 ### Fixed

@@ -1,0 +1,7 @@
+# Build output and dependencies are never committed. Committed build output
+# goes stale silently, which is exactly how the dashboard container ended up
+# older than its own source. The Dockerfile is the only supported build path
+# and it always builds fresh.
+node_modules/
+dist/*
+!dist/.gitkeep

@@ -28,7 +28,7 @@ learning nginx, SSL, Docker networking, or Linux hardening.
 - Re-run on existing server = health-check + repair broken services only
 - No live server required for testing (Docker-in-Docker + bats)
 
-**Current version:** v3.14.2
+**Current version:** v3.15.0
 **Current service modules:** 17 (Traefik, AdGuard, Portainer, Nextcloud,
 Immich, Vaultwarden, Stalwart Mail, Coolify, n8n, Cal.com, Time Machine,
 Uptime Kuma + Grafana + Prometheus (monitoring), Ollama + OpenWebUI +
@@ -1361,6 +1361,43 @@ that path, not a defect. Before silencing one, find the branch it is reporting
 and check what changes when the condition it complains about is satisfied. Log
 volume is a rotation problem, and `/etc/logrotate.d/corex` already exists for
 exactly that.
+
+### 35. A CDN in a sovereign dashboard, and the hash that disabled every button
+
+The dashboard loaded Tailwind from `cdn.tailwindcss.com` and htmx from
+`unpkg.com`, with an `integrity` attribute on the htmx tag. That attribute was
+63 characters long. A sha384 digest in base64 is 64, and the value did not
+match the file either:
+
+```
+declared: sha384-SKnHeRIKhoCJXdg1ZtHNFkpUxNyTqVzE4RM6k3kh7c8oq7ZmT5hJGHrDnH5LHLT
+actual:   sha384-ujb1lZYygJmzgSwoxRggbCHcjc0rB2XoQrxeTUQyRjrOnlCoYta87iKBWq3EsdM2
+```
+
+A browser refuses to execute a script that fails Subresource Integrity, and it
+does so quietly: nothing renders differently, and no request fails visibly. So
+htmx never loaded, every `hx-post` and `hx-get` attribute on the page was
+inert, and every button did nothing. The tabs still worked, which is what made
+it look like a working dashboard, because they were plain links.
+
+Two rules follow. **Verify a hash or do not write one.** Compute it, do not
+transcribe it:
+
+```bash
+curl -sL <url> | openssl dgst -sha384 -binary | openssl base64 -A
+```
+
+**And do not put a CDN in front of the page you open when the box is in
+trouble.** A dashboard whose stylesheet lives on the internet is unstyled
+exactly when the tunnel is down or DNS is broken, which is when it is needed.
+The interface is now compiled and embedded in the binary with `go:embed`, so
+the page has no runtime dependency at all.
+
+The related trap is that the image is built locally, so **an edit to
+`dashboard/` reaches nothing until the image is rebuilt.** The running
+container was half an hour older than its own source for a while, which showed
+up as a newly added service being absent from the dashboard with no error
+anywhere. `corex manage repair dashboard` rebuilds it.
 
 ---
 

@@ -2,11 +2,11 @@ package main
 
 import (
 	"bufio"
-	"bytes"
-	"embed"
 	"encoding/json"
+	"embed"
 	"fmt"
 	"html/template"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
@@ -18,7 +18,20 @@ import (
 	"time"
 )
 
-//go:embed templates static
+// The built single-page app. Everything the browser needs is in here: no CDN
+// for the stylesheet, none for the JavaScript, no font fetched at runtime.
+//
+// That is not tidiness. The previous version loaded Tailwind from
+// cdn.tailwindcss.com and htmx from unpkg, so the dashboard needed the
+// internet to render, which is the wrong dependency for the page you open when
+// the box is in trouble. Worse, the htmx tag carried an integrity hash that
+// did not match the file, so every browser refused to execute it and every
+// button on the page silently did nothing.
+//
+// `all:` so that hashed asset names starting with an underscore are included.
+// The build is `npm run build` inside web/, which the Dockerfile runs.
+//
+//go:embed all:web/dist
 var assets embed.FS
 
 // ── Data types ────────────────────────────────────────────────────────────────
@@ -36,6 +49,10 @@ type CoreXState struct {
 	// n8n.DOMAIN while n8n itself kept returning HTTP 200. Empty means the
 	// default, "n8n".
 	N8nSubdomain string `json:"n8n_subdomain"`
+
+	// Same idea for Cal.com, whose booking links are shared with other
+	// people and so are the worst thing to have to change.
+	CalcomSubdomain string `json:"calcom_subdomain"`
 }
 
 type ServiceEntry struct {
@@ -44,17 +61,43 @@ type ServiceEntry struct {
 }
 
 type ServiceInfo struct {
-	Name      string
-	Label     string
-	Status    string // HEALTHY | UNHEALTHY | MISSING
-	URLs      []string
-	Container string
+	Name      string   `json:"name"`
+	Label     string   `json:"label"`
+	Status    string   `json:"status"` // HEALTHY | UNHEALTHY | MISSING | DISABLED
+	URLs      []string `json:"urls"`
+	Container string   `json:"container"`
+	Enabled   bool     `json:"enabled"`
 }
 
-type PageData struct {
-	State   CoreXState
-	Tab     string
-	Content template.HTML
+// hostInfo is what the System tab shows, plus whether the buttons can work at
+// all. The agent fields exist because "the action failed" and "no action can
+// ever succeed here" need different answers, and the old dashboard could not
+// tell them apart.
+type hostInfo struct {
+	Version    string `json:"version"`
+	Domain     string `json:"domain"`
+	ServerIP   string `json:"server_ip"`
+	SSHPort    string `json:"ssh_port"`
+	Hostname   string `json:"hostname"`
+	Kernel     string `json:"kernel"`
+	Uptime     string `json:"uptime"`
+	Docker     string `json:"docker"`
+	Timezone   string `json:"timezone"`
+	AgentOK    bool   `json:"agent_ok"`
+	AgentError string `json:"agent_error"`
+}
+
+type jobView struct {
+	ID     string `json:"id"`
+	State  string `json:"state"` // running | done | failed
+	Label  string `json:"label"`
+	Output string `json:"output"`
+}
+
+type portRow struct {
+	Service string `json:"service"`
+	URL     string `json:"url"`
+	Note    string `json:"note"`
 }
 
 // ── Service metadata ──────────────────────────────────────────────────────────
@@ -145,33 +188,78 @@ var serviceContainers = map[string]string{
 
 // ── Globals ───────────────────────────────────────────────────────────────────
 
-var (
-	tmpl   *template.Template
-	manage string
-)
+var manage = getenv("COREX_MANAGE", "/opt/corex-pro/corex-manage.sh")
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 func main() {
-	manage = getenv("COREX_MANAGE", "/opt/corex-pro/corex-manage.sh")
-
-	var err error
-	tmpl, err = template.New("").ParseFS(assets, "templates/*.html")
+	dist, err := fs.Sub(assets, "web/dist")
 	if err != nil {
-		log.Fatalf("parse templates: %v", err)
+		log.Fatalf("embedded assets are unusable: %v", err)
+	}
+	if _, err := fs.Stat(dist, "index.html"); err != nil {
+		// Compiling without building the frontend first produces a binary
+		// that serves nothing, and a blank page is the least diagnosable
+		// failure there is. Say it once at startup and again in the response.
+		log.Printf("WARNING: web/dist/index.html is missing from the binary. "+
+			"Run `npm ci && npm run build` in dashboard/web before `go build` (%v)", err)
 	}
 
 	mux := http.NewServeMux()
-	mux.Handle("/static/", http.FileServer(http.FS(assets)))
-	mux.HandleFunc("/", rootHandler)
-	mux.HandleFunc("/tab/", tabHandler)
+	mux.HandleFunc("/api/state", stateHandler)
+	mux.HandleFunc("/api/services", servicesHandler)
+	mux.HandleFunc("/api/storage", storageHandler)
+	mux.HandleFunc("/api/ports", portsHandler)
 	mux.HandleFunc("/api/service/", serviceActionHandler)
 	mux.HandleFunc("/api/cleanup", cleanupHandler)
 	mux.HandleFunc("/api/job/", jobHandler)
 	mux.HandleFunc("/api/logs/", logsSSEHandler)
+	mux.Handle("/", spaHandler(dist))
 
-	log.Printf("CoreX Dashboard listening on :8080 (domain=%s)", getenv("DOMAIN", "unconfigured"))
-	log.Fatal(http.ListenAndServe(":8080", mux))
+	log.Printf("CoreX Dashboard listening on :8080 (manage=%s, agent=%s)", manage, agentSocket)
+	srv := &http.Server{
+		Addr:    ":8080",
+		Handler: mux,
+		// No WriteTimeout on purpose: /api/logs/ is an open-ended SSE stream
+		// and a write deadline would cut it off mid-session.
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	log.Fatal(srv.ListenAndServe())
+}
+
+// spaHandler serves the built assets, falling back to index.html so a deep
+// link such as /#system still loads the app rather than 404ing.
+func spaHandler(dist fs.FS) http.Handler {
+	files := http.FileServer(http.FS(dist))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		name := strings.TrimPrefix(r.URL.Path, "/")
+		if name == "" {
+			name = "index.html"
+		}
+		if _, err := fs.Stat(dist, name); err != nil {
+			if _, err := fs.Stat(dist, "index.html"); err != nil {
+				http.Error(w,
+					"The dashboard assets were not built into this binary.\n"+
+						"Build them with: cd dashboard/web && npm ci && npm run build\n",
+					http.StatusInternalServerError)
+				return
+			}
+			r = r.Clone(r.Context())
+			r.URL.Path = "/"
+		}
+		// Hashed asset names are immutable; index.html must not be, or a
+		// deploy leaves browsers on the previous app.
+		if strings.HasPrefix(name, "assets/") {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			w.Header().Set("Cache-Control", "no-cache")
+		}
+		files.ServeHTTP(w, r)
+	})
 }
 
 // ── State helpers ─────────────────────────────────────────────────────────────
@@ -277,87 +365,57 @@ func agentOK(m map[string]interface{}) bool {
 	return ok
 }
 
-// ── Job rendering ─────────────────────────────────────────────────────────────
+// ── JSON plumbing ─────────────────────────────────────────────────────────────
 
-func writeFragment(w http.ResponseWriter, html string) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, html)
-}
-
-func errorFragment(w http.ResponseWriter, msg string) {
-	writeFragment(w, fmt.Sprintf(
-		`<pre class="rounded p-3 text-xs bg-gray-950 text-red-400 overflow-auto max-h-48 font-mono whitespace-pre-wrap">%s</pre>`,
-		template.HTMLEscapeString(msg)))
-}
-
-// runningFragment polls itself until the job finishes. Actions are asynchronous
-// because update and repair outlast any sensible request timeout, and a button
-// that appears to hang is how you end up clicking it twice.
-func runningFragment(w http.ResponseWriter, jobID, label string) {
-	writeFragment(w, fmt.Sprintf(
-		`<div id="job-%s" hx-get="/api/job/%s" hx-trigger="load delay:2s" hx-swap="outerHTML">`+
-			`<pre class="rounded p-3 text-xs bg-gray-950 text-blue-300 font-mono whitespace-pre-wrap">`+
-			`$ %s&#10;<span class="text-gray-500">running, this updates on its own…</span></pre></div>`,
-		template.HTMLEscapeString(jobID),
-		template.HTMLEscapeString(jobID),
-		template.HTMLEscapeString(label),
-	))
-}
-
-func finishedFragment(w http.ResponseWriter, jobID, label, output string, ok bool) {
-	colour := "text-green-400"
-	status := "done"
-	if !ok {
-		colour = "text-red-400"
-		status = "failed"
+func writeJSON(w http.ResponseWriter, code int, v interface{}) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(code)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		log.Printf("writeJSON: %v", err)
 	}
-	if strings.TrimSpace(output) == "" {
-		output = "(no output)"
-	}
-	// No hx-trigger, so this is the last swap and the polling stops.
-	//
-	// It deliberately does not refresh the tab by itself. The tab links are
-	// full page loads into #content, so an automatic refresh would replace
-	// this element with the service grid a second after it appeared, throwing
-	// away the output the user is reading. The badges are stale until they ask.
-	writeFragment(w, fmt.Sprintf(
-		`<div id="job-%s">`+
-			`<pre class="rounded p-3 text-xs bg-gray-950 %s overflow-auto max-h-64 font-mono whitespace-pre-wrap">`+
-			`$ %s&#10;%s&#10;<span class="text-gray-500">%s</span></pre>`+
-			`<button hx-get="/tab/services" hx-target="#content" hx-swap="innerHTML" `+
-			`class="mt-2 px-2.5 py-1 text-xs rounded bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors">`+
-			`Refresh statuses</button></div>`,
-		template.HTMLEscapeString(jobID), colour,
-		template.HTMLEscapeString(label),
-		template.HTMLEscapeString(output),
-		status,
-	))
 }
 
-// jobHandler serves GET /api/job/<id>, the polling endpoint for a running job.
-func jobHandler(w http.ResponseWriter, r *http.Request) {
-	jobID := strings.TrimPrefix(r.URL.Path, "/api/job/")
-	if !jobIDRe.MatchString(jobID) {
-		errorFragment(w, "bad job id")
-		return
+// Errors reach the browser as JSON with the same shape, so the client has one
+// path for reporting them instead of guessing at HTML.
+func writeErr(w http.ResponseWriter, code int, msg string) {
+	writeJSON(w, code, map[string]string{"error": msg})
+}
+
+// agentReachable answers "can the buttons work", which is a different question
+// from "did this action succeed". It dials and closes: no action is sent, so
+// this is safe to call on every poll. The token has to be readable too, since
+// the agent rejects a request without one.
+func agentReachable() (bool, string) {
+	if _, err := os.ReadFile(agentTokenFile); err != nil {
+		return false, fmt.Sprintf("cannot read %s: %v", agentTokenFile, err)
 	}
-	res, err := agentCall(map[string]interface{}{"action": "job", "job_id": jobID}, 30*time.Second)
+	conn, err := net.DialTimeout("unix", agentSocket, 2*time.Second)
 	if err != nil {
-		errorFragment(w, err.Error())
-		return
+		return false, fmt.Sprintf("cannot reach %s: %v", agentSocket, err)
 	}
-	if !agentOK(res) {
-		errorFragment(w, agentString(res, "error"))
-		return
-	}
+	_ = conn.Close()
+	return true, ""
+}
+
+// jobFromAgent turns an agent reply into what the client polls for.
+func jobFromAgent(res map[string]interface{}, fallbackLabel string) jobView {
 	label := strings.TrimSpace(agentString(res, "action") + " " + agentString(res, "service"))
-	switch agentString(res, "state") {
-	case "running":
-		runningFragment(w, jobID, label)
-	case "done":
-		finishedFragment(w, jobID, label, agentString(res, "output"), true)
+	if label == "" {
+		label = fallbackLabel
+	}
+	state := agentString(res, "state")
+	switch state {
+	case "running", "done", "failed":
+	case "":
+		state = "done"
 	default:
-		finishedFragment(w, jobID, label, agentString(res, "output"), false)
+		state = "failed"
+	}
+	return jobView{
+		ID:     agentString(res, "job_id"),
+		State:  state,
+		Label:  label,
+		Output: agentString(res, "output"),
 	}
 }
 
@@ -440,7 +498,15 @@ func getServices(state CoreXState) []ServiceInfo {
 			if running[container] {
 				status = "HEALTHY"
 			} else if containerExists(container) {
-				status = "UNHEALTHY"
+				// A service switched off on purpose is not a fault, and
+				// reporting it as one is how a colour stops meaning anything.
+				// `corex manage disable` records the intent in state.json,
+				// which is the only place that distinguishes the two.
+				if !entry.Enabled {
+					status = "DISABLED"
+				} else {
+					status = "UNHEALTHY"
+				}
 			}
 		}
 		if ms, ok := moduleStatus[name]; ok && ms != "" && ms != "UNKNOWN" {
@@ -466,9 +532,16 @@ func getServices(state CoreXState) []ServiceInfo {
 		}
 
 		// Follow an overridden hostname, or the dashboard would keep linking
-		// to the name the user moved away from.
+		// to the name the user moved away from. n8n accepts a space separated
+		// list, whose first entry is the primary one.
 		if name == "n8n" && state.N8nSubdomain != "" && state.Domain != "" {
-			urls = []string{"https://" + strings.Trim(state.N8nSubdomain, "\"'") + "." + state.Domain}
+			first := strings.Fields(strings.Trim(state.N8nSubdomain, "\"'"))
+			if len(first) > 0 {
+				urls = []string{"https://" + first[0] + "." + state.Domain}
+			}
+		}
+		if name == "calcom" && state.CalcomSubdomain != "" && state.Domain != "" {
+			urls = []string{"https://" + strings.Trim(state.CalcomSubdomain, "\"'") + "." + state.Domain}
 		}
 
 		label := serviceLabels[name]
@@ -482,6 +555,7 @@ func getServices(state CoreXState) []ServiceInfo {
 			Status:    status,
 			URLs:      urls,
 			Container: container,
+			Enabled:   entry.Enabled,
 		})
 	}
 
@@ -514,205 +588,190 @@ func getSysInfo(state CoreXState) map[string]string {
 	return info
 }
 
-// ── Template rendering ────────────────────────────────────────────────────────
-
-func renderTabContent(tab string, state CoreXState) (template.HTML, error) {
-	var buf bytes.Buffer
-
-	switch tab {
-	case "services":
-		err := tmpl.ExecuteTemplate(&buf, "services.html", struct {
-			Services []ServiceInfo
-			State    CoreXState
-		}{getServices(state), state})
-		if err != nil {
-			return "", err
-		}
-
-	case "storage":
-		out, err := runManage("storage")
-		if err != nil {
-			// Discarding this error is why the Storage tab silently showed
-			// nothing for so long: corex-manage.sh refused to run as nobody
-			// and the "Run as root" message went straight into the void.
-			log.Printf("storage tab: corex-manage storage failed: %v (output: %q)", err, out)
-		}
-		if err = tmpl.ExecuteTemplate(&buf, "storage.html", struct {
-			Output string
-			State  CoreXState
-		}{out, state}); err != nil {
-			return "", err
-		}
-
-	case "network":
-		err := tmpl.ExecuteTemplate(&buf, "network.html", struct {
-			Services []ServiceInfo
-			State    CoreXState
-		}{getServices(state), state})
-		if err != nil {
-			return "", err
-		}
-
-	case "system":
-		err := tmpl.ExecuteTemplate(&buf, "system.html", struct {
-			Sys   map[string]string
-			State CoreXState
-		}{getSysInfo(state), state})
-		if err != nil {
-			return "", err
-		}
-
-	default:
-		return "", fmt.Errorf("unknown tab: %s", tab)
-	}
-
-	return template.HTML(buf.String()), nil //nolint:gosec
-}
-
-func renderFull(w http.ResponseWriter, tab string) {
-	state := loadState()
-	content, err := renderTabContent(tab, state)
-	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := tmpl.ExecuteTemplate(w, "layout.html", PageData{
-		State: state, Tab: tab, Content: content,
-	}); err != nil {
-		log.Printf("render layout: %v", err)
-	}
-}
-
-func renderPartial(w http.ResponseWriter, tab string) {
-	state := loadState()
-	content, err := renderTabContent(tab, state)
-	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, string(content))
-}
-
 // ── Route handlers ────────────────────────────────────────────────────────────
 
-func rootHandler(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		http.NotFound(w, r)
-		return
-	}
-	if r.Header.Get("HX-Boosted") == "true" {
-		renderFull(w, "services")
-	} else if r.Header.Get("HX-Request") == "true" {
-		renderPartial(w, "services")
-	} else {
-		renderFull(w, "services")
-	}
+func stateHandler(w http.ResponseWriter, r *http.Request) {
+	state := loadState()
+	sys := getSysInfo(state)
+	ok, agentErr := agentReachable()
+	writeJSON(w, http.StatusOK, hostInfo{
+		Version:    state.Version,
+		Domain:     state.Domain,
+		ServerIP:   state.ServerIP,
+		SSHPort:    sys["ssh_port"],
+		Hostname:   sys["hostname"],
+		Kernel:     sys["kernel"],
+		Uptime:     sys["uptime"],
+		Docker:     sys["docker"],
+		Timezone:   state.Timezone,
+		AgentOK:    ok,
+		AgentError: agentErr,
+	})
 }
 
-func tabHandler(w http.ResponseWriter, r *http.Request) {
-	tab := strings.TrimPrefix(r.URL.Path, "/tab/")
-	if tab == "" {
-		tab = "services"
+func servicesHandler(w http.ResponseWriter, r *http.Request) {
+	svcs := getServices(loadState())
+	if svcs == nil {
+		svcs = []ServiceInfo{}
 	}
-	// hx-boost sends HX-Request + HX-Boosted — return full page so the nav re-renders
-	if r.Header.Get("HX-Request") == "true" && r.Header.Get("HX-Boosted") == "" {
-		renderPartial(w, tab)
-	} else {
-		renderFull(w, tab)
+	writeJSON(w, http.StatusOK, svcs)
+}
+
+func storageHandler(w http.ResponseWriter, r *http.Request) {
+	out, err := runManage("storage")
+	if err != nil {
+		// Reported, not swallowed. Discarding it is why the Storage tab
+		// silently showed nothing for so long: corex-manage refused to run as
+		// nobody and the message went into the void.
+		log.Printf("storage: corex-manage storage failed: %v (output: %q)", err, out)
+		if strings.TrimSpace(out) == "" {
+			writeErr(w, http.StatusInternalServerError, fmt.Sprintf("corex manage storage failed: %v", err))
+			return
+		}
 	}
+	writeJSON(w, http.StatusOK, map[string]string{"output": out})
+}
+
+// portsHandler lists the direct ports worth knowing, for the services that are
+// actually installed. The previous version hardcoded all of them in the
+// template, so it advertised Grafana and Open WebUI on a box that has neither.
+func portsHandler(w http.ResponseWriter, r *http.Request) {
+	state := loadState()
+	ip := state.ServerIP
+	if ip == "" {
+		ip = "SERVER_IP"
+	}
+	type candidate struct {
+		svc, service, url, note string
+	}
+	all := []candidate{
+		{"portainer", "Portainer", "https://" + ip + ":9443", "Docker UI, its own certificate"},
+		{"adguard", "AdGuard", "http://" + ip + ":3000", "setup wizard only, port moves to 80 after"},
+		{"monitoring", "Grafana", "http://" + ip + ":3002", "metrics"},
+		{"monitoring", "Uptime Kuma", "http://" + ip + ":3001", "status page"},
+		{"immich", "Immich", "http://" + ip + ":2283", "photos over the LAN"},
+		{"n8n", "n8n", "http://" + ip + ":5678", "workflows"},
+		{"ai", "Open WebUI", "http://" + ip + ":3003", "AI chat, LAN only"},
+		{"timemachine", "Time Machine", "smb://" + ip + "/CoreX_Backup", "SMB, not HTTP"},
+		{"coolify", "Coolify", "http://" + ip + ":8000", "its own stack"},
+		{"traefik", "Traefik API", "127.0.0.1:8080", "loopback only, needs an SSH tunnel"},
+	}
+	rows := []portRow{}
+	for _, c := range all {
+		if entry, ok := state.Services[c.svc]; !ok || !entry.Installed {
+			continue
+		}
+		rows = append(rows, portRow{Service: c.service, URL: c.url, Note: c.note})
+	}
+	writeJSON(w, http.StatusOK, rows)
 }
 
 // serviceActionHandler handles POST /api/service/<name>/<action>
 func serviceActionHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", 405)
+		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	parts := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/api/service/"), "/", 2)
 	if len(parts) != 2 {
-		http.Error(w, "path must be /api/service/<name>/<action>", 400)
+		writeErr(w, http.StatusBadRequest, "path must be /api/service/<name>/<action>")
 		return
 	}
 	svcName, action := parts[0], parts[1]
 
-	// Validate inputs — only allow known service names and actions
+	// Only known service names, and only the agent's own whitelist. Anything
+	// destructive is absent from both: remove, replace and migrate stay on
+	// SSH, so a stolen session cannot destroy data.
 	if _, ok := serviceLabels[svcName]; !ok {
-		http.Error(w, "unknown service", 400)
+		writeErr(w, http.StatusBadRequest, "unknown service: "+svcName)
 		return
 	}
-	// Mirrors the agent's own whitelist. Anything destructive is absent from
-	// both: remove, replace and migrate stay on SSH.
-	actionLabel := map[string]string{
-		"start":   "start",
-		"stop":    "stop",
-		"restart": "restart",
-		"repair":  "repair",
-		"update":  "update",
-	}
-	if _, ok := actionLabel[action]; !ok {
-		http.Error(w, "unknown action", 400)
+	switch action {
+	case "start", "stop", "restart", "repair", "update":
+	default:
+		writeErr(w, http.StatusBadRequest, "unknown action: "+action)
 		return
 	}
 
-	res, err := agentCall(map[string]interface{}{
-		"action":  action,
-		"service": svcName,
-	}, 60*time.Second)
+	res, err := agentCall(map[string]interface{}{"action": action, "service": svcName}, 60*time.Second)
 	if err != nil {
-		errorFragment(w, err.Error())
+		writeErr(w, http.StatusBadGateway, err.Error())
 		return
 	}
 	if !agentOK(res) {
-		errorFragment(w, agentString(res, "error"))
+		writeErr(w, http.StatusBadGateway, agentString(res, "error"))
 		return
 	}
-
-	label := action + " " + svcName
-	if jobID := agentString(res, "job_id"); jobIDRe.MatchString(jobID) {
-		runningFragment(w, jobID, label)
+	job := jobFromAgent(res, action+" "+svcName)
+	if job.ID != "" && !jobIDRe.MatchString(job.ID) {
+		writeErr(w, http.StatusBadGateway, "the agent returned a malformed job id")
 		return
 	}
-	// A synchronous action, which the agent answers inline.
-	finishedFragment(w, "sync", label, agentString(res, "output"), true)
+	if job.ID != "" {
+		job.State = "running"
+	}
+	writeJSON(w, http.StatusOK, job)
 }
 
 func cleanupHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", 405)
+		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	// The dry run is read-only and quick, so it stays inline. A real cleanup
+	// The dry run is read-only and quick, so it answers inline. A real cleanup
 	// prunes images and build cache and can run for minutes, so it becomes a
 	// job like any other action.
-	req := map[string]interface{}{"action": "cleanup"}
 	if r.URL.Query().Get("dry_run") == "1" {
 		out, err := runManage("cleanup", "--dry-run")
-		colour := "text-green-400"
+		state := "done"
 		if err != nil {
-			colour = "text-yellow-400"
+			state = "failed"
+			if strings.TrimSpace(out) == "" {
+				out = err.Error()
+			}
 		}
-		writeFragment(w, fmt.Sprintf(
-			`<pre class="rounded p-3 text-xs bg-gray-950 %s overflow-auto max-h-64 font-mono whitespace-pre-wrap">%s</pre>`,
-			colour, template.HTMLEscapeString(out)))
+		writeJSON(w, http.StatusOK, jobView{State: state, Label: "cleanup --dry-run", Output: out})
 		return
 	}
 
-	res, err := agentCall(req, 60*time.Second)
+	res, err := agentCall(map[string]interface{}{"action": "cleanup"}, 60*time.Second)
 	if err != nil {
-		errorFragment(w, err.Error())
+		writeErr(w, http.StatusBadGateway, err.Error())
 		return
 	}
 	if !agentOK(res) {
-		errorFragment(w, agentString(res, "error"))
+		writeErr(w, http.StatusBadGateway, agentString(res, "error"))
 		return
 	}
-	if jobID := agentString(res, "job_id"); jobIDRe.MatchString(jobID) {
-		runningFragment(w, jobID, "cleanup")
+	job := jobFromAgent(res, "cleanup")
+	if job.ID != "" {
+		job.State = "running"
+	}
+	writeJSON(w, http.StatusOK, job)
+}
+
+// jobHandler serves GET /api/job/<id>, which the client polls while an action
+// runs. Actions are asynchronous because repair and update outlast any
+// sensible request timeout, and a button that appears to hang is how you end
+// up clicking it twice.
+func jobHandler(w http.ResponseWriter, r *http.Request) {
+	jobID := strings.TrimPrefix(r.URL.Path, "/api/job/")
+	if !jobIDRe.MatchString(jobID) {
+		writeErr(w, http.StatusBadRequest, "bad job id")
 		return
 	}
-	finishedFragment(w, "sync", "cleanup", agentString(res, "output"), true)
+	res, err := agentCall(map[string]interface{}{"action": "job", "job_id": jobID}, 30*time.Second)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	if !agentOK(res) {
+		writeErr(w, http.StatusBadGateway, agentString(res, "error"))
+		return
+	}
+	job := jobFromAgent(res, "job "+jobID)
+	job.ID = jobID
+	writeJSON(w, http.StatusOK, job)
 }
 
 // logsSSEHandler streams container logs as Server-Sent Events.
