@@ -170,7 +170,24 @@ DCEOF
     # the lever here rather than a CPU mask.
     _dashboard_thermal_gate
     log_info "Building the dashboard image (npm then go, a few minutes on first install)..."
-    nice -n 19 docker compose -f "${dir}/docker-compose.yml" build 2>&1 | tail -5
+    # The exit status is checked, and taken from the build rather than from
+    # tail. A failed build followed by `up -d` starts the previous image, the
+    # container comes up, and every check after this point passes: the script
+    # reported "deployed" on an image that had not been built, which is the
+    # same class of fault as reporting a service healthy because its container
+    # is running. PIPESTATUS because the pipe would otherwise hand us tail's
+    # status, which is always zero.
+    local build_rc=0
+    nice -n 19 docker compose -f "${dir}/docker-compose.yml" build 2>&1 | tail -25
+    build_rc=${PIPESTATUS[0]}
+    if (( build_rc != 0 )); then
+        log_warning "The dashboard image failed to build (exit ${build_rc}). The previous image is untouched."
+        echo "    Reproduce it with:"
+        echo "      cd ${dir} && docker compose build"
+        echo "    Build the interface on its own for a clearer error:"
+        echo "      cd ${SCRIPT_DIR:-/opt/corex-pro}/dashboard/web && npm ci && npm run build"
+        return 1
+    fi
     docker compose -f "${dir}/docker-compose.yml" up -d 2>&1 | tail -5
 
     # Verify it is ACTUALLY running before claiming success. The previous

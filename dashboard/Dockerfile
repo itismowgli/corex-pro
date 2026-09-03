@@ -9,7 +9,24 @@
 # it, so no button on the page did anything.
 
 # ── Stage 1: the single-page app ─────────────────────────────────────────────
-FROM node:20-alpine AS web
+# Node 22, not 20. Node 20 reached end of life in April 2026, and jsdom, which
+# the render check needs, pulls in an undici that fails to import on it:
+#
+#   TypeError: webidl.util.markAsUncloneable is not a function
+#     at Object.<anonymous> (/web/node_modules/jsdom/lib/api.js:12:33)
+#
+# That failure only appears inside the image, because a developer machine
+# running a current Node imports it fine, which is a good argument for the
+# image build being the only supported build path.
+FROM node:22-alpine AS web
+
+# Both compilers in this file are Go programs and both size their parallelism
+# from the CPU count: esbuild, which vite uses to transform, and the Go
+# compiler itself. Unbounded, this build took a Ryzen mini server from 62C to
+# 93.4C, which is a degree and a half from the thermal guardian's shed
+# threshold and five from where the hardware cuts its own power (gotcha #17
+# and #31). nice sets priority, not heat; this sets heat.
+ENV GOMAXPROCS=4
 
 WORKDIR /web
 
@@ -26,6 +43,9 @@ RUN npm run build
 
 # ── Stage 2: the Go binary, with the built assets embedded ───────────────────
 FROM golang:1.22-alpine AS builder
+
+# Same reason as the web stage: bound the compiler's parallelism.
+ENV GOMAXPROCS=4
 
 WORKDIR /build
 

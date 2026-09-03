@@ -29,6 +29,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
   React never sees because it never starts. A React error boundary catches the
   rest and prints the stack instead of unmounting to nothing.
 
+- **The dashboard build ran on Node 20, which is end of life,** and jsdom
+  cannot import on it: `webidl.util.markAsUncloneable is not a function`. It
+  only failed inside the image, because a current Node imports it fine, which
+  is a fair argument for the image being the only supported build path. Now
+  Node 22.
+
+- **A failed image build reported "deployed".** The build's exit status was
+  not checked, and `up -d` after a failed build starts the previous image, so
+  the container comes up and every check after that point passes. It now takes
+  the status from `PIPESTATUS`, leaves the running image alone, and prints the
+  two commands that reproduce the failure.
+
+- **The build bounds its own heat.** Both compilers in the Dockerfile are Go
+  programs that size their parallelism from the CPU count, esbuild inside vite
+  and the Go compiler itself. Unbounded, this build took the box from 62C to
+  93.4C, a degree and a half from the guardian's shed threshold. `GOMAXPROCS=4`
+  in both stages sets heat; `nice` only ever set priority.
+
 ### Added
 - **`npm run smoke`, a render check that runs as part of the build.** It mounts
   the built bundle in a DOM with the network disabled and fails if the page
