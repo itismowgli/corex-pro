@@ -145,7 +145,7 @@ export function ActivityCard({ onSignedOut }: { onSignedOut: () => void }) {
             sessions.map((s) => (
               <div
                 key={s.id}
-                className="flex items-center justify-between gap-2 border-b py-2 text-sm last:border-0"
+                className="flex flex-wrap items-start justify-between gap-x-2 gap-y-1 border-b py-2 text-sm last:border-0"
               >
                 <span className="grid min-w-0 gap-0.5">
                   <span className="truncate">
@@ -161,7 +161,7 @@ export function ActivityCard({ onSignedOut }: { onSignedOut: () => void }) {
                       </Badge>
                     )}
                   </span>
-                  <span className="text-muted-foreground font-mono text-xs">{s.ip}</span>
+                  <span className="text-muted-foreground font-mono text-xs break-all">{s.ip}</span>
                 </span>
                 <span className="text-muted-foreground shrink-0 text-xs" title={s.last_seen}>
                   active {ago(s.last_seen)}
@@ -199,39 +199,77 @@ export function ActivityCard({ onSignedOut }: { onSignedOut: () => void }) {
             </p>
           ) : (
             <div className="max-h-[50vh] overflow-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>What</TableHead>
-                    <TableHead>From</TableHead>
-                    <TableHead>Device</TableHead>
-                    <TableHead className="text-right">When</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {rows.map((e, i) => {
-                    const meta = EVENT[e.event] ?? { text: e.event, tone: "secondary" as const }
-                    return (
-                      <TableRow key={`${e.t}-${i}`}>
-                        <TableCell>
-                          <Badge variant={meta.tone}>{meta.text}</Badge>
-                          {e.detail && (
-                            <div className="text-muted-foreground mt-0.5 text-xs">{e.detail}</div>
-                          )}
-                        </TableCell>
-                        <TableCell className="font-mono text-xs">{e.ip || "-"}</TableCell>
-                        <TableCell className="text-xs">{device(e.ua)}</TableCell>
-                        <TableCell
-                          className="text-muted-foreground text-right text-xs whitespace-nowrap"
+              {/* Four columns do not fit on a phone, and squeezing them makes
+                  every one unreadable rather than one of them missing. Below
+                  sm the same rows are stacked, which is the shape a narrow
+                  screen can actually show. */}
+              <div className="grid gap-2 sm:hidden">
+                {rows.map((e, i) => {
+                  const meta = EVENT[e.event] ?? { text: e.event, tone: "secondary" as const }
+                  return (
+                    <div key={`${e.t}-${i}`} className="grid gap-1 border-b pb-2 last:border-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant={meta.tone}>{meta.text}</Badge>
+                        <span
+                          className="text-muted-foreground text-xs"
                           title={new Date(e.t * 1000).toLocaleString()}
                         >
                           {ago(new Date(e.t * 1000).toISOString())}
-                        </TableCell>
-                      </TableRow>
-                    )
-                  })}
-                </TableBody>
-              </Table>
+                        </span>
+                      </div>
+                      {e.detail && (
+                        <span className="text-muted-foreground text-xs">{e.detail}</span>
+                      )}
+                      <span className="text-muted-foreground text-xs">
+                        {device(e.ua)}
+                        {e.ip && (
+                          <span className="font-mono break-all"> from {e.ip}</span>
+                        )}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+
+              <div className="hidden w-full overflow-x-auto sm:block">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>What</TableHead>
+                      <TableHead>From</TableHead>
+                      <TableHead>Device</TableHead>
+                      <TableHead className="text-right">When</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {rows.map((e, i) => {
+                      const meta = EVENT[e.event] ?? { text: e.event, tone: "secondary" as const }
+                      return (
+                        <TableRow key={`${e.t}-${i}`}>
+                          <TableCell>
+                            <Badge variant={meta.tone}>{meta.text}</Badge>
+                            {e.detail && (
+                              <div className="text-muted-foreground mt-0.5 text-xs">
+                                {e.detail}
+                              </div>
+                            )}
+                          </TableCell>
+                          <TableCell className="font-mono text-xs break-all">
+                            {e.ip || "-"}
+                          </TableCell>
+                          <TableCell className="text-xs">{device(e.ua)}</TableCell>
+                          <TableCell
+                            className="text-muted-foreground text-right text-xs whitespace-nowrap"
+                            title={new Date(e.t * 1000).toLocaleString()}
+                          >
+                            {ago(new Date(e.t * 1000).toISOString())}
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
             </div>
           )}
         </CardContent>

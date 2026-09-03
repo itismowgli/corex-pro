@@ -1,6 +1,7 @@
 import * as React from "react"
 import {
   AlertTriangleIcon,
+  ChevronDownIcon,
   GaugeIcon,
   HardDriveIcon,
   HeartPulseIcon,
@@ -54,6 +55,20 @@ const TABS = [
   { id: "network", label: "Network", icon: NetworkIcon },
   { id: "catalogue", label: "Catalogue", icon: LayoutGridIcon },
   { id: "system", label: "System", icon: MonitorIcon },
+]
+
+// Actions whose full output is rendered by the tab that asked for them. The
+// strip shows only the outcome for these, or the same report fills the screen
+// twice.
+const OUTPUT_HAS_A_HOME = [
+  "health",
+  "watchdog",
+  "doctor",
+  "network-check",
+  "route-list",
+  "update-all",
+  "cleanup",
+  "cleanup-preview",
 ]
 
 // Shown only once the dashboard has accounts of its own. Before that there is
@@ -161,6 +176,11 @@ function Dashboard({
   // command is running, so its panel does.
   const [busy, setBusy] = React.useState<string | null>(null)
   const [runningAction, setRunningAction] = React.useState<string | null>(null)
+  // Which panel owns the current job's output. Separate from runningAction,
+  // which is cleared the instant the job finishes: reading it to decide
+  // whether the output already has a home meant the answer was always "no" by
+  // the time there was any output to place, and the report appeared twice.
+  const [jobOwner, setJobOwner] = React.useState<string | null>(null)
   // Command output kept per action, so switching tabs does not throw away the
   // health report you just ran.
   const [outputs, setOutputs] = React.useState<Record<string, string>>({})
@@ -215,6 +235,7 @@ function Dashboard({
 
   const runService = async (svc: Service, action: ServiceAction) => {
     setBusy(svc.name)
+    setJobOwner(null)
     setJob({ id: "", state: "running", label: `${action} ${svc.name}`, output: "" })
     try {
       const started = await api.act(svc.name, action)
@@ -232,6 +253,7 @@ function Dashboard({
   // cleanup and update-all. Their output lands in the panel that asked.
   const runBox = async (action: string) => {
     setRunningAction(action)
+    setJobOwner(action)
     setJob({ id: "", state: "running", label: action, output: "" })
     try {
       const started =
@@ -337,52 +359,33 @@ function Dashboard({
       </header>
 
       <main className="mx-auto flex w-full max-w-7xl flex-col gap-3 p-3 sm:gap-4 sm:p-4">
-        {state.data && !state.data.agent_ok && (
-          <Card className="border-destructive/50">
-            <CardContent className="flex items-start gap-2 text-sm">
-              <AlertTriangleIcon className="text-destructive mt-0.5 size-4 shrink-0" />
-              <div>
-                <p className="font-medium">
-                  The action agent is unreachable, so no button here can work.
-                </p>
-                <p className="text-muted-foreground mt-1 text-xs">
-                  {state.data.agent_error || "no detail"}. Check it with{" "}
-                  <code className="text-foreground">sudo corex manage agent test</code>, which also
-                  reports whether this container can see the socket.
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {(services.error || state.error) && (
-          <Card className="border-destructive/50">
-            <CardContent className="text-sm">
-              <p className="font-medium">Could not load the dashboard data.</p>
-              <p className="text-muted-foreground mt-1 font-mono text-xs">
-                {services.error || state.error}
-              </p>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* hasHome: these actions render their own output in the tab that
-            asked for them, so the strip shows only the outcome and keeps the
-            report from appearing twice on one screen. */}
-        <JobPanel
-          job={job}
-          setJob={setJob}
-          onFinished={onJobFinished}
-          hasHome={
-            !!runningAction &&
-            ["health", "watchdog", "doctor", "network-check", "route-list", "update-all"].includes(
-              runningAction
-            )
-          }
-        />
-
         <Tabs value={tab} onValueChange={setTab}>
-          <TabsList className="w-full justify-start overflow-x-auto sm:w-auto sm:flex-wrap">
+          {/* A dropdown on a phone and a row of tabs above it. Eight tabs in a
+              scrolling strip means the one you want is usually off screen with
+              nothing to say so; a select shows all eight at once and is the
+              control the operating system already knows how to draw. */}
+          <div className="sm:hidden">
+            <label htmlFor="tab-select" className="sr-only">
+              Choose a section
+            </label>
+            <div className="relative">
+              <select
+                id="tab-select"
+                value={tab}
+                onChange={(e) => setTab(e.target.value)}
+                className="border-input bg-card focus-visible:border-ring focus-visible:ring-ring/50 h-10 w-full appearance-none rounded-md border px-3 pr-9 text-sm focus-visible:ring-[3px] focus-visible:outline-none"
+              >
+                {tabs.map(({ id, label }) => (
+                  <option key={id} value={id}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+              <ChevronDownIcon className="text-muted-foreground pointer-events-none absolute top-1/2 right-3 size-4 -translate-y-1/2" />
+            </div>
+          </div>
+
+          <TabsList className="hidden flex-wrap sm:flex">
             {tabs.map(({ id, label, icon: Icon }) => (
               <TabsTrigger key={id} value={id}>
                 <Icon />
@@ -390,6 +393,50 @@ function Dashboard({
               </TabsTrigger>
             ))}
           </TabsList>
+
+          {/* Everything that used to sit above the tab bar now sits under it.
+              A banner or a running job pushed the tabs down the screen, which
+              on a phone meant opening the dashboard and seeing no dashboard. */}
+          <div className="mt-3 flex flex-col gap-3 empty:hidden">
+            {state.data && !state.data.agent_ok && (
+              <Card className="border-destructive/50">
+                <CardContent className="flex items-start gap-2 text-sm">
+                  <AlertTriangleIcon className="text-destructive mt-0.5 size-4 shrink-0" />
+                  <div>
+                    <p className="font-medium">
+                      The action agent is unreachable, so no button here can work.
+                    </p>
+                    <p className="text-muted-foreground mt-1 text-xs">
+                      {state.data.agent_error || "no detail"}. Check it with{" "}
+                      <code className="text-foreground">sudo corex manage agent test</code>, which
+                      also reports whether this container can see the socket.
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {(services.error || state.error) && (
+              <Card className="border-destructive/50">
+                <CardContent className="text-sm">
+                  <p className="font-medium">Could not load the dashboard data.</p>
+                  <p className="text-muted-foreground mt-1 font-mono text-xs break-all">
+                    {services.error || state.error}
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+
+            <JobPanel
+              job={job}
+              setJob={(j) => {
+                setJob(j)
+                if (!j) setJobOwner(null)
+              }}
+              onFinished={onJobFinished}
+              hasHome={!!jobOwner && OUTPUT_HAS_A_HOME.includes(jobOwner)}
+            />
+          </div>
 
           <TabsContent value="overview">
             <OverviewTab

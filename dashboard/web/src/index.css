@@ -94,8 +94,12 @@
     @apply bg-background text-foreground antialiased;
   }
   /* Terminal output is the one place alignment carries meaning, so it never
-     wraps mid-column. It scrolls instead. */
+     wraps mid-column. It scrolls instead.
+     max-width matters as much as overflow: without it the block is as wide as
+     its longest line, which on a phone makes the whole page scroll sideways
+     rather than the block. */
   .term {
     @apply font-mono text-xs leading-relaxed whitespace-pre overflow-auto;
+    max-width: 100%;
   }
 }
