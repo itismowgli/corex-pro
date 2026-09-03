@@ -25,6 +25,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Load shared libraries
 source "${SCRIPT_DIR}/lib/common.sh"
 source "${SCRIPT_DIR}/lib/state.sh"
+# For smtp_conf_load, which is where the shared mail relay lives. Without it
+# `add` and `repair` ran with the function undefined, so a service that takes
+# its relay from /etc/corex/smtp.conf found none and reported outbound mail as
+# unconfigured on a box that had a working relay. wizard.sh defines functions
+# and does nothing at source time, so this costs nothing.
+source "${SCRIPT_DIR}/lib/wizard.sh"
 
 # ── v1 → v2 migration ────────────────────────────────────────────────────────
 # Called automatically when state.json is missing but CoreX appears to be installed

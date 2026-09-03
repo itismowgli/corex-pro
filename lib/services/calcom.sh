@@ -239,17 +239,26 @@ _calcom_psql() {
         -U calcom -d calcom 2>"$err"
 }
 
-# How many accounts exist. Empty output means the schema is not there yet,
-# which is a different thing from zero users and is treated as such.
+# How many accounts exist, or "noschema" before the first boot has finished
+# migrating. Those are different states and the callers treat them differently.
+#
+# The table is `users`, not `"User"`. The Prisma model is User and most models
+# map to their own name, but this one carries @@map(name: "users"), so a query
+# against "User" fails with "relation does not exist" on a database that is
+# perfectly healthy. Webhook has no @@map, hence the quoted mixed case there.
+#
+# Guarding it with `CASE WHEN to_regclass(...) IS NULL` does not help:
+# PostgreSQL plans both branches of the CASE, so the missing relation is a
+# planning error rather than an unevaluated branch. A failed call is the
+# signal instead.
 _calcom_user_count() {
     local n
     n=$(_calcom_psql << 'SQLEOF'
-SELECT CASE WHEN to_regclass('public."User"') IS NULL
-            THEN 'noschema'
-            ELSE (SELECT count(*)::text FROM "User") END;
+SELECT count(*)::text FROM users;
 SQLEOF
-    )
-    printf '%s' "${n//[[:space:]]/}"
+    ) || { printf 'noschema'; return 0; }
+    n="${n//[[:space:]]/}"
+    printf '%s' "${n:-noschema}"
 }
 
 # ── Signup policy ─────────────────────────────────────────────────────────────
@@ -669,6 +678,11 @@ services:
       CRON_SECRET: "${CALCOM_CRON_SECRET}"
       CALCOM_TELEMETRY_DISABLED: "1"
       NEXT_PUBLIC_DISABLE_SIGNUP: "${disable_signup}"
+      # Not optional in practice. Left empty, the app logs "Match of
+      # WEBAPP_URL with ALLOWED_HOSTNAMES failed" at WARN several times per
+      # page render, which buries everything else in the log. It is a list
+      # of bare hostnames, double quoted and comma separated, parsed as JSON.
+      ALLOWED_HOSTNAMES: '"${DOMAIN}","${sub}.${DOMAIN}"'
       # Node's process timezone stays UTC, which is what upstream sets and
       # what the schema assumes. Every user picks their own timezone in the
       # app, and the booking pages convert for the visitor, so setting this to
@@ -820,7 +834,7 @@ SELECT 'corex-telegram-' || u.id::text,
        true,
        '${CALCOM_WEBHOOK_SECRET}',
        '2021-10-20'
-FROM "User" u;
+FROM users u;
 COMMIT;
 SQLEOF
 

@@ -6,6 +6,30 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.14.1] - 2026-09-03
+
+### Fixed
+- **Cal.com's account probe queried a table that does not exist.** The Prisma
+  model is `User`, and most Cal.com models map to their own name, but this one
+  carries `@@map(name: "users")`. The query therefore failed with "relation
+  does not exist" on a database that had migrated perfectly, so every install
+  reported "schema is not ready yet": public signup was never closed and the
+  Telegram webhook was never written. Guarding the query with
+  `CASE WHEN to_regclass(...) IS NULL` does not help either, because
+  PostgreSQL plans both branches of the CASE, so a missing relation is a
+  planning error rather than an unevaluated branch. A failed call is the
+  signal now.
+
+- **`corex-manage.sh` did not source `lib/wizard.sh`,** which is where
+  `smtp_conf_load` lives, so `add` and `repair` ran with the function
+  undefined. Any service that takes its relay from `/etc/corex/smtp.conf`
+  found none and reported outbound mail as unconfigured on a box with a
+  working relay.
+
+- **`ALLOWED_HOSTNAMES` is set for Cal.com.** Left empty, the application logs
+  "Match of WEBAPP_URL with ALLOWED_HOSTNAMES failed" at WARN several times
+  per page render, which buries everything else in the container log.
+
 ## [v3.14.0] - 2026-09-03
 
 ### Added
