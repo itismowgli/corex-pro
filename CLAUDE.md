@@ -1353,7 +1353,7 @@ booking page on the instance.
 
 `getOrgSlug` in `packages/features/ee/organizations/lib/orgDomains.ts` looks
 for an entry in that list which the current hostname is a subdomain of. With
-`vyom.cloud` in the list, `cal.vyom.cloud` matches, the remainder is `cal`, and
+the bare domain in the list, `cal.DOMAIN` matches it, the remainder is `cal`, and
 the instance decides it is serving an organization called `cal`. Every profile
 lookup then happens inside that organization, so `/username` answers 404 with
 "The username is still available" while the account is present in the
