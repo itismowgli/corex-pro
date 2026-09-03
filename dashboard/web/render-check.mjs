@@ -164,11 +164,25 @@ function reply(body, status = 200) {
 // withData true serves the fixtures above; false fails every call but
 // /api/auth/me, which is the state an operator sees when the agent is down.
 // Both have to render, and only the first constructs any rows.
-function mount(url, me, withData = true) {
+function mount(url, me, withData = true, width = 1280) {
   const dom = new JSDOM(html, {
     runScripts: "outside-only",
     pretendToBeVisual: true,
     url,
+  })
+  // jsdom does no layout, so this cannot prove a page fits. It does exercise
+  // any code that branches on width, which is the part that can throw.
+  Object.defineProperty(dom.window, "innerWidth", { value: width, configurable: true })
+  Object.defineProperty(dom.window, "innerHeight", { value: width < 500 ? 780 : 900, configurable: true })
+  dom.window.matchMedia = (q) => ({
+    matches: /max-width:\s*(\d+)/.test(q) ? width <= Number(RegExp.$1) : width >= 640,
+    media: q,
+    addEventListener() {},
+    removeEventListener() {},
+    addListener() {},
+    removeListener() {},
+    onchange: null,
+    dispatchEvent: () => false,
   })
   const { window } = dom
   window.fetch = async (path) => {
@@ -188,14 +202,21 @@ let failed = false
 
 // Every tab twice: once with data, once with everything failing.
 const MODES = [
-  { withData: true, label: "data" },
-  { withData: false, label: "down" },
+  { withData: true, label: "data", width: 1280 },
+  { withData: false, label: "down", width: 1280 },
+  // A narrow iPhone, which is the width the layout actually has to survive.
+  { withData: true, label: "phone", width: 360 },
 ]
 
-for (const { withData, label: mode } of MODES)
+for (const { withData, label: mode, width } of MODES)
 for (const tab of TABS) {
-  const { window } = mount("https://dashboard.example.com/#" + tab, SIGNED_IN, withData)
+  const { window } = mount("https://dashboard.example.com/#" + tab, SIGNED_IN, withData, width)
   window.EventSource = class {
+    constructor() {
+      this.onmessage = null
+      this.onerror = null
+      this.onopen = null
+    }
     close() {}
   }
 

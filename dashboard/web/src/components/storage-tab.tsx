@@ -134,6 +134,7 @@ export function StorageTab({
                 Docker did not report its usage.
               </p>
             ) : (
+              <div className="w-full overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -171,6 +172,7 @@ export function StorageTab({
                   })}
                 </TableBody>
               </Table>
+              </div>
             )}
             <p className="text-muted-foreground mt-3 text-xs">
               Cleanup removes images unused for seven days or more and build cache older than

@@ -304,6 +304,22 @@ export type ContainerRow = {
   since: string
 }
 
+export type Vitals = {
+  at: number
+  temp_c: number | null
+  temp_state: "ok" | "warn" | "hot" | "unknown"
+  load: number[]
+  cores: number
+  mem_used_mb: number
+  mem_total_mb: number
+  swap_used_mb: number
+  containers_running: number
+  containers_total: number
+  containers_restarting: number
+  top: ContainerRow[]
+  agent_ok: boolean
+}
+
 export type Overview = {
   metrics: Metrics | null
   services: { healthy: number; unhealthy: number; stopped: number; missing: number }
@@ -330,4 +346,5 @@ export const api = {
   cleanup: (dryRun: boolean) =>
     req<Job>(`/api/cleanup${dryRun ? "?dry_run=1" : ""}`, { method: "POST" }),
   logsURL: (container: string) => `/api/logs/${encodeURIComponent(container)}`,
+  vitalsStreamURL: "/api/stream/vitals",
 }

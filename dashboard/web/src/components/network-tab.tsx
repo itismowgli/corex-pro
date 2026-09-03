@@ -36,7 +36,8 @@ export function NetworkTab({
           </CardTitle>
         </CardHeader>
         <CardContent className="px-0 pb-2">
-          <Table>
+          <div className="w-full overflow-x-auto">
+              <Table>
             <TableHeader>
               <TableRow>
                 <TableHead className="w-1/3">Service</TableHead>
@@ -74,6 +75,7 @@ export function NetworkTab({
               ))}
             </TableBody>
           </Table>
+              </div>
         </CardContent>
       </Card>
 

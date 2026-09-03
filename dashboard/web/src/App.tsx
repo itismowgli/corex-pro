@@ -20,6 +20,7 @@ import { OverviewTab } from "@/components/overview-tab"
 import { CatalogueTab } from "@/components/catalogue-tab"
 import { HealthTab } from "@/components/health-tab"
 import { JobPanel } from "@/components/job-panel"
+import { ConsumersDialog, type Consumer } from "@/components/consumers-dialog"
 import { LoginScreen } from "@/components/login-screen"
 import { LogsDialog } from "@/components/logs-dialog"
 import { NetworkTab } from "@/components/network-tab"
@@ -40,8 +41,10 @@ import {
   type RunAction,
   type Service,
   type ServiceAction,
+  type Vitals,
 } from "@/lib/api"
 import { usePoll } from "@/lib/use-poll"
+import { useStream } from "@/lib/use-stream"
 
 const TABS = [
   { id: "overview", label: "Overview", icon: GaugeIcon },
@@ -162,6 +165,7 @@ function Dashboard({
   // health report you just ran.
   const [outputs, setOutputs] = React.useState<Record<string, string>>({})
   const [logs, setLogs] = React.useState<{ container: string; label: string } | null>(null)
+  const [drill, setDrill] = React.useState<Consumer | null>(null)
 
   const state = usePoll(api.state, 30_000)
   // 15s while idle. An action refreshes it immediately when the job ends, so a
@@ -170,7 +174,11 @@ function Dashboard({
   const storage = usePoll(api.storage, 0)
   // 20s, matching the blackbox sampler: polling faster shows the same numbers
   // twice, and this call walks both disks and Kuma's database.
-  const overview = usePoll(api.overview, 20_000)
+  // The heavy half: both disks, Kuma's database and a cached `du`. Every 45
+  // seconds is plenty for numbers that move that slowly.
+  const overview = usePoll(api.overview, 45_000)
+  // The light half, pushed every five seconds so the tiles move on their own.
+  const vitals = useStream<Vitals>(api.vitalsStreamURL)
   const ports = usePoll(api.ports, 0)
   const catalogue = usePoll(api.catalogue, 0)
 
@@ -274,21 +282,23 @@ function Dashboard({
   return (
     <div className="min-h-screen">
       <header className="bg-card/80 sticky top-0 z-40 border-b backdrop-blur">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-3 px-4 py-3">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 sm:px-4 sm:py-3">
           <span className="text-base font-semibold tracking-tight">
             CoreX <span className="text-muted-foreground font-normal">Pro</span>
           </span>
           {state.data?.domain && (
-            <span className="text-muted-foreground font-mono text-xs">{state.data.domain}</span>
+            <span className="text-muted-foreground hidden font-mono text-xs sm:inline">
+              {state.data.domain}
+            </span>
           )}
           <div className="ml-auto flex items-center gap-2">
             {svcList.length > 0 && (
               <>
-                <Badge variant="ok">{counts.healthy} healthy</Badge>
+                <Badge variant="ok">{counts.healthy}</Badge>
                 {counts.unhealthy > 0 && (
-                  <Badge variant="destructive">{counts.unhealthy} unhealthy</Badge>
+                  <Badge variant="destructive">{counts.unhealthy}</Badge>
                 )}
-                {counts.other > 0 && <Badge variant="secondary">{counts.other} stopped</Badge>}
+                {counts.other > 0 && <Badge variant="secondary">{counts.other}</Badge>}
               </>
             )}
             <Button size="icon" variant="ghost" onClick={refreshAll} aria-label="Refresh">
@@ -326,7 +336,7 @@ function Dashboard({
         </div>
       </header>
 
-      <main className="mx-auto flex max-w-7xl flex-col gap-4 p-4">
+      <main className="mx-auto flex w-full max-w-7xl flex-col gap-3 p-3 sm:gap-4 sm:p-4">
         {state.data && !state.data.agent_ok && (
           <Card className="border-destructive/50">
             <CardContent className="flex items-start gap-2 text-sm">
@@ -356,10 +366,23 @@ function Dashboard({
           </Card>
         )}
 
-        <JobPanel job={job} setJob={setJob} onFinished={onJobFinished} />
+        {/* hasHome: these actions render their own output in the tab that
+            asked for them, so the strip shows only the outcome and keeps the
+            report from appearing twice on one screen. */}
+        <JobPanel
+          job={job}
+          setJob={setJob}
+          onFinished={onJobFinished}
+          hasHome={
+            !!runningAction &&
+            ["health", "watchdog", "doctor", "network-check", "route-list", "update-all"].includes(
+              runningAction
+            )
+          }
+        />
 
         <Tabs value={tab} onValueChange={setTab}>
-          <TabsList className="flex-wrap">
+          <TabsList className="w-full justify-start overflow-x-auto sm:w-auto sm:flex-wrap">
             {tabs.map(({ id, label, icon: Icon }) => (
               <TabsTrigger key={id} value={id}>
                 <Icon />
@@ -371,8 +394,11 @@ function Dashboard({
           <TabsContent value="overview">
             <OverviewTab
               data={overview.data as Overview | null}
+              vitals={vitals.data}
+              live={vitals.live}
               loading={overview.loading}
               error={overview.error}
+              onDrill={setDrill}
             />
           </TabsContent>
           <TabsContent value="services">
@@ -438,6 +464,12 @@ function Dashboard({
           {state.data?.server_ip}
         </footer>
       </main>
+
+      <ConsumersDialog
+        mode={drill}
+        metrics={overview.data?.metrics ?? null}
+        onClose={() => setDrill(null)}
+      />
 
       <LogsDialog
         container={logs?.container ?? null}

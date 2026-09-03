@@ -265,16 +265,16 @@ check_temp() {
     # No sensor is itself the finding: gotcha #17 exists because a thermal trip
     # is invisible without lm-sensors. Report it rather than passing silently.
     if [[ "$t" == "0" ]]; then
-        push temp down "No CPU temperature sensor.${nl}Install lm-sensors: a thermal trip leaves no trace in any log without it."
+        push temp down "The CPU temperature cannot be read.${nl}Install lm-sensors. Without it a thermal shutdown leaves no trace in any log and looks exactly like someone pulling the plug."
         return
     fi
     if (( t >= WATCHDOG_TEMP_C )); then
-        local msg="${t}C, over the ${WATCHDOG_TEMP_C}C limit." who
+        local msg="Running hot at ${t}C, above the ${WATCHDOG_TEMP_C}C limit." who
         who=$(top_cpu)
-        [[ -n "$who" ]] && msg="${msg}${nl}Heaviest: ${who}"
+        [[ -n "$who" ]] && msg="${msg}${nl}Working hardest: ${who}"
         push temp down "$msg" "$t"
     else
-        push temp up "${t}C" "$t"
+        push temp up "Back to a normal ${t}C." "$t"
     fi
 }
 
@@ -287,12 +287,12 @@ check_load() {
     limit=$(awk -v c="$cores" -v r="$WATCHDOG_LOAD_RATIO" 'BEGIN{printf "%.2f", c*r}')
 
     if awk -v l="$load5" -v m="$limit" 'BEGIN{exit !(l > m)}'; then
-        local msg="Load ${load5}, over the ${limit} limit for ${cores} cores." who
+        local msg="Busy: load ${load5} across ${cores} cores, above the ${limit} limit." who
         who=$(top_cpu)
-        [[ -n "$who" ]] && msg="${msg}${nl}Heaviest: ${who}"
+        [[ -n "$who" ]] && msg="${msg}${nl}Working hardest: ${who}"
         push load down "$msg" "$load5"
     else
-        push load up "load ${load5} of ${limit}" "$load5"
+        push load up "Load is back to ${load5}, under the ${limit} limit." "$load5"
     fi
 }
 
@@ -312,17 +312,17 @@ check_memory() {
 
     local reasons=""
     (( avail_pct < WATCHDOG_MEM_AVAIL_PCT )) && \
-        reasons="Only ${avail_pct}% RAM available, floor is ${WATCHDOG_MEM_AVAIL_PCT}%."
+        reasons="Running low on memory: only ${avail_pct}% free, and the floor is ${WATCHDOG_MEM_AVAIL_PCT}%."
     (( swap_pct > WATCHDOG_SWAP_USED_PCT )) && \
-        reasons="${reasons:+$reasons }Swap ${swap_pct}% used, floor is ${WATCHDOG_SWAP_USED_PCT}%."
+        reasons="${reasons:+$reasons }Swapping heavily: ${swap_pct}% of swap is in use, and the limit is ${WATCHDOG_SWAP_USED_PCT}%."
 
     if [[ -n "$reasons" ]]; then
         local msg="$reasons" who
         who=$(top_mem)
-        [[ -n "$who" ]] && msg="${msg}${nl}Largest: ${who}"
+        [[ -n "$who" ]] && msg="${msg}${nl}Using the most: ${who}"
         push memory down "$msg" "$used_pct"
     else
-        push memory up "RAM ${used_pct}% used, swap ${swap_pct}%" "$used_pct"
+        push memory up "Memory is comfortable again: ${used_pct}% used, swap at ${swap_pct}%." "$used_pct"
     fi
 }
 
@@ -342,18 +342,18 @@ check_disk() {
     if [[ -n "$osf" ]]; then
         (( osf < worst )) && worst=$osf
         (( osf < WATCHDOG_OS_FREE_PCT )) && \
-            reasons="OS disk ${osf}% free, floor is ${WATCHDOG_OS_FREE_PCT}%. This breaks Docker and apt, not just one service."
+            reasons="The OS disk is nearly full: ${osf}% free, and the floor is ${WATCHDOG_OS_FREE_PCT}%. This one stops Docker and apt working, not just a single service."
     fi
     if [[ -n "$ssdf" ]]; then
         (( ssdf < worst )) && worst=$ssdf
         (( ssdf < WATCHDOG_SSD_FREE_PCT )) && \
-            reasons="${reasons:+$reasons$nl}Data SSD ${ssdf}% free, floor is ${WATCHDOG_SSD_FREE_PCT}%."
+            reasons="${reasons:+$reasons$nl}The data SSD is filling up: ${ssdf}% free, and the floor is ${WATCHDOG_SSD_FREE_PCT}%."
     fi
 
     if [[ -n "$reasons" ]]; then
-        push disk down "${reasons}${nl}Reclaim space with: corex manage cleanup" "$worst"
+        push disk down "${reasons}${nl}Free some up with: corex manage cleanup" "$worst"
     else
-        push disk up "OS ${osf:-?}% free, SSD ${ssdf:-?}% free" "$worst"
+        push disk up "Disks have room: ${osf:-?}% free on the OS disk, ${ssdf:-?}% free on the SSD." "$worst"
     fi
 }
 
@@ -375,7 +375,7 @@ check_containers() {
     local ids raw prev_file="${STATE_DIR}/watchdog-restarts"
     ids=$(docker ps -aq 2>/dev/null)
     if [[ -z "$ids" ]]; then
-        push containers down "docker reports no containers at all"
+        push containers down "Docker reports no containers at all, which means the engine is down or has lost its state."
         return
     fi
 
@@ -433,10 +433,10 @@ check_containers() {
     # at once and running them together as a single sentence is unreadable on a
     # phone.
     local nl=$'\n' reasons="" first=""
-    [[ -n "$down" ]]      && { reasons="Stopped but set to restart: ${down}"; first="${down%%,*}"; }
-    [[ -n "$unhealthy" ]] && { reasons="${reasons:+$reasons$nl}Unhealthy: ${unhealthy}"; first="${first:-${unhealthy%%,*}}"; }
-    [[ -n "$oom" ]]       && { reasons="${reasons:+$reasons$nl}OOM-killed, so its memory limit is too low: ${oom}"; first="${first:-${oom%%,*}}"; }
-    [[ -n "$looping" ]]   && { reasons="${reasons:+$reasons$nl}Restart-looping: ${looping}"; first="${first:-${looping%% *}}"; }
+    [[ -n "$down" ]]      && { reasons="Stopped, but told to restart: ${down}"; first="${down%%,*}"; }
+    [[ -n "$unhealthy" ]] && { reasons="${reasons:+$reasons$nl}Failing their own health check: ${unhealthy}"; first="${first:-${unhealthy%%,*}}"; }
+    [[ -n "$oom" ]]       && { reasons="${reasons:+$reasons$nl}Killed for using too much memory, so the limit is set too low: ${oom}"; first="${first:-${oom%%,*}}"; }
+    [[ -n "$looping" ]]   && { reasons="${reasons:+$reasons$nl}Restarting over and over: ${looping}"; first="${first:-${looping%% *}}"; }
 
     local total running
     total=$(printf '%s\n' "$raw" | grep -c . )
@@ -445,10 +445,10 @@ check_containers() {
     if [[ -n "$reasons" ]]; then
         # The container log is the only place the cause appears for this class
         # of fault, so name the command rather than leaving it to be recalled.
-        [[ -n "$first" ]] && reasons="${reasons}${nl}Cause: docker logs --tail 30 ${first}"
+        [[ -n "$first" ]] && reasons="${reasons}${nl}Find out why with: docker logs --tail 30 ${first}"
         push containers down "$reasons" "$running"
     else
-        push containers up "${running}/${total} running, all healthy" "$running"
+        push containers up "All ${running} of ${total} containers are running and healthy." "$running"
     fi
 }
 
@@ -472,7 +472,7 @@ check_shed() {
         push shed down \
             "Thermal guardian has stopped ${n} service(s) to shed heat.${nl}${names}${nl}They restart on their own once the CPU cools." "$n"
     else
-        push shed up "nothing shed" 0
+        push shed up "Nothing is shed. Every container the guardian stopped is back." 0
     fi
 }
 
@@ -538,7 +538,30 @@ MAX_RETRIES = 1
 # values for us, so a container name or an error string containing brackets or
 # a hyphen cannot break the parse and silently drop the whole notification.
 # Markup in the template itself is left alone, which is why the bold works.
-TELEGRAM_TEMPLATE = "{{ status }}  *{{ name }}*\n\n{{ msg }}"
+# What an Uptime Kuma alert looks like on a phone.
+#
+# Deliberately close to the default, and the restraint is the point: Telegram
+# rejects a message whose MarkdownV2 does not parse, and a rejected alert is
+# no alert at all. A clever template that breaks on one monitor name
+# containing a hyphen silently turns off monitoring.
+#
+# So the only additions are a blank line, which is what makes the headline
+# readable on a lock screen, and a closing line that differs by state. The
+# wording that carries the weight lives in `msg`, which for the push monitors
+# is written by lib/watchdog.sh in plain sentences.
+#
+# The template context Kuma actually provides is status, name, hostnameOrURL,
+# msg, monitorJSON and heartbeatJSON. There is no `heartbeat` object and no
+# localDateTime, and hostnameOrURL on a push monitor is the push URL, which
+# carries the token, so neither is used here.
+TELEGRAM_TEMPLATE = (
+    "{{ status }} *{{ name }}*\n"
+    "\n"
+    "{{ msg }}\n"
+    "{% if heartbeatJSON.status == 0 %}"
+    "\n_I will message again when it recovers\\._"
+    "{% endif %}"
+)
 
 
 def apply_telegram_template(cur):

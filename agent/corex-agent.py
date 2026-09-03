@@ -246,6 +246,44 @@ def record(job_id, **fields):
                     _jobs.pop(stale, None)
 
 
+# How each action reads when it has finished. The whitelist keys are verbs
+# aimed at the machine; a notification is aimed at a person, and "stop
+# nextcloud" arriving on a phone is a command, not news.
+_DONE_PHRASE = {
+    "start":   "%s is running",
+    "stop":    "%s is stopped",
+    "restart": "%s has restarted",
+    "repair":  "%s has been repaired",
+    "update":  "%s is up to date",
+    "cleanup": "Cleanup finished",
+    "doctor":  "The health check finished",
+    "watchdog": "The resource sweep finished",
+    "network-check": "The reachability check finished",
+}
+
+_FAILED_PHRASE = {
+    "start":   "%s would not start",
+    "stop":    "%s would not stop",
+    "restart": "%s would not restart",
+    "repair":  "%s could not be repaired",
+    "update":  "%s could not be updated",
+    "cleanup": "Cleanup failed",
+    "doctor":  "The health check failed",
+    "watchdog": "The resource sweep failed",
+    "network-check": "The reachability check failed",
+}
+
+
+def _headline(action, service, ok):
+    table = _DONE_PHRASE if ok else _FAILED_PHRASE
+    phrase = table.get(action)
+    if phrase is None:
+        return ("%s %s" % (action, service or "")).strip()
+    if "%s" in phrase:
+        return phrase % (service or "the service")
+    return phrase
+
+
 def _outcome_lines(output, rc):
     """The lines worth putting in a notification.
 
@@ -259,7 +297,6 @@ def _outcome_lines(output, rc):
         return []
     if rc != 0:
         return lines[-4:]
-    # Prefer the last [  OK] line; fall back to the last line of any kind.
     ok_lines = [ln for ln in lines if ln.startswith("[  OK]")]
     chosen = ok_lines[-1] if ok_lines else lines[-1]
     for prefix in ("[  OK] ", "[INFO] ", "[STEP] "):
@@ -284,14 +321,27 @@ def announce(action, service, rc, elapsed, output):
         return
 
     ok = rc == 0
-    title = ("%s %s" % (action, service or "")).strip()
-    when = "Done in %ds." % elapsed if ok else "Failed after %ds." % elapsed
-    parts = ["%s *%s*" % ("✅" if ok else "\U0001f6a8", cc.md_escape(title)),
-             cc.md_escape(when)]
+    headline = _headline(action, service, ok)
+    took = cc.human_duration(elapsed)
     detail = _outcome_lines(output, rc)
-    if detail:
-        parts.append(cc.md_escape("\n".join(detail)))
-    cc.telegram_send(token, chat, "\n".join(parts))
+
+    if ok:
+        body = "Took %s." % took if took else ""
+        # The summary line corex-manage prints says what actually changed, and
+        # it reads as a sentence already, so it goes in the body rather than
+        # into a code block a phone will render as a grey slab.
+        if detail:
+            body = (body + " " + detail[0]).strip() if body else detail[0]
+        cc.telegram_send(token, chat, cc.message("ok", headline, body))
+        return
+
+    reason = "It ran for %s and then failed." % took if took else "It failed."
+    if rc == 124:
+        reason = "It ran for %s and was stopped for taking too long." % took
+    cc.telegram_send(token, chat, cc.message(
+        "fail", headline, reason,
+        detail="\n".join(detail),
+        footer="Nothing was rolled back. Look at it with: corex manage status"))
 
 
 def worker(job_id, action, service):

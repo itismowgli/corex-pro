@@ -105,7 +105,8 @@ export function SystemTab({
             </p>
           </CardHeader>
           <CardContent className="px-0 pb-2">
-            <Table>
+            <div className="w-full overflow-x-auto">
+              <Table>
               <TableBody>
                 {ports.map((p) => (
                   <TableRow key={p.service + p.url}>
@@ -129,6 +130,7 @@ export function SystemTab({
                 ))}
               </TableBody>
             </Table>
+              </div>
           </CardContent>
         </Card>
       )}

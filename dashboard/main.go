@@ -234,6 +234,7 @@ func main() {
 	api.HandleFunc("/api/catalogue", catalogueHandler)
 	api.HandleFunc("/api/overview", overviewHandler)
 	api.HandleFunc("/api/containers", containersHandler)
+	api.HandleFunc("/api/stream/vitals", vitalsStreamHandler)
 	api.HandleFunc("/api/run/", runHandler)
 	api.HandleFunc("/api/update-all", updateAllHandler)
 	api.HandleFunc("/api/service/", serviceActionHandler)

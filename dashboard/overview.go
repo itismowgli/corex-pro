@@ -304,3 +304,144 @@ func humanBytes(n int64) string {
 	}
 	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "kMGTPE"[exp])
 }
+
+// ── Live vitals ───────────────────────────────────────────────────────────────
+
+// vitals is the small, cheap half of the overview: the numbers that change
+// every few seconds. Kept apart from the full payload on purpose, because that
+// one walks both disks, reads Kuma's database and may wait on a `du`, none of
+// which is worth doing three times a minute.
+type vitals struct {
+	At         int64          `json:"at"`
+	TempC      *float64       `json:"temp_c"`
+	TempState  string         `json:"temp_state"`
+	Load       []float64      `json:"load"`
+	Cores      int            `json:"cores"`
+	MemUsedMB  int            `json:"mem_used_mb"`
+	MemTotalMB int            `json:"mem_total_mb"`
+	SwapUsedMB int            `json:"swap_used_mb"`
+	Running    int            `json:"containers_running"`
+	Total      int            `json:"containers_total"`
+	Restarting int            `json:"containers_restarting"`
+	Top        []containerRow `json:"top"`
+	AgentOK    bool           `json:"agent_ok"`
+}
+
+func collectVitals() vitals {
+	v := vitals{At: time.Now().Unix()}
+	v.AgentOK, _ = agentReachable()
+
+	if v.AgentOK {
+		// sizes:false, so the agent skips the cached `du` entirely. This call
+		// runs every few seconds and must stay cheap.
+		if res, err := agentCall(map[string]interface{}{
+			"action": "metrics", "sizes": false,
+		}, 15*time.Second); err == nil && agentOK(res) {
+			raw, _ := json.Marshal(res["metrics"])
+			var m struct {
+				CPU struct {
+					TempC     *float64  `json:"temp_c"`
+					TempState string    `json:"temp_state"`
+					Load      []float64 `json:"load"`
+					Cores     int       `json:"cores"`
+				} `json:"cpu"`
+				Memory struct {
+					UsedMB  int `json:"used_mb"`
+					TotalMB int `json:"total_mb"`
+					SwapMB  int `json:"swap_used_mb"`
+				} `json:"memory"`
+			}
+			if json.Unmarshal(raw, &m) == nil {
+				v.TempC, v.TempState = m.CPU.TempC, m.CPU.TempState
+				v.Load, v.Cores = m.CPU.Load, m.CPU.Cores
+				v.MemUsedMB, v.MemTotalMB = m.Memory.UsedMB, m.Memory.TotalMB
+				v.SwapUsedMB = m.Memory.SwapMB
+			}
+		}
+	}
+
+	stats := dockerStats()
+	if text, err := runCmd("docker", "ps", "-a", "--format", "{{.Names}}\t{{.State}}"); err == nil {
+		for _, line := range strings.Split(text, "\n") {
+			f := strings.Split(strings.TrimSpace(line), "\t")
+			if len(f) < 2 || f[0] == "" {
+				continue
+			}
+			v.Total++
+			switch f[1] {
+			case "running":
+				v.Running++
+			case "restarting":
+				v.Restarting++
+			}
+		}
+	}
+	rows := make([]containerRow, 0, len(stats))
+	for _, r := range stats {
+		rows = append(rows, r)
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].CPUPercent != rows[j].CPUPercent {
+			return rows[i].CPUPercent > rows[j].CPUPercent
+		}
+		return rows[i].MemBytes > rows[j].MemBytes
+	})
+	if len(rows) > 8 {
+		rows = rows[:8]
+	}
+	v.Top = rows
+	return v
+}
+
+// vitalsStreamHandler pushes vitals over Server-Sent Events.
+//
+// Polling was showing numbers that were up to twenty seconds old, which for a
+// temperature on hardware that trips at TjMax is the wrong kind of stale. SSE
+// rather than a websocket because the traffic is one way, it survives the
+// reverse proxy without an upgrade negotiation, and the browser reconnects on
+// its own. The log stream already works this way.
+//
+// `docker stats --no-stream` costs a full sampling interval, so five seconds
+// is about the floor before this spends more time measuring than waiting.
+func vitalsStreamHandler(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeErr(w, http.StatusInternalServerError, "streaming is not supported here")
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	// Without this an intermediate proxy buffers the stream and nothing
+	// arrives until it closes, which looks exactly like a hung page.
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	ctx := r.Context()
+	send := func() bool {
+		body, err := json.Marshal(collectVitals())
+		if err != nil {
+			return true
+		}
+		if _, err := fmt.Fprintf(w, "data: %s\n\n", body); err != nil {
+			return false
+		}
+		flusher.Flush()
+		return true
+	}
+	if !send() {
+		return
+	}
+
+	tick := time.NewTicker(5 * time.Second)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+			if !send() {
+				return
+			}
+		}
+	}
+}

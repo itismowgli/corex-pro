@@ -144,7 +144,7 @@ export function LogsDialog({
 
   return (
     <Dialog open={!!container} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-5xl">
+      <DialogContent className="max-w-[calc(100vw-1.5rem)] sm:max-w-5xl">
         <DialogHeader>
           <DialogTitle className="flex flex-wrap items-center gap-2 text-sm">
             <span className="truncate">{label || container}</span>
@@ -156,8 +156,8 @@ export function LogsDialog({
           </DialogTitle>
         </DialogHeader>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative min-w-40 flex-1">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <div className="relative min-w-full flex-1 sm:min-w-40">
             <SearchIcon className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
             <Input
               value={query}

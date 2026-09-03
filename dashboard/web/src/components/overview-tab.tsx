@@ -2,18 +2,22 @@ import * as React from "react"
 import {
   ActivityIcon,
   AlertTriangleIcon,
+  ChevronRightIcon,
   CpuIcon,
   HardDriveIcon,
   MemoryStickIcon,
+  RadioIcon,
   ThermometerIcon,
   TrashIcon,
 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Meter, Spark } from "@/components/ui/spark"
-import type { Overview } from "@/lib/api"
+import type { Consumer } from "@/components/consumers-dialog"
+import type { Overview, Vitals } from "@/lib/api"
 import { ago, bytes, duration, pct } from "@/lib/format"
 
 /**
@@ -34,6 +38,7 @@ function Vital({
   value,
   sub,
   tone,
+  onOpen,
   children,
 }: {
   icon: React.ComponentType<{ className?: string }>
@@ -41,33 +46,52 @@ function Vital({
   value: React.ReactNode
   sub?: React.ReactNode
   tone?: "ok" | "warn" | "danger"
+  /** Clicking the tile answers "which app is doing this". */
+  onOpen?: () => void
   children?: React.ReactNode
 }) {
   const color =
     tone === "danger" ? "text-destructive" : tone === "warn" ? "text-warn" : "text-foreground"
+  const body = (
+    <CardContent className="grid gap-1.5 px-3">
+      <div className="text-muted-foreground flex items-center gap-1.5 text-xs">
+        <Icon className="size-3.5 shrink-0" />
+        <span className="truncate">{label}</span>
+        {onOpen && <ChevronRightIcon className="ml-auto size-3.5 shrink-0 opacity-50" />}
+      </div>
+      <div className={`font-mono text-xl leading-none sm:text-2xl ${color}`}>{value}</div>
+      {sub && <div className="text-muted-foreground text-xs">{sub}</div>}
+      {children}
+    </CardContent>
+  )
+  if (!onOpen) return <Card className="gap-2 py-3">{body}</Card>
   return (
-    <Card className="gap-2 py-3">
-      <CardContent className="grid gap-1.5 px-3">
-        <div className="text-muted-foreground flex items-center gap-1.5 text-xs">
-          <Icon className="size-3.5" />
-          {label}
-        </div>
-        <div className={`font-mono text-2xl leading-none ${color}`}>{value}</div>
-        {sub && <div className="text-muted-foreground text-xs">{sub}</div>}
-        {children}
-      </CardContent>
-    </Card>
+    <button
+      type="button"
+      onClick={onOpen}
+      aria-label={`${label}, see what is using it`}
+      className="focus-visible:ring-ring/50 rounded-xl text-left focus-visible:ring-[3px] focus-visible:outline-none"
+    >
+      <Card className="hover:border-ring h-full gap-2 py-3 transition-colors">{body}</Card>
+    </button>
   )
 }
 
 export function OverviewTab({
   data,
+  vitals,
+  live,
   loading,
   error,
+  onDrill,
 }: {
   data: Overview | null
+  /** Pushed every five seconds. The polled payload fills in the rest. */
+  vitals: Vitals | null
+  live: boolean
   loading: boolean
   error: string | null
+  onDrill: (what: Consumer) => void
 }) {
   if (loading && !data) {
     return (
@@ -97,14 +121,23 @@ export function OverviewTab({
   const mems = series.map((s) => s.mem_used_mb)
   const throttled = series.some((s) => s.throttled)
 
-  const temp = m?.cpu.temp_c ?? null
+  // The stream wins where it has an answer: it is five seconds old at worst,
+  // and the polled payload can be half a minute behind.
+  const temp = vitals?.temp_c ?? m?.cpu.temp_c ?? null
+  const load0 = vitals?.load?.[0] ?? m?.cpu.load?.[0] ?? null
+  const loadRest = vitals?.load?.slice(1) ?? m?.cpu.load?.slice(1) ?? []
+  const cores = vitals?.cores ?? m?.cpu.cores ?? null
+  const running = vitals?.containers_running ?? data?.containers.running ?? 0
+  const totalContainers = vitals?.containers_total ?? data?.containers.total ?? 0
+  const restarting = vitals?.containers_restarting ?? data?.containers.restarting ?? 0
+  const top = vitals?.top ?? data?.top ?? []
   const warnAt = m?.thermal.warn_c ?? 80
   const shedAt = m?.thermal.shed_c ?? 85
   const tempTone = temp == null ? undefined : temp >= shedAt ? "danger" : temp >= warnAt ? "warn" : "ok"
 
-  const memUsed = m?.memory.used_mb ?? 0
-  const memTotal = m?.memory.total_mb ?? 0
-  const swapUsed = m?.memory.swap_used_mb ?? 0
+  const memUsed = vitals?.mem_used_mb ?? m?.memory.used_mb ?? 0
+  const memTotal = vitals?.mem_total_mb ?? m?.memory.total_mb ?? 0
+  const swapUsed = vitals?.swap_used_mb ?? m?.memory.swap_used_mb ?? 0
 
   const reclaimable = Object.values(m?.docker ?? {}).reduce(
     (a, d) => a + (d?.reclaimable_b ?? 0),
@@ -128,8 +161,8 @@ export function OverviewTab({
   for (const d of m?.disks ?? []) {
     if (d.pct >= 90) alarms.push(`${d.label} is ${d.pct}% full`)
   }
-  if ((data?.containers.restarting ?? 0) > 0) {
-    alarms.push(`${data?.containers.restarting} container(s) are restarting in a loop`)
+  if (restarting > 0) {
+    alarms.push(`${restarting} container(s) are restarting in a loop`)
   }
 
   return (
@@ -147,8 +180,15 @@ export function OverviewTab({
         </Card>
       )}
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="text-muted-foreground flex items-center gap-1.5 text-xs">
+        <RadioIcon className={`size-3 ${live ? "text-ok" : "text-muted-foreground"}`} />
+        {live ? "Live, updating every five seconds" : "Reconnecting to the live feed"}
+        <span className="ml-auto hidden sm:inline">Tap a tile to see what is using it</span>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-4">
         <Vital
+          onOpen={() => onDrill("cpu")}
           icon={ThermometerIcon}
           label="CPU temperature"
           value={temp == null ? "no sensor" : `${temp.toFixed(1)}°C`}
@@ -163,17 +203,19 @@ export function OverviewTab({
         </Vital>
 
         <Vital
+          onOpen={() => onDrill("cpu")}
           icon={CpuIcon}
           label="Load"
-          value={m?.cpu.load?.[0]?.toFixed(2) ?? "-"}
-          sub={`${m?.cpu.cores ?? "?"} cores, 5 and 15 minute: ${
-            m?.cpu.load?.slice(1).map((v) => v.toFixed(2)).join(" and ") ?? "-"
+          value={load0?.toFixed(2) ?? "-"}
+          sub={`${cores ?? "?"} cores, then ${
+            loadRest.map((v) => v.toFixed(2)).join(" and ") || "-"
           }`}
         >
           <Spark values={loads} color="oklch(0.62 0.14 250)" label="Load average, last two hours" />
         </Vital>
 
         <Vital
+          onOpen={() => onDrill("memory")}
           icon={MemoryStickIcon}
           label="Memory"
           value={`${pct(memTotal ? (memUsed / memTotal) * 100 : 0)}`}
@@ -185,10 +227,11 @@ export function OverviewTab({
         </Vital>
 
         <Vital
+          onOpen={() => onDrill("containers")}
           icon={ActivityIcon}
           label="Running"
-          value={`${data?.containers.running ?? 0}`}
-          sub={`of ${data?.containers.total ?? 0} containers, up ${duration(m?.uptime_s)}`}
+          value={`${running}`}
+          sub={`of ${totalContainers} containers, up ${duration(m?.uptime_s)}`}
         >
           <div className="mt-1 flex flex-wrap gap-1">
             <Badge variant="ok">{data?.services.healthy ?? 0} healthy</Badge>
@@ -205,9 +248,17 @@ export function OverviewTab({
       <div className="grid gap-3 lg:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-sm">
+            <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
               <HardDriveIcon className="size-4" />
               Disks
+              <Button
+                size="xs"
+                variant="ghost"
+                className="ml-auto"
+                onClick={() => onDrill("disk")}
+              >
+                What is using it
+              </Button>
             </CardTitle>
           </CardHeader>
           <CardContent className="grid gap-3">
@@ -239,15 +290,25 @@ export function OverviewTab({
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm">Heaviest containers</CardTitle>
+            <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
+              Heaviest containers
+              <Button
+                size="xs"
+                variant="ghost"
+                className="ml-auto"
+                onClick={() => onDrill("containers")}
+              >
+                See all
+              </Button>
+            </CardTitle>
           </CardHeader>
           <CardContent className="grid gap-2">
-            {(data?.top ?? []).length === 0 && (
+            {top.length === 0 && (
               <p className="text-muted-foreground text-xs">
                 No container is reporting usage. Docker may still be starting.
               </p>
             )}
-            {(data?.top ?? []).map((c) => (
+            {top.map((c) => (
               <div key={c.name} className="grid gap-1">
                 <div className="flex items-baseline justify-between gap-2 text-xs">
                   <span className="truncate font-medium">{c.name}</span>

@@ -172,17 +172,13 @@ def reply(text):
 
 
 def code_block(text, limit=3000):
-    """Wrap terminal output for Telegram, keeping the end.
+    """Terminal output for a command someone asked to run.
 
-    The tail is what matters in command output: the error and the summary line
-    are both at the bottom, so a message that has to be cut keeps the end.
-    Backticks are replaced rather than escaped because a stray one inside a
-    fenced block still terminates it.
+    Keeps the tail: the error and the summary line are both at the bottom. The
+    shared helper does the fencing, so this and the agent's own notices cannot
+    drift apart on how they trim.
     """
-    text = (text or "").strip() or "(no output)"
-    if len(text) > limit:
-        text = "... truncated ...\n" + text[-limit:]
-    return "```\n%s\n```" % text.replace("\\", "\\\\").replace("`", "'")
+    return cc.code_block(text, limit, keep="tail") or "```\n(no output)\n```"
 
 
 # ── Reply formatting ────────────────────────────────────────────────────────
@@ -445,7 +441,7 @@ def handle_command(text):
         elif verb == "cleanup":
             if res.get("ok"):
                 reply("\U0001f9f9 *cleanup*\n" + cc.md_escape(
-                    "Started. I will message you when it finishes."))
+                    "Started. I will tell you when it finishes."))
             else:
                 reply("\U0001f6a8 " + cc.md_escape(res.get("error", "failed")))
         return
@@ -462,7 +458,9 @@ def handle_command(text):
 
     action = ACTION_WORDS[verb]
     if not arg:
-        reply("Which service? For example: `%s nextcloud`" % cc.md_escape(action))
+        reply(cc.message("info", "Which service?",
+                         "Name one after the command, like this:",
+                         detail="%s nextcloud" % action))
         return
 
     if action == "logs":
@@ -480,7 +478,7 @@ def handle_command(text):
     if res.get("ok"):
         reply("⏳ *%s*\n%s" % (
             cc.md_escape("%s %s" % (action, arg)),
-            cc.md_escape("Started. I will message you when it finishes.")))
+            cc.md_escape("Started. I will tell you when it finishes.")))
     else:
         reply("\U0001f6a8 *%s*\n%s" % (
             cc.md_escape("%s %s" % (action, arg)),

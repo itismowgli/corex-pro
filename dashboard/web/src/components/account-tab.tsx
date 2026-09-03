@@ -205,7 +205,7 @@ function TOTPCard({ me, refresh }: { me: Me; refresh: () => void }) {
             shown: they are hashed the moment they are stored, so nobody, including this
             server, can print them again.
           </p>
-          <div className="bg-muted grid grid-cols-2 gap-1 rounded-md p-3 font-mono text-sm">
+          <div className="bg-muted grid grid-cols-1 gap-1 rounded-md p-3 font-mono text-sm sm:grid-cols-2">
             {codes.map((c) => (
               <span key={c}>{c}</span>
             ))}
@@ -306,7 +306,7 @@ function TOTPCard({ me, refresh }: { me: Me; refresh: () => void }) {
               setCodes(res.recovery_codes)
             })}
           >
-            <div className="flex flex-wrap items-start gap-6">
+            <div className="flex flex-col items-start gap-4 sm:flex-row sm:gap-6">
               <div className="rounded-md bg-white p-3">
                 <QRCodeSVG value={enrolling.uri} size={168} level="M" />
               </div>
