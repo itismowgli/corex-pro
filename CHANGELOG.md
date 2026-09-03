@@ -6,6 +6,101 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.17.0] - 2026-09-03
+
+### Added
+- **The dashboard has a login of its own.** Traefik basic auth cannot change
+  its own password, cannot recover one, and has no idea who is signed in. The
+  dashboard now has accounts: a login page, a password you can change, a
+  display name, a forgotten-password code sent through the server's own mail
+  relay, and two-factor authentication with an authenticator app.
+
+  Accounts live in `/etc/corex/dashboard-users.json`, mode 0600 root. Not in
+  `state.json`, which is 0644 and bind-mounted into the very container being
+  protected. Passwords, recovery codes and reset codes are PBKDF2-HMAC-SHA256
+  with a per-record salt and iteration count, 600,000 iterations for a
+  password. Sessions are server side, in the dashboard's memory, so restarting
+  the container signs everyone out, which is the right behaviour for a control
+  panel.
+
+  Two-factor is RFC 6238, checked against the specification's own test
+  vectors. Enrolment shows a QR code rendered in the page itself, with no
+  request to any CDN, and hands over ten single-use recovery codes. A code
+  cannot be replayed inside its validity window, and an enrolment that is
+  never confirmed changes nothing, so an abandoned setup cannot lock anyone
+  out.
+
+- **`corex manage dashboard-user`, which is the way back in.** Add an account,
+  change a password, set the recovery address, turn two-factor off, and
+  `disable-auth` to put Traefik basic auth back. It edits the user file
+  directly, so it needs no container, no agent and no network. This exists
+  because a control panel whose own login breaks is a lockout, and the
+  dashboard is what you open when the box is already in trouble.
+
+  Nothing changes on an existing install until you ask for it. Basic auth
+  stays in front until the first account exists and `dashboard-user
+  enable-auth` takes it away.
+
+- **Three agent actions for the account store.** The dashboard container runs
+  as `nobody` and cannot read a 0600 file, so it reads and writes the document
+  through `users-get` and `users-put` and does the hashing itself.
+
+  `auth-reset` is the part that cannot work that way. Mailing a reset code
+  needs the relay credentials in `/etc/corex/smtp.conf`, which a web-facing
+  container has no business holding, so the agent generates the code, stores
+  only its hash and sends the mail. The web tier verifies the code later
+  against that hash, having seen neither the code nor the relay password.
+
+- **Rate limits on every path worth guessing at.** An emailed code is eight
+  characters and a second factor is six digits, and PBKDF2 does not help
+  there: it costs the server as much as the attacker. Login, reset and code
+  entry are limited per address, per username and globally, the last of those
+  because a caller reaching the container directly can forge
+  `X-Forwarded-For`. A reset code is also dead after six wrong guesses.
+
+- **Tests that run where the mistake would be made.** `dashboard/auth_test.go`
+  checks a hash written by `agent/corex_users.py` against the Go
+  implementation, which is a contract neither language can verify alone and
+  which fails as a correct password being refused. It also runs RFC 6238's
+  published vectors. Both run in the image build, alongside the existing
+  render check, so a disagreement fails the build rather than the login.
+
+- **Uptime Kuma's HTTP checks are seeded from the service modules.** The six
+  resource monitors have come from code since v3.11.0, but the reachability
+  checks were made by hand in Kuma's interface, so they lived in exactly one
+  place: `kuma.db`. A fresh install had none, a restore had whatever the backup
+  held, and a new service went unmonitored until somebody remembered. Alerting
+  that depends on someone remembering is not alerting.
+
+  Each module now declares its own check as `SERVICE_MONITORS`, and
+  `lib/kuma.sh` seeds them: fourteen checks across twelve modules, matched by
+  name so an existing monitor is adopted rather than duplicated. Run it again
+  with `corex manage kuma-seed`.
+
+  Only services that are installed and enabled are considered, so a
+  deliberately disabled Coolify does not start alerting about a state you
+  chose. A new monitor is created only for a hostname that answers acceptably
+  now, because a module can be enabled while one of its containers is stopped
+  on purpose, and seeding blind would leave a permanently down Grafana check.
+  Existing monitors are never removed on that basis: switching something off
+  for an hour should not delete its history. Interval and retries are cloned
+  from a monitor you already have, so tuning done in the interface survives a
+  reseed, and only the address and the accepted status codes are treated as
+  ours to correct.
+
+### Changed
+- The Go builder moves from 1.22 to 1.24, for `crypto/pbkdf2` in the standard
+  library. The alternative was this binary's first external dependency, or
+  hand-written key derivation in the one place a subtle mistake is invisible.
+- `_dashboard_write_compose` is split out of `dashboard_deploy`, so repair
+  regenerates the compose file and a smoke test can check the middleware chain
+  without building a two-stage image first. Getting that chain wrong asks for
+  a password twice in one direction, and publishes the dashboard with nothing
+  in front of it in the other, so there are now tests for both.
+- The dashboard no longer prints a password in the post-install summary once
+  it has accounts of its own. There is nothing to print: the file holds
+  hashes, and the way back in is a reset from SSH.
+
 ## [v3.16.0] - 2026-09-03
 
 ### Added

@@ -778,19 +778,12 @@ sudo bash corex-manage.sh add dashboard
 
 ### Signing in
 
-| | |
-|---|---|
-| URL | `https://dashboard.yourdomain.com` |
-| Username | `admin` |
-| Password | generated at install, see below |
-
-Traefik enforces HTTP Basic auth in front of it. To read the password:
+A fresh install puts Traefik Basic auth in front of the page, with the username
+`admin` and a password generated once and kept:
 
 ```bash
 sudo cat /mnt/corex-data/docker-configs/dashboard/.dashboard-password
 ```
-
-To change it:
 
 ```bash
 sudo DASHBOARD_PASS='your-new-password' bash corex-manage.sh repair dashboard
@@ -799,9 +792,48 @@ sudo DASHBOARD_PASS='your-new-password' bash corex-manage.sh repair dashboard
 The password survives repairs. It is stored in that file, mode 600, rather than
 regenerated each run.
 
+That is a starting point, not the destination. Basic auth cannot change its own
+password, cannot recover one, and has no idea who is signed in. Give the
+dashboard accounts of its own instead:
+
+```bash
+sudo bash corex-manage.sh dashboard-user add admin --email you@example.com
+sudo bash corex-manage.sh dashboard-user enable-auth
+```
+
+You then get a login page, a password you can change from the Account tab, a
+display name, a forgotten-password code sent through the relay you configured
+with `mail-setup`, and two-factor with an authenticator app. Enrolment shows a
+QR code drawn in the page itself and ten single-use recovery codes; save them,
+because they are hashed the moment they are stored and cannot be shown again.
+
+Accounts live in `/etc/corex/dashboard-users.json`, mode 600 root. Passwords,
+recovery codes and reset codes are PBKDF2-HMAC-SHA256 with a per-account salt.
+Sessions are held in the dashboard's memory, so restarting the container signs
+everyone out.
+
+### When the login itself goes wrong
+
+Every account is reachable from SSH, and none of it depends on the dashboard
+running:
+
+```bash
+sudo bash corex-manage.sh dashboard-user list
+sudo bash corex-manage.sh dashboard-user passwd admin
+sudo bash corex-manage.sh dashboard-user totp-reset admin     # lost the phone
+sudo bash corex-manage.sh dashboard-user email admin you@example.com
+```
+
+And if the application login is broken outright, put Basic auth back. The
+accounts are left untouched:
+
+```bash
+sudo bash corex-manage.sh dashboard-user disable-auth
+```
+
 ### What the tabs do
 
-Six tabs, covering what you would otherwise SSH for.
+Seven tabs, covering what you would otherwise SSH for.
 
 Services is a card per installed service: its health, the addresses it answers
 on, and buttons for start, stop, restart, repair and update, plus a live log
@@ -828,6 +860,10 @@ metadata is read from the modules themselves, so it cannot drift from
 
 System shows host details, the SSH command with the right port, the direct
 ports for the services you actually have, a command reference, and update-all.
+
+Account appears once the dashboard has accounts of its own: change your
+password, your display name and the address a reset code goes to, and turn
+two-factor on or off.
 
 Command output is shown as the command's own output, colour and alignment
 intact, rather than a summary of it. These commands are the source of truth
@@ -867,8 +903,12 @@ Subdomain: dashboard    Service: http://corex-dashboard:8080
 ```
 
 Think about that one before you do it. The dashboard can stop and update every
-service on the box, and Basic auth over HTTPS is all that stands in front. LAN
-only is the safer default, or put Cloudflare Access in front of the hostname.
+service on the box. Its own login with two-factor turned on is a real answer,
+and Cloudflare Access in front of the hostname is another, but LAN only is
+still the safer default: set `dashboard_lan_only` to true in
+`/etc/corex/state.json` and run `corex manage repair dashboard`, which
+restricts it at Traefik to your own subnet regardless of what Cloudflare is
+publishing.
 
 ### The Traefik dashboard is a different thing
 

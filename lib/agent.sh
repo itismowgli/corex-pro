@@ -29,6 +29,15 @@
 #   remove, replace, add, nuke and migrate are absent from the whitelist by
 #   design, so neither a stolen Telegram account nor a dashboard session can
 #   destroy data or an install. Those stay on SSH.
+#
+# THE DASHBOARD'S ACCOUNTS SIT ON THE SAME SPLIT
+#   /etc/corex/dashboard-users.json is 0600 root, so the dashboard reads and
+#   writes it through the agent and does the hashing itself. The one thing
+#   that never crosses is the mail relay: /etc/corex/smtp.conf is also 0600
+#   root, so the agent generates a reset code, mails it and stores only its
+#   hash. `corex manage dashboard-user` edits the same file from SSH without
+#   the agent, the container or the network, which is what makes a broken
+#   login recoverable.
 
 AGENT_GROUP="corex-agent"
 AGENT_USER="corex-bot"
@@ -82,6 +91,12 @@ _agent_files() {
     # corex-bot, which 0750 root:root is not: the service crash-looped with
     # "can't open file: Permission denied" until this was owned by its group.
     install -m 0644 "${src}/corex_common.py" "${AGENT_LIB_DIR}/corex_common.py"
+    # The dashboard's user store. Imported by the agent, which holds the only
+    # privilege that can read /etc/corex/dashboard-users.json, and by the
+    # root-only CLI behind `corex manage dashboard-user`. No secrets in the
+    # module itself, so it matches corex_common's mode.
+    install -m 0644 "${src}/corex_users.py"  "${AGENT_LIB_DIR}/corex_users.py"
+    install -m 0750 "${src}/corex-usersctl.py"       /usr/local/bin/corex-usersctl
     install -m 0750 "${src}/corex-agent.py"          /usr/local/bin/corex-agent.py
     install -m 0750 "${src}/corex-telegram-setup.py" /usr/local/bin/corex-telegram-setup.py
     install -m 0750 -g "$AGENT_USER"  "${src}/corex-telegram.py" /usr/local/bin/corex-telegram.py

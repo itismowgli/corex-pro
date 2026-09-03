@@ -31,6 +31,10 @@ source "${SCRIPT_DIR}/lib/state.sh"
 # unconfigured on a box that had a working relay. wizard.sh defines functions
 # and does nothing at source time, so this costs nothing.
 source "${SCRIPT_DIR}/lib/wizard.sh"
+# For kuma_seed_http_monitors, which creates the HTTP reachability checks from
+# each module's own SERVICE_MONITORS. Defines functions only, so sourcing it
+# here costs nothing.
+source "${SCRIPT_DIR}/lib/kuma.sh"
 
 # ── v1 → v2 migration ────────────────────────────────────────────────────────
 # Called automatically when state.json is missing but CoreX appears to be installed
@@ -2206,6 +2210,7 @@ cmd_agent() {
             echo "    start stop restart repair update cleanup cleanup-preview"
             echo "    status list health storage logs"
             echo "    watchdog network-check route-list doctor"
+            echo "    users-get users-put auth-reset  (the dashboard's login)"
             echo "  Deliberately not reachable: remove, replace, add, migrate, nuke."
             echo ""
             if [[ -r /var/log/corex-agent.log ]]; then
@@ -2218,6 +2223,107 @@ cmd_agent() {
 
         *)
             log_error "Usage: corex manage agent [show|setup|test]"
+            ;;
+    esac
+}
+
+cmd_dashboard_user() {
+    local sub="${1:-list}"
+    shift || true
+
+    # ── The way in from SSH ──────────────────────────────────────────────────
+    # This command exists before the web login does, and deliberately does not
+    # depend on it: it edits /etc/corex/dashboard-users.json directly, with no
+    # container, no agent and no network in the path. A control panel whose own
+    # login breaks is a lockout, and the dashboard is the thing you open when
+    # the box is already in trouble.
+    #
+    # `disable-auth` is the rest of that promise: it puts Traefik basic auth
+    # back, so there is always a documented way to reach the page again.
+    local ctl=""
+    local candidate
+    for candidate in /usr/local/bin/corex-usersctl \
+                     "${SCRIPT_DIR}/agent/corex-usersctl.py"; do
+        [[ -f "$candidate" ]] && { ctl="$candidate"; break; }
+    done
+    [[ -n "$ctl" ]] || log_error "corex-usersctl is missing. Reinstall it with: corex manage agent setup"
+    command -v python3 &>/dev/null || log_error "python3 is required for dashboard accounts"
+
+    case "$sub" in
+        list|add|passwd|name|email|totp-reset|remove|show)
+            python3 "$ctl" "$sub" "$@" || return 1
+            # Adding the first account is the moment the login becomes
+            # possible, so say what turns it on rather than leaving the
+            # operator to find it.
+            if [[ "$sub" == "add" ]] \
+               && [[ "$(state_get 'dashboard_app_auth')" != "true" ]]; then
+                echo ""
+                log_info "The dashboard is still behind Traefik basic auth."
+                echo "    Sign in once at https://dashboard.${DOMAIN:-your-domain} to check the"
+                echo "    account works, then hand the door over to it:"
+                echo "      sudo corex manage dashboard-user enable-auth"
+            fi
+            ;;
+
+        enable-auth)
+            # Refuse on an empty store. Removing basic auth with no account to
+            # replace it publishes the page to anyone who can reach it.
+            local listing count
+            listing=$(python3 "$ctl" list 2>/dev/null)
+            # The header only appears when there is at least one account, and
+            # every account line starts lower case, which the header and the
+            # trailing note do not.
+            if ! grep -q '^USERNAME' <<< "$listing"; then
+                log_error "There are no dashboard accounts yet. Create one first: corex manage dashboard-user add admin"
+            fi
+            count=$(grep -cE '^[a-z0-9]' <<< "$listing")
+            state_set "dashboard_app_auth" "true"
+            log_info "Removing Traefik basic auth and recreating the dashboard..."
+            cmd_repair dashboard
+            echo ""
+            log_success "The dashboard now uses its own login (${count} account(s))."
+            echo "    If it goes wrong: sudo corex manage dashboard-user disable-auth"
+            ;;
+
+        disable-auth)
+            state_set "dashboard_app_auth" "false"
+            log_info "Restoring Traefik basic auth and recreating the dashboard..."
+            cmd_repair dashboard
+            echo ""
+            log_success "Traefik basic auth is back in front of the dashboard."
+            echo "    Username: admin"
+            echo "    Password: $(cat "${DOCKER_ROOT}/dashboard/.dashboard-password" 2>/dev/null || echo '(see the credentials file)')"
+            echo ""
+            echo "    The accounts are untouched in /etc/corex/dashboard-users.json."
+            echo "    Turn the application login back on with:"
+            echo "      sudo corex manage dashboard-user enable-auth"
+            ;;
+
+        *)
+            cat << DUEOF
+
+Usage: sudo bash corex-manage.sh dashboard-user <subcommand> [args]
+
+  list                          Show every dashboard account
+  show <user>                   One account in detail
+  add <user> [--email A] [--name N]
+                                Create an account (asks for the password)
+  passwd <user>                 Change an account's password
+  name <user> "<display name>"  Change how the account is shown
+  email <user> <address>        Set where a reset code is sent
+  totp-reset <user>             Turn two-factor off for an account
+  remove <user>                 Delete an account (never the last one)
+
+  enable-auth                   Hand the door to the application login and
+                                take Traefik basic auth away
+  disable-auth                  Put Traefik basic auth back. This is the way
+                                in if the application login ever goes wrong
+
+Recovery mail goes through the shared relay at /etc/corex/smtp.conf, which
+`corex manage mail-setup` configures. Without it, a forgotten password is
+reset here instead.
+
+DUEOF
             ;;
     esac
 }
@@ -2255,6 +2361,8 @@ Commands:
                         agent setup    install the agent and the Telegram bot
                         agent test     prove the socket works, including from
                                        inside the dashboard container
+  kuma-seed           Create the Uptime Kuma HTTP checks each installed module
+                      declares, adopting any monitor of the same name
   watchdog [sub]      Resource alerting: temp, load, RAM, disk, container health
                         watchdog          show state, thresholds, recent findings
                         watchdog setup    install it and register Kuma monitors
@@ -2262,6 +2370,14 @@ Commands:
                         watchdog test     send a real alert to prove the chain works
   disable <svc>[:<component>]  Stop a service, or one container inside it
   enable  <svc>[:<component>]  Start it again, restoring its restart policy
+  dashboard-user      Accounts for the dashboard's own login, and the way back
+                      in if it ever breaks:
+                        dashboard-user list
+                        dashboard-user add <user> --email you@example.com
+                        dashboard-user passwd <user>
+                        dashboard-user totp-reset <user>
+                        dashboard-user enable-auth    use the app login
+                        dashboard-user disable-auth   restore Traefik basic auth
   route               Traefik routes for containers CoreX did not deploy:
                         route list
                         route add <hostname> <backend-url>
@@ -2279,6 +2395,7 @@ Examples:
   sudo bash corex-manage.sh health
   sudo bash corex-manage.sh os-upgrade
   sudo bash corex-manage.sh mail-setup
+  sudo bash corex-manage.sh dashboard-user add admin --email you@example.com
 
 HELPEOF
 }
@@ -2330,7 +2447,9 @@ main() {
         network-check) cmd_network_check ;;
         restart)      cmd_restart "$@" ;;
         watchdog)     cmd_watchdog "$@" ;;
+        kuma-seed)    kuma_seed_http_monitors ;;
         agent)        cmd_agent "$@" ;;
+        dashboard-user) cmd_dashboard_user "$@" ;;
         route)        cmd_route "$@" ;;
         help|--help|-h) cmd_help ;;
         *) echo "Unknown command: ${cmd}"; cmd_help; exit 1 ;;

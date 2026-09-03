@@ -2,8 +2,8 @@ package main
 
 import (
 	"bufio"
-	"encoding/json"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -218,18 +218,31 @@ func main() {
 			"Run `npm ci && npm run build` in dashboard/web before `go build` (%v)", err)
 	}
 
+	// Everything that reads or changes the box. Reached only through
+	// requireAuth, so adding a route here cannot accidentally be public.
+	api := http.NewServeMux()
+	api.HandleFunc("/api/state", stateHandler)
+	api.HandleFunc("/api/services", servicesHandler)
+	api.HandleFunc("/api/storage", storageHandler)
+	api.HandleFunc("/api/ports", portsHandler)
+	api.HandleFunc("/api/catalogue", catalogueHandler)
+	api.HandleFunc("/api/run/", runHandler)
+	api.HandleFunc("/api/update-all", updateAllHandler)
+	api.HandleFunc("/api/service/", serviceActionHandler)
+	api.HandleFunc("/api/cleanup", cleanupHandler)
+	api.HandleFunc("/api/job/", jobHandler)
+	api.HandleFunc("/api/logs/", logsSSEHandler)
+
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/state", stateHandler)
-	mux.HandleFunc("/api/services", servicesHandler)
-	mux.HandleFunc("/api/storage", storageHandler)
-	mux.HandleFunc("/api/ports", portsHandler)
-	mux.HandleFunc("/api/catalogue", catalogueHandler)
-	mux.HandleFunc("/api/run/", runHandler)
-	mux.HandleFunc("/api/update-all", updateAllHandler)
-	mux.HandleFunc("/api/service/", serviceActionHandler)
-	mux.HandleFunc("/api/cleanup", cleanupHandler)
-	mux.HandleFunc("/api/job/", jobHandler)
-	mux.HandleFunc("/api/logs/", logsSSEHandler)
+	// Signing in, and the account pages, which have to be reachable before
+	// there is a session. Registered on the outer mux: an exact pattern beats
+	// the "/api/" prefix below, so these are the only unauthenticated routes
+	// and the list is right here rather than spread through a middleware.
+	registerAuthRoutes(mux)
+	mux.Handle("/api/", requireAuth(api))
+	// The app shell is served to anyone. It is a login form until it has a
+	// session, and holding it back would only mean serving the login page
+	// from somewhere else.
 	mux.Handle("/", spaHandler(dist))
 
 	log.Printf("CoreX Dashboard listening on :8080 (manage=%s, agent=%s)", manage, agentSocket)

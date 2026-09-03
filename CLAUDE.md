@@ -28,7 +28,7 @@ learning nginx, SSL, Docker networking, or Linux hardening.
 - Re-run on existing server = health-check + repair broken services only
 - No live server required for testing (Docker-in-Docker + bats)
 
-**Current version:** v3.16.0
+**Current version:** v3.17.0
 **Current service modules:** 17 (Traefik, AdGuard, Portainer, Nextcloud,
 Immich, Vaultwarden, Stalwart Mail, Coolify, n8n, Cal.com, Time Machine,
 Uptime Kuma + Grafana + Prometheus (monitoring), Ollama + OpenWebUI +
@@ -157,6 +157,7 @@ corex-pro/
 │   ├── summary.sh            # Phase 7 extracted
 │   ├── thermal.sh            # Thermal guardian — sheds load before TjMax (#17)
 │   ├── watchdog.sh           # Resource alerting via Kuma push monitors (#29)
+│   ├── kuma.sh               # Seeds Kuma HTTP checks from SERVICE_MONITORS
 │   ├── agent.sh              # Privileged action agent + Telegram bot (#30)
 │   ├── selfheal.sh           # Boot self-repair: dpkg + unclean shutdown (#16)
 │   └── services/             # One file per service (auto-discovered)
@@ -169,6 +170,8 @@ corex-pro/
 │   ├── corex-agent.py        # Privileged action server on a unix socket
 │   ├── corex-telegram.py     # Long-polling control bot, runs as corex-bot
 │   ├── corex-agentctl.py     # CLI client, used by corex manage agent test
+│   ├── corex-usersctl.py     # Dashboard accounts, behind corex manage dashboard-user
+│   ├── corex_users.py        # Dashboard user store: hashing, reset mail
 │   └── corex_common.py       # Shared helpers, installed to /usr/local/lib/corex
 └── test/
     ├── Dockerfile.test       # Ubuntu 24.04 test container
@@ -193,6 +196,7 @@ corex-pro/
 | `/etc/corex/watchdog.conf` | Watchdog thresholds and Kuma push tokens (0640) |
 | `/etc/corex/agent.conf` | Action agent config (0640 root:corex-agent) |
 | `/etc/corex/agent.token` | Agent bearer token (0640 root:corex-agent) |
+| `/etc/corex/dashboard-users.json` | Dashboard accounts and PBKDF2 hashes (0600 root) |
 | `/etc/corex/telegram.conf` | Bot token and authorised chat id (0640 root:corex-bot) |
 | `/run/corex/agent.sock` | Agent socket (0660 root:corex-agent) |
 | `/usr/local/bin/corex-watchdog.sh` | Resource watchdog, run every 60s by timer |
@@ -1399,6 +1403,61 @@ container was half an hour older than its own source for a while, which showed
 up as a newly added service being absent from the dashboard with no error
 anywhere. `corex manage repair dashboard` rebuilds it.
 
+### 36. A control panel's own login is a lockout waiting to happen
+
+The dashboard has accounts now, in `/etc/corex/dashboard-users.json` at 0600
+root, with PBKDF2 passwords, RFC 6238 two-factor and a reset code mailed
+through the shared relay. Basic auth could do none of that: it cannot change
+its own password, recover one, or name who is signed in. Cloudflare Access
+covers the same ground at the edge and is the better answer where it works,
+but it is configured outside CoreX and failed here in a way CoreX could not
+see, its one-time PIN reaching neither mailbox, which locks the operator out
+while leaving the page published.
+
+Four rules came out of building it, and the first is the one that matters.
+
+**The way in from SSH is built first and never depends on the web tier.**
+`corex manage dashboard-user` edits the file directly: no container, no agent,
+no network. `disable-auth` puts Traefik basic auth back. The dashboard is what
+you open when the box is already in trouble, so shipping a login without a
+documented way past it is shipping a lockout.
+
+**Auth fails closed, and "not configured" is not the same as "cannot tell".**
+The login turns itself on the first time the store is read and has an account
+in it, and that fact is remembered for the life of the process. A later read
+that fails answers 503, not 200: killing the agent must not be a way past the
+login. Before any account exists there is nothing to enforce, basic auth is
+still in front, and the dashboard behaves exactly as it did.
+
+**The privilege split is the same one as gotcha #30, and the mail is the part
+that cannot cross it.** The container runs as `nobody`, so it reads and writes
+the document through the agent's `users-get` and `users-put` and hashes in Go.
+`/etc/corex/smtp.conf` is 0600 root and stays that way, so `auth-reset` has
+the agent generate the code, store only its hash and send the mail. The web
+tier verifies that hash later, having seen neither the code nor the relay
+password.
+
+**A hash record read by two languages is a contract, and it fails as a correct
+password being refused.** `agent/corex_users.py` writes it and `dashboard/auth.go`
+reads it, so every secret is stored self-describing:
+
+```json
+{"algo": "pbkdf2-sha256", "iterations": 600000, "salt": "...", "hash": "..."}
+```
+
+Neither side agrees an iteration count by convention, and a recovery code with
+50 bits of its own entropy can be cheaper to check than a password without
+either side knowing which it holds. `dashboard/auth_test.go` verifies a
+Python-written record in Go and runs RFC 6238's published vectors, and the
+image build runs it, because neither language's own tests can catch the
+disagreement.
+
+Two smaller traps. Timing tells you whether a username exists: the login path
+runs a dummy PBKDF2 for an unknown user so both answers cost the same quarter
+second. And an empty Traefik `middlewares` label is rejected outright, so with
+the app login on and LAN-only off the chain is empty and the label has to be
+left out rather than emitted blank.
+
 ---
 
 ## What NOT to Do
@@ -1458,7 +1517,17 @@ Each test: sets env vars, sources service module, calls `_deploy()` with docker
 mocked, validates generated `docker-compose.yml` has correct values and passes
 `docker compose config` validation.
 
-### 4. Full integration test (Docker-in-Docker)
+### 4. Dashboard login, end to end (needs Docker)
+```bash
+./test/e2e/dashboard-auth.sh
+```
+Runs the real Go binary against a stand-in agent and drives every path that has
+to refuse: a wrong password, an unknown user, a half-completed second factor, a
+spent recovery code, a replayed reset code, and an unreachable user store. A
+login that is subtly wrong looks exactly like one that works, so this is the
+check that has to exist.
+
+### 5. Full integration test (Docker-in-Docker)
 ```bash
 docker run --privileged \
   -v /var/run/docker.sock:/var/run/docker.sock \
@@ -1468,13 +1537,13 @@ docker run --privileged \
   corex-test bash install-corex-master.sh
 ```
 
-### 5. Compose validation on live server (read-only, safe)
+### 6. Compose validation on live server (read-only, safe)
 ```bash
 cd /mnt/corex-data/docker-configs/<service>
 docker compose config   # Validates and prints resolved compose file
 ```
 
-### 6. Dry-run mode
+### 7. Dry-run mode
 `nuke-corex.sh --dry-run` and `migrate-domain.sh --dry-run` show changes
 without applying them. Add `--dry-run` to `install-corex-master.sh` as well
 (planned for v2).
@@ -1537,6 +1606,12 @@ SERVICE_RAM_MB=512
 SERVICE_DISK_GB=5
 SERVICE_DESCRIPTION="Run your own Git server. Push code, manage repos, CI/CD — fully private."
 
+# Uptime Kuma reachability checks this module wants, one per line, tab
+# separated as name, url, accepted status codes. Seeded by lib/kuma.sh and
+# matched by NAME, so renaming one later creates a second monitor and orphans
+# the first. Omit it and the module is simply not checked over HTTP.
+SERVICE_MONITORS="Gitea\thttps://git.${DOMAIN:-}\t[\"200-299\"]"
+
 # Functions (auto-called by installer and manage commands)
 gitea_dirs()        { ... }    # Create dirs with correct ownership
 gitea_firewall()    { ... }    # Add UFW rules if needed
@@ -1575,9 +1650,10 @@ Follow this checklist when adding a service to the project:
 5. Implement `_deploy()`, write compose heredoc + `docker compose up -d` + `state_service_installed`
 6. Implement `_status()` and `_repair()` for doctor command support
 7. Implement `_credentials()` for the summary doc
-8. Run smoke test to validate compose generation
-9. Update this `CLAUDE.md`, add service to dependency map and network table
-10. Update `CHANGELOG.md` with the new service under the next version
+8. Declare `SERVICE_MONITORS` if it answers on a hostname, so it is checked
+9. Run smoke test to validate compose generation
+10. Update this `CLAUDE.md`, add service to dependency map and network table
+11. Update `CHANGELOG.md` with the new service under the next version
 
 **Do NOT update any other core files.** Auto-discovery handles the rest.
 

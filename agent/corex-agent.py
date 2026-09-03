@@ -36,6 +36,25 @@ WHAT IT WILL NOT DO
     remove, replace, nuke, migrate and add are absent by design. Everything
     reachable here is reversible, so a compromised Telegram account or
     dashboard session cannot destroy data or an install. Those stay on SSH.
+
+THE DASHBOARD'S ACCOUNTS
+    Three more actions, users-get, users-put and auth-reset, exist so the
+    dashboard can have a login of its own. /etc/corex/dashboard-users.json is
+    0600 root and the dashboard container is nobody, so it reads and writes
+    the document through here and does the hashing itself in Go.
+
+    auth-reset is the one piece that cannot work that way. Mailing a reset
+    code needs the relay credentials in /etc/corex/smtp.conf, which is also
+    0600 root and must never reach a web-facing container. So the agent
+    generates the code, stores only its hash in the document, sends the mail,
+    and answers with nothing the caller did not already know. The web tier
+    verifies the code later against that hash, having never seen either the
+    code or the relay password.
+
+    Note what this does not claim: anything that can reach this socket can
+    already stop and repair every service on the box, so it can also take
+    over a dashboard account. The socket's group membership is the boundary,
+    here as everywhere else.
 """
 
 import hmac
@@ -51,6 +70,7 @@ import uuid
 
 sys.path.insert(0, "/usr/local/lib/corex")
 import corex_common as cc  # noqa: E402
+import corex_users as cu  # noqa: E402
 
 CONF = cc.read_conf()
 REPO_ROOT = CONF.get("COREX_REPO_ROOT", "/opt/corex-pro")
@@ -292,6 +312,86 @@ def start_job(action, service):
             "message": "%s %s started" % (action, service or "")}
 
 
+# ── Dashboard accounts ──────────────────────────────────────────────────────
+#
+# One lock over the whole document. Every one of these is a read or a write of
+# a single small file, and the dashboard is the only caller, so contention is
+# not a concern and a lost update would be: two browser tabs enrolling in
+# two-factor at once must not leave one of them with a secret the file does
+# not have.
+
+_users_lock = threading.Lock()
+
+
+def _domain():
+    """The domain, for the link in the reset mail. Absent is not an error."""
+    try:
+        with open("/etc/corex/state.json", encoding="utf-8") as fh:
+            return str(json.load(fh).get("domain", "") or "").strip("\"'")
+    except (OSError, ValueError, AttributeError):
+        return ""
+
+
+def handle_users(action, req):
+    with _users_lock:
+        try:
+            doc = cu.load()
+        except cu.UserError as exc:
+            return {"ok": False, "error": str(exc)}
+
+        if action == "users-get":
+            return {"ok": True, "doc": doc}
+
+        if action == "users-put":
+            given = req.get("doc")
+            if not isinstance(given, dict) or not isinstance(given.get("users"), dict):
+                return {"ok": False, "error": "not a user document"}
+            if len(given["users"]) > cu.MAX_USERS:
+                return {"ok": False, "error": "too many accounts"}
+            # Optimistic concurrency. The caller sends back the revision it
+            # read; anything else means someone wrote in between, and the
+            # right answer is to make it re-read rather than clobber.
+            try:
+                if int(given.get("rev", -1)) != int(doc.get("rev", 0)):
+                    return {"ok": False, "error": "stale revision, re-read the document"}
+            except (TypeError, ValueError):
+                return {"ok": False, "error": "missing revision"}
+            # An empty document is how a lockout happens, and it is never what
+            # a caller means: the CLI is the only thing that removes the last
+            # account, and it refuses to.
+            if doc.get("users") and not given["users"]:
+                return {"ok": False, "error": "refusing to remove every account"}
+            try:
+                rev = cu.save(given)
+            except cu.UserError as exc:
+                return {"ok": False, "error": str(exc)}
+            return {"ok": True, "rev": rev}
+
+        # auth-reset
+        username = str(req.get("username", "") or "")
+        try:
+            sent = cu.request_reset(doc, username, domain=_domain())
+        except cu.UserError as exc:
+            # A missing relay is an operator fault and has to be visible;
+            # an unknown username is not, and request_reset already answers
+            # the same way for both of those.
+            say("reset for %s could not be mailed: %s" % (username, exc))
+            return {"ok": False, "error": str(exc)}
+        except Exception as exc:
+            say("reset for %s failed to send: %r" % (username, exc))
+            return {"ok": False, "error": "the reset mail could not be sent"}
+        if sent:
+            try:
+                cu.save(doc)
+            except cu.UserError as exc:
+                return {"ok": False, "error": str(exc)}
+            say("password reset mailed for %s" % username)
+        # `sent` says whether mail left the box, which the operator needs in
+        # the log above. The reply says only that the request was accepted, so
+        # the login page cannot be used to find out which usernames exist.
+        return {"ok": True}
+
+
 # ── Request dispatch ────────────────────────────────────────────────────────
 
 def handle(req):
@@ -316,7 +416,8 @@ def handle(req):
 
     if action == "services":
         return {"ok": True, "services": sorted(SERVICES),
-                "actions": sorted(ACTIONS) + ["logs"]}
+                "actions": sorted(ACTIONS) + ["logs", "users-get", "users-put",
+                                              "auth-reset"]}
 
     if action == "logs":
         if not valid_service(service, action):
@@ -327,6 +428,9 @@ def handle(req):
             tail = 40
         rc, out = action_logs(service, tail)
         return {"ok": rc == 0, "output": out}
+
+    if action in ("users-get", "users-put", "auth-reset"):
+        return handle_users(action, req)
 
     if action not in ACTIONS:
         return {"ok": False, "error": "unknown action"}

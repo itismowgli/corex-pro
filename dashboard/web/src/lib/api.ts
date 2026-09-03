@@ -56,11 +56,23 @@ export type CatalogueEntry = {
 // agent's whitelist, and the agent checks them again on its side.
 export type RunAction = "health" | "watchdog" | "network-check" | "route-list" | "doctor"
 
+// Fired whenever the server says the session is gone, so the app can drop
+// straight back to the login form instead of showing a page whose every panel
+// has quietly failed. Any request can be the one that discovers it: a session
+// expires mid-poll, and `dashboard-user passwd` from SSH revokes it outright.
+export const UNAUTHENTICATED_EVENT = "corex-unauthenticated"
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     ...init,
+    // Cookies are same-origin here anyway, but a session that silently fails
+    // to travel is the kind of bug that looks like a wrong password.
+    credentials: "same-origin",
     headers: { Accept: "application/json", ...(init?.headers || {}) },
   })
+  if (res.status === 401 && !path.startsWith("/api/auth/")) {
+    window.dispatchEvent(new CustomEvent(UNAUTHENTICATED_EVENT))
+  }
   const text = await res.text()
   let body: unknown = null
   if (text) {
@@ -78,6 +90,62 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(msg || `${res.status} ${res.statusText}`)
   }
   return body as T
+}
+
+function post<T>(path: string, body: unknown): Promise<T> {
+  return req<T>(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body ?? {}),
+  })
+}
+
+// Who is signed in, and whether a login is being enforced at all.
+//
+// auth_enabled is false until the first account exists, which is how an
+// upgrade lands without locking anyone out: Traefik basic auth stays in front
+// until `corex manage dashboard-user enable-auth` takes it away.
+export type Me = {
+  auth_enabled: boolean
+  authenticated: boolean
+  // A correct password given, a second factor still owed.
+  awaiting_totp: boolean
+  username: string
+  display_name: string
+  email: string
+  totp_enabled: boolean
+  recovery_left: number
+}
+
+export const auth = {
+  me: () => req<Me>("/api/auth/me"),
+  login: (username: string, password: string) =>
+    post<{ ok: boolean; awaiting_totp: boolean; display_name: string }>(
+      "/api/auth/login",
+      { username, password }
+    ),
+  totp: (code: string) =>
+    post<{ ok: boolean; used_recovery?: boolean; recovery_left?: number }>(
+      "/api/auth/totp",
+      { code }
+    ),
+  logout: () => post<{ ok: boolean }>("/api/auth/logout", {}),
+  changePassword: (current: string, next: string) =>
+    post<{ ok: boolean }>("/api/auth/password", { current, new: next }),
+  saveProfile: (display_name: string, email: string) =>
+    post<{ ok: boolean; display_name: string; email: string }>("/api/auth/profile", {
+      display_name,
+      email,
+    }),
+  totpBegin: () => post<{ secret: string; uri: string }>("/api/auth/totp/begin", {}),
+  totpEnable: (code: string) =>
+    post<{ ok: boolean; recovery_codes: string[] }>("/api/auth/totp/enable", { code }),
+  totpDisable: (password: string) =>
+    post<{ ok: boolean }>("/api/auth/totp/disable", { password }),
+  resetRequest: (username: string) =>
+    post<{ ok: boolean }>("/api/auth/reset/request", { username }),
+  resetComplete: (username: string, code: string, password: string) =>
+    post<{ ok: boolean }>("/api/auth/reset/complete", { username, code, password }),
 }
 
 export const api = {

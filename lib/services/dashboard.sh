@@ -4,7 +4,10 @@
 #
 # NOTES:
 #   - Single Go binary serving REST API + HTMX templates
-#   - Auth via Traefik BasicAuth middleware (password in state.json)
+#   - Two auth modes. Traefik BasicAuth until the dashboard has accounts of
+#     its own, then its own login (see lib/agent.sh and dashboard/auth.go).
+#     `corex manage dashboard-user` switches between them and is the way back
+#     in if the application login ever breaks
 #   - 5 tabs: Services, Storage, Monitoring, Network, System
 #   - Shells out to corex-manage.sh — no direct Docker socket access
 #   - Accessible at https://dashboard.DOMAIN
@@ -19,6 +22,14 @@ SERVICE_NEEDS_EMAIL=false
 SERVICE_RAM_MB=64
 SERVICE_DISK_GB=1
 SERVICE_DESCRIPTION="Browser-based management UI. Start/stop/update services, view storage, stream logs, and manage SSL certificates — all without SSH."
+
+# Uptime Kuma check, seeded by lib/kuma.sh so it is recreated on a fresh
+# install rather than living only in Kuma's database. Tab separated:
+# name, url, accepted status codes. The name is the key, so changing it
+# creates a second monitor and orphans the first.
+# 401 is a pass: basic auth answering means the router and the
+# container are both alive, which is what this checks.
+SERVICE_MONITORS="CoreX Dashboard	https://dashboard.${DOMAIN:-}	[\"200-299\",\"401\"]"
 
 # ── Functions ─────────────────────────────────────────────────────────────────
 
@@ -55,6 +66,25 @@ _dashboard_thermal_gate() {
     elif (( t >= 78 )); then
         log_warning "CPU is at ${t}C before a multi-minute build. Watch: corex manage health"
     fi
+}
+
+# ── Which login is in front ───────────────────────────────────────────────────
+# false, or absent, means Traefik basic auth. true means the dashboard's own
+# login, and the basic auth middleware comes off the router so the operator is
+# not asked twice.
+#
+# The switch is one-way only in the sense that matters: turning it on is a
+# deliberate act after signing in once, and `dashboard-user disable-auth` puts
+# basic auth back without touching a single account. There has to be a
+# documented way in from SSH, because a control panel whose own login breaks
+# is a lockout.
+_dashboard_app_auth() {
+    local want=""
+    if declare -f state_get >/dev/null 2>&1; then
+        want=$(state_get "dashboard_app_auth" 2>/dev/null)
+        [[ "$want" == "null" ]] && want=""
+    fi
+    [[ "$want" == "true" ]]
 }
 
 # ── LAN-only mode ─────────────────────────────────────────────────────────────
@@ -117,7 +147,12 @@ MWEOF
     log_info "Dashboard restricted to ${range} (and loopback)"
 }
 
-dashboard_deploy() {
+# ── Compose generation ────────────────────────────────────────────────────────
+# Its own function so that repair regenerates the file rather than recreating a
+# container from one that may be months old, and so a smoke test can check what
+# comes out without building a two-stage image first. Same reason nextcloud and
+# calcom split theirs out.
+_dashboard_write_compose() {
     dashboard_dirs
     local dir="${DOCKER_ROOT}/dashboard"
 
@@ -161,17 +196,26 @@ dashboard_deploy() {
     group_block="      - \"${docker_gid}\""
     [[ -n "$agent_gid" ]] && group_block="${group_block}"$'\n'"      - \"${agent_gid}\""
 
-    # The middleware chain for the router. Basic auth always; the LAN
-    # allowlist only when asked for, so an existing install is not silently
-    # cut off from outside. Referenced with @file because the middleware is
-    # defined in Traefik's file provider, not by a label on this container.
-    local dash_middlewares="dash-auth"
+    # The middleware chain for the router. Basic auth unless the application
+    # login has taken over; the LAN allowlist only when asked for, so an
+    # existing install is not silently cut off from outside. Referenced with
+    # @file because that middleware is defined in Traefik's file provider, not
+    # by a label on this container.
+    #
+    # The chain can end up empty, and Traefik rejects an empty middlewares
+    # label, so the label is only emitted when there is something in it.
+    local dash_middlewares=""
+    _dashboard_app_auth || dash_middlewares="dash-auth"
     if _dashboard_lan_only; then
         if _dashboard_write_lan_middleware; then
-            dash_middlewares="dash-lan@file,dash-auth"
+            dash_middlewares="dash-lan@file${dash_middlewares:+,${dash_middlewares}}"
         fi
     else
         rm -f "${DOCKER_ROOT}/traefik/dynamic/dashboard-lan.yml"
+    fi
+    local dash_mw_label=""
+    if [[ -n "$dash_middlewares" ]]; then
+        dash_mw_label="      - \"traefik.http.routers.dashboard.middlewares=${dash_middlewares}\""
     fi
 
     cat > "${dir}/docker-compose.yml" << DCEOF
@@ -230,10 +274,16 @@ ${group_block}
       - "traefik.http.routers.dashboard.tls.certresolver=myresolver"
       - "traefik.http.services.dashboard.loadbalancer.server.port=8080"
       - "traefik.http.middlewares.dash-auth.basicauth.users=admin:${DASHBOARD_HASH}"
-      - "traefik.http.routers.dashboard.middlewares=${dash_middlewares}"
+${dash_mw_label}
 networks:
   proxy-net: { external: true }
 DCEOF
+
+}
+
+dashboard_deploy() {
+    _dashboard_write_compose
+    local dir="${DOCKER_ROOT}/dashboard"
 
     # Build, then start. Two compilers run here, npm and go, so it is the
     # second hottest thing CoreX does after a service with no published image
@@ -276,7 +326,15 @@ DCEOF
     state_service_installed "dashboard"
     if [[ "$up" == "true" ]]; then
         log_success "CoreX Dashboard deployed (https://dashboard.${DOMAIN})"
-        log_info "  Login: admin / $(cat "${dir}/.dashboard-password" 2>/dev/null)"
+        if _dashboard_app_auth; then
+            log_info "  Sign in with a dashboard account: corex manage dashboard-user list"
+        else
+            log_info "  Login: admin / $(cat "${dir}/.dashboard-password" 2>/dev/null)"
+            echo "    Basic auth cannot change or recover its own password. To give the"
+            echo "    dashboard a real login, with two-factor and password recovery:"
+            echo "      sudo corex manage dashboard-user add admin --email you@example.com"
+            echo "      sudo corex manage dashboard-user enable-auth"
+        fi
     else
         log_warning "Dashboard container did not start. Check:"
         echo "    docker compose -f ${dir}/docker-compose.yml logs"
@@ -312,6 +370,15 @@ dashboard_repair() {
 
 dashboard_credentials() {
     echo "CoreX Dashboard: https://dashboard.${DOMAIN}"
-    echo "  Username: admin"
-    echo "  Password: ${DASHBOARD_PASS:-see credentials file}"
+    if _dashboard_app_auth; then
+        # Deliberately no password here. Once the dashboard has accounts of
+        # its own, nothing on the box holds one: they are PBKDF2 hashes in
+        # /etc/corex/dashboard-users.json, and the way back in is a reset from
+        # SSH, not a line in a summary document.
+        echo "  Sign in with a dashboard account (corex manage dashboard-user list)"
+        echo "  Forgotten it: sudo corex manage dashboard-user passwd <username>"
+    else
+        echo "  Username: admin"
+        echo "  Password: ${DASHBOARD_PASS:-see credentials file}"
+    fi
 }

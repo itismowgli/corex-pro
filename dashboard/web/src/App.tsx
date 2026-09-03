@@ -4,17 +4,21 @@ import {
   HardDriveIcon,
   HeartPulseIcon,
   LayoutGridIcon,
+  LogOutIcon,
   MonitorIcon,
   MoonIcon,
   NetworkIcon,
   RefreshCwIcon,
   ServerIcon,
   SunIcon,
+  UserRoundIcon,
 } from "lucide-react"
 
+import { AccountTab } from "@/components/account-tab"
 import { CatalogueTab } from "@/components/catalogue-tab"
 import { HealthTab } from "@/components/health-tab"
 import { JobPanel } from "@/components/job-panel"
+import { LoginScreen } from "@/components/login-screen"
 import { LogsDialog } from "@/components/logs-dialog"
 import { NetworkTab } from "@/components/network-tab"
 import { ServicesTab } from "@/components/services-tab"
@@ -24,7 +28,16 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { api, type Job, type RunAction, type Service, type ServiceAction } from "@/lib/api"
+import {
+  api,
+  auth,
+  UNAUTHENTICATED_EVENT,
+  type Job,
+  type Me,
+  type RunAction,
+  type Service,
+  type ServiceAction,
+} from "@/lib/api"
 import { usePoll } from "@/lib/use-poll"
 
 const TABS = [
@@ -35,6 +48,10 @@ const TABS = [
   { id: "catalogue", label: "Catalogue", icon: LayoutGridIcon },
   { id: "system", label: "System", icon: MonitorIcon },
 ]
+
+// Shown only once the dashboard has accounts of its own. Before that there is
+// nothing to manage here: Traefik basic auth has no notion of who you are.
+const ACCOUNT_TAB = { id: "account", label: "Account", icon: UserRoundIcon }
 
 // Dark by default, because this is looked at in a terminal-shaped context and
 // the previous dashboard was dark only. The choice is remembered per browser.
@@ -65,8 +82,72 @@ function useTheme() {
   return { dark, toggle: () => setDark((d) => !d) }
 }
 
+/**
+ * The gate.
+ *
+ * Nothing that talks to the box is mounted until /api/auth/me says there is a
+ * session, which is what stops the whole dashboard polling six endpoints into
+ * a wall of 401s behind the login form. It also means signing out unmounts
+ * every panel rather than leaving stale service state on the screen.
+ *
+ * A login that is not configured yet is not an error: auth_enabled is false
+ * until the first account exists, and until then Traefik basic auth is still
+ * in front and the dashboard behaves exactly as it did before.
+ */
 export default function App() {
   const { dark, toggle } = useTheme()
+  const me = usePoll(auth.me, 5 * 60_000)
+
+  // Any request can be the one that discovers the session has gone: it can
+  // expire mid-poll, and a password change from SSH revokes it outright.
+  // Depends on refresh, not on the poll object: usePoll returns a fresh
+  // object every render, so listing it here would tear down and re-add the
+  // listener on every state change in the app.
+  const refreshMe = me.refresh
+  React.useEffect(() => {
+    const onGone = () => void refreshMe()
+    window.addEventListener(UNAUTHENTICATED_EVENT, onGone)
+    return () => window.removeEventListener(UNAUTHENTICATED_EVENT, onGone)
+  }, [refreshMe])
+
+  if (me.loading && !me.data && !me.error) {
+    return (
+      <div className="text-muted-foreground flex min-h-screen items-center justify-center text-sm">
+        CoreX Pro
+      </div>
+    )
+  }
+
+  // An unreadable /api/auth/me is treated as signed out on purpose. The other
+  // reading, carry on and hope, produces a dashboard whose every panel has
+  // failed and whose buttons all do nothing, which is worse than a login form
+  // saying what went wrong.
+  const signedIn = !!me.data && (!me.data.auth_enabled || me.data.authenticated)
+  if (!signedIn) {
+    return <LoginScreen me={me.data} error={me.error} onSignedIn={() => void refreshMe()} />
+  }
+
+  return (
+    <Dashboard
+      me={me.data}
+      refreshMe={() => void refreshMe()}
+      dark={dark}
+      toggleTheme={toggle}
+    />
+  )
+}
+
+function Dashboard({
+  me,
+  refreshMe,
+  dark,
+  toggleTheme,
+}: {
+  me: Me | null
+  refreshMe: () => void
+  dark: boolean
+  toggleTheme: () => void
+}) {
   const [tab, setTab] = React.useState(() => location.hash.replace("#", "") || "services")
   const [job, setJob] = React.useState<Job | null>(null)
   // Which service is mid-action, so its own card shows it, and which box-wide
@@ -89,6 +170,11 @@ export default function App() {
   React.useEffect(() => {
     location.hash = tab
   }, [tab])
+
+  const tabs = React.useMemo(
+    () => (me?.auth_enabled ? [...TABS, ACCOUNT_TAB] : TABS),
+    [me?.auth_enabled]
+  )
 
   const svcList: Service[] = services.data ?? []
   const counts = React.useMemo(() => {
@@ -199,9 +285,34 @@ export default function App() {
             <Button size="icon" variant="ghost" onClick={refreshAll} aria-label="Refresh">
               <RefreshCwIcon />
             </Button>
-            <Button size="icon" variant="ghost" onClick={toggle} aria-label="Toggle theme">
+            <Button size="icon" variant="ghost" onClick={toggleTheme} aria-label="Toggle theme">
               {dark ? <SunIcon /> : <MoonIcon />}
             </Button>
+            {me?.auth_enabled && (
+              <>
+                <span className="text-muted-foreground hidden text-xs sm:inline">
+                  {me.display_name || me.username}
+                </span>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  aria-label="Sign out"
+                  title="Sign out"
+                  onClick={async () => {
+                    try {
+                      await auth.logout()
+                    } finally {
+                      // Refresh either way. A logout call that failed to
+                      // reach the server still has to be reflected here, or
+                      // the page claims a session it may not have.
+                      refreshMe()
+                    }
+                  }}
+                >
+                  <LogOutIcon />
+                </Button>
+              </>
+            )}
           </div>
         </div>
       </header>
@@ -240,7 +351,7 @@ export default function App() {
 
         <Tabs value={tab} onValueChange={setTab}>
           <TabsList className="flex-wrap">
-            {TABS.map(({ id, label, icon: Icon }) => (
+            {tabs.map(({ id, label, icon: Icon }) => (
               <TabsTrigger key={id} value={id}>
                 <Icon />
                 {label}
@@ -288,6 +399,9 @@ export default function App() {
           </TabsContent>
           <TabsContent value="catalogue">
             <CatalogueTab entries={catalogue.data ?? []} loading={catalogue.loading} />
+          </TabsContent>
+          <TabsContent value="account">
+            <AccountTab me={me} refresh={refreshMe} />
           </TabsContent>
           <TabsContent value="system">
             <SystemTab

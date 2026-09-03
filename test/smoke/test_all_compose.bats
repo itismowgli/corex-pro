@@ -352,3 +352,66 @@ calcom_prepare() {
     run python3 -m py_compile "${DOCKER_ROOT}/calcom/helper.py"
     [ "$status" -eq 0 ]
 }
+
+# ─── Dashboard ────────────────────────────────────────────────────────────────
+#
+# These call _dashboard_write_compose rather than dashboard_deploy, which
+# compiles a TypeScript app and a Go binary. What is worth checking here is the
+# middleware chain: get it wrong in one direction and the operator is asked for
+# a password twice, and in the other the dashboard that can stop every service
+# on the box is published with nothing in front of it.
+
+dashboard_prepare() {
+    source_service "dashboard"
+    _dashboard_write_compose
+}
+
+@test "dashboard: compose is generated" {
+    state_get() { echo "null"; }
+    export -f state_get
+    dashboard_prepare
+    assert_compose_contains "dashboard" "corex-dashboard"
+}
+
+@test "dashboard: basic auth is in front until the app login is turned on" {
+    state_get() { echo "null"; }
+    export -f state_get
+    dashboard_prepare
+    assert_compose_contains "dashboard" "routers.dashboard.middlewares=dash-auth"
+}
+
+@test "dashboard: enabling the app login takes basic auth off the router" {
+    state_get() { [[ "$1" == "dashboard_app_auth" ]] && echo "true" || echo "null"; }
+    export -f state_get
+    dashboard_prepare
+    run grep "routers.dashboard.middlewares" "${DOCKER_ROOT}/dashboard/docker-compose.yml"
+    [ "$status" -ne 0 ]
+}
+
+@test "dashboard: the LAN allowlist survives the app login being turned on" {
+    mkdir -p "${DOCKER_ROOT}/traefik/dynamic"
+    state_get() {
+        case "$1" in
+            dashboard_app_auth|dashboard_lan_only) echo "true" ;;
+            *) echo "null" ;;
+        esac
+    }
+    export -f state_get
+    dashboard_prepare
+    assert_compose_contains "dashboard" "routers.dashboard.middlewares=dash-lan@file"
+    run grep "dash-auth" "${DOCKER_ROOT}/dashboard/docker-compose.yml"
+    # The middleware is still defined by its label, it is just not on the
+    # router any more, so the grep hits the definition and nothing else.
+    [ "$status" -eq 0 ]
+}
+
+@test "dashboard: the compose file is valid YAML in both auth modes" {
+    state_get() { echo "null"; }
+    export -f state_get
+    dashboard_prepare
+    assert_valid_compose "dashboard"
+    state_get() { [[ "$1" == "dashboard_app_auth" ]] && echo "true" || echo "null"; }
+    export -f state_get
+    dashboard_prepare
+    assert_valid_compose "dashboard"
+}

@@ -36,24 +36,51 @@ const bundle = fs.readFileSync(entryPath, "utf8")
 // Every tab, not just the default one. Radix renders tab content lazily, so a
 // component that throws is invisible until someone opens it: exactly the
 // blank page this check exists to prevent, one click further in.
-const TABS = ["services", "health", "storage", "network", "catalogue", "system"]
+const TABS = ["services", "health", "storage", "network", "catalogue", "system", "account"]
+
+// One reply has to succeed, /api/auth/me, or the app renders the login form
+// and none of the tabs are exercised at all. Everything else still fails, so
+// each tab must render its own error state rather than depend on a server.
+const SIGNED_IN = {
+  auth_enabled: true,
+  authenticated: true,
+  awaiting_totp: false,
+  username: "operator",
+  display_name: "Operator",
+  email: "operator@example.com",
+  totp_enabled: false,
+  recovery_left: 0,
+}
+
+// A duck-typed Response. jsdom does not ship one, and api.ts only ever touches
+// these four members.
+function reply(body, status = 200) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    statusText: "OK",
+    text: async () => JSON.stringify(body),
+  }
+}
+
+function mount(url, me) {
+  const dom = new JSDOM(html, {
+    runScripts: "outside-only",
+    pretendToBeVisual: true,
+    url,
+  })
+  const { window } = dom
+  window.fetch = async (path) => {
+    if (String(path).includes("/api/auth/me")) return reply(me)
+    throw new Error("render-check: network disabled")
+  }
+  return { dom, window }
+}
 
 let failed = false
 
 for (const tab of TABS) {
-  const dom = new JSDOM(html, {
-    runScripts: "outside-only",
-    pretendToBeVisual: true,
-    url: "https://dashboard.example.com/#" + tab,
-  })
-  const { window } = dom
-
-  // Every fetch fails on purpose: the page has to render its own error state
-  // rather than depending on a live server, which is also the state an
-  // operator sees when the agent is down.
-  window.fetch = async () => {
-    throw new Error("render-check: network disabled")
-  }
+  const { window } = mount("https://dashboard.example.com/#" + tab, SIGNED_IN)
   window.EventSource = class {
     close() {}
   }
@@ -102,6 +129,46 @@ for (const tab of TABS) {
   window.close()
 }
 
+// And the login form, which is what an unauthenticated visitor gets. It is the
+// only screen on a box whose dashboard has accounts, so a component that
+// throws here locks the operator out of their own control panel with a blank
+// page, which is precisely the failure this file exists to catch.
+{
+  const { window } = mount("https://dashboard.example.com/", {
+    ...SIGNED_IN,
+    authenticated: false,
+  })
+  const failures = []
+  window.addEventListener("error", (e) =>
+    failures.push("uncaught: " + (e.error?.stack || e.message))
+  )
+  window.console = {
+    error: () => {},
+    warn: () => {},
+    log: () => {},
+    info: () => {},
+    debug: () => {},
+  }
+  try {
+    window.eval(bundle)
+  } catch (e) {
+    failures.push("threw while loading " + entry + ": " + (e.stack || e.message))
+  }
+  await new Promise((r) => setTimeout(r, 400))
+  const text = (window.document.getElementById("root")?.textContent || "").trim()
+  if (!text.includes("Sign in")) {
+    failures.push("the login form did not render: " + JSON.stringify(text.slice(0, 200)))
+  }
+  if (failures.length) {
+    failed = true
+    console.error("render-check FAILED on the login screen")
+    for (const f of failures) console.error("  - " + String(f).slice(0, 1200))
+  } else {
+    console.error("  login      ok, " + text.length + " characters")
+  }
+  window.close()
+}
+
 if (failed) process.exit(1)
-console.error("render-check ok: every tab mounts and renders")
+console.error("render-check ok: every tab and the login form mount and render")
 process.exit(0)

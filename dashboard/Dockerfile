@@ -42,7 +42,12 @@ COPY web/ ./
 RUN npm run build
 
 # ── Stage 2: the Go binary, with the built assets embedded ───────────────────
-FROM golang:1.22-alpine AS builder
+# Go 1.24, not 1.22: crypto/pbkdf2 entered the standard library in 1.24, and
+# the dashboard's own login hashes passwords, recovery codes and reset tokens
+# with it. The alternatives were golang.org/x/crypto, which would be this
+# binary's first external dependency, or forty lines of hand-written key
+# derivation in the one place where a subtle mistake is invisible.
+FROM golang:1.24-alpine AS builder
 
 # Same reason as the web stage: bound the compiler's parallelism.
 ENV GOMAXPROCS=4
@@ -51,8 +56,14 @@ WORKDIR /build
 
 # No external Go dependencies, stdlib only, so there is no go.sum.
 COPY go.mod ./
-COPY main.go ./
+COPY main.go auth.go auth_test.go ./
 COPY --from=web /web/dist ./web/dist
+
+# The tests run here, not somewhere else, for the same reason the frontend's
+# render check does: a hash record written by agent/corex_users.py and read by
+# auth.go is a contract neither language can check alone, and getting it wrong
+# looks exactly like a correct password being refused. A tenth of a second.
+RUN go vet ./... && go test ./...
 
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -ldflags="-w -s" -o corex-dashboard .
