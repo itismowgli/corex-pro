@@ -22,7 +22,7 @@ export function JobPanel({
 }: {
   job: Job | null
   setJob: (j: Job | null) => void
-  onFinished: () => void
+  onFinished: (finished: Job) => void
 }) {
   const finishedRef = React.useRef(false)
 
@@ -40,7 +40,7 @@ export function JobPanel({
           window.setTimeout(poll, 2000)
         } else if (!finishedRef.current) {
           finishedRef.current = true
-          onFinished()
+          onFinished(next)
         }
       } catch (e) {
         if (!live) return

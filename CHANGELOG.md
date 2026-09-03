@@ -6,6 +6,45 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.16.0] - 2026-09-03
+
+### Added
+- **The dashboard covers what you would otherwise SSH for.** Two new tabs and
+  four new panels, all of it through the same privileged agent, and none of it
+  adding a capability the agent did not already have.
+
+  Health runs `corex manage health` and the resource watchdog: CPU
+  temperature, SMART per disk, the dpkg state, whether the last shutdown was
+  clean, then memory, disk, heat, containers stopped against their restart
+  policy, climbing restart counts and OOM kills. On this class of hardware the
+  most common failure is a thermal trip that logs nothing at all, and those
+  numbers were only ever visible over SSH.
+
+  Catalogue lists every service module, installed or not, with its label,
+  category, description, RAM and disk estimate and whether it needs a domain.
+  The metadata is read from the modules themselves rather than from a list in
+  the dashboard, so it cannot drift from `corex manage list`, and a new module
+  appears with no other change.
+
+  Network gains the reachability and certificate check, and the extra Traefik
+  routes. System gains update-all. Health gains doctor.
+
+- **Terminal output keeps its colour.** These commands are written for a
+  terminal and their colour carries the meaning: `[  OK]` green, `[WARN]`
+  amber, `[FAIL]` red, headings cyan. The dashboard translates the escape
+  sequences rather than stripping them, because a wall of grey text where the
+  important line looks like every other line is worse than no colour at all.
+
+- **Four read-only actions on the agent whitelist**: `watchdog`,
+  `network-check`, `route-list` and `doctor`. The first three change nothing.
+  `doctor` repairs what it finds unhealthy, which is not new privilege: repair
+  is already reachable per service, and doctor is repair applied to the ones
+  that need it.
+
+- **`npm run smoke` now renders every tab, not just the default one.** Radix
+  renders tab content lazily, so a component that throws is invisible until
+  someone opens it: the same blank page, one click further in.
+
 ## [v3.15.1] - 2026-09-03
 
 ### Fixed

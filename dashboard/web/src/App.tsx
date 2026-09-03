@@ -2,6 +2,8 @@ import * as React from "react"
 import {
   AlertTriangleIcon,
   HardDriveIcon,
+  HeartPulseIcon,
+  LayoutGridIcon,
   MonitorIcon,
   MoonIcon,
   NetworkIcon,
@@ -10,6 +12,8 @@ import {
   SunIcon,
 } from "lucide-react"
 
+import { CatalogueTab } from "@/components/catalogue-tab"
+import { HealthTab } from "@/components/health-tab"
 import { JobPanel } from "@/components/job-panel"
 import { LogsDialog } from "@/components/logs-dialog"
 import { NetworkTab } from "@/components/network-tab"
@@ -20,13 +24,15 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { api, type Job, type Service, type ServiceAction } from "@/lib/api"
+import { api, type Job, type RunAction, type Service, type ServiceAction } from "@/lib/api"
 import { usePoll } from "@/lib/use-poll"
 
 const TABS = [
   { id: "services", label: "Services", icon: ServerIcon },
+  { id: "health", label: "Health", icon: HeartPulseIcon },
   { id: "storage", label: "Storage", icon: HardDriveIcon },
   { id: "network", label: "Network", icon: NetworkIcon },
+  { id: "catalogue", label: "Catalogue", icon: LayoutGridIcon },
   { id: "system", label: "System", icon: MonitorIcon },
 ]
 
@@ -63,7 +69,13 @@ export default function App() {
   const { dark, toggle } = useTheme()
   const [tab, setTab] = React.useState(() => location.hash.replace("#", "") || "services")
   const [job, setJob] = React.useState<Job | null>(null)
+  // Which service is mid-action, so its own card shows it, and which box-wide
+  // command is running, so its panel does.
   const [busy, setBusy] = React.useState<string | null>(null)
+  const [runningAction, setRunningAction] = React.useState<string | null>(null)
+  // Command output kept per action, so switching tabs does not throw away the
+  // health report you just ran.
+  const [outputs, setOutputs] = React.useState<Record<string, string>>({})
   const [logs, setLogs] = React.useState<{ container: string; label: string } | null>(null)
 
   const state = usePoll(api.state, 30_000)
@@ -72,6 +84,7 @@ export default function App() {
   const services = usePoll(api.services, 15_000)
   const storage = usePoll(api.storage, 0)
   const ports = usePoll(api.ports, 0)
+  const catalogue = usePoll(api.catalogue, 0)
 
   React.useEffect(() => {
     location.hash = tab
@@ -88,7 +101,18 @@ export default function App() {
     return c
   }, [svcList])
 
-  const runAction = async (svc: Service, action: ServiceAction) => {
+  const fail = (label: string, e: unknown) => {
+    setBusy(null)
+    setRunningAction(null)
+    setJob({
+      id: "",
+      state: "failed",
+      label,
+      output: e instanceof Error ? e.message : String(e),
+    })
+  }
+
+  const runService = async (svc: Service, action: ServiceAction) => {
     setBusy(svc.name)
     setJob({ id: "", state: "running", label: `${action} ${svc.name}`, output: "" })
     try {
@@ -99,47 +123,55 @@ export default function App() {
         void services.refresh()
       }
     } catch (e) {
-      setBusy(null)
-      setJob({
-        id: "",
-        state: "failed",
-        label: `${action} ${svc.name}`,
-        output: e instanceof Error ? e.message : String(e),
-      })
+      fail(`${action} ${svc.name}`, e)
     }
   }
 
-  const runCleanup = async (dryRun: boolean) => {
-    setBusy("cleanup")
-    setJob({
-      id: "",
-      state: "running",
-      label: dryRun ? "cleanup --dry-run" : "cleanup",
-      output: "",
-    })
+  // Box-wide commands: health, watchdog, network-check, route-list, doctor,
+  // cleanup and update-all. Their output lands in the panel that asked.
+  const runBox = async (action: string) => {
+    setRunningAction(action)
+    setJob({ id: "", state: "running", label: action, output: "" })
     try {
-      const started = await api.cleanup(dryRun)
+      const started =
+        action === "update-all"
+          ? await api.updateAll()
+          : action === "cleanup" || action === "cleanup-preview"
+            ? await api.cleanup(action === "cleanup-preview")
+            : await api.run(action as RunAction)
       setJob(started)
       if (started.state !== "running") {
-        setBusy(null)
-        void storage.refresh()
+        setRunningAction(null)
+        setOutputs((o) => ({ ...o, [action]: started.output }))
+        if (action.startsWith("cleanup")) void storage.refresh()
       }
     } catch (e) {
-      setBusy(null)
-      setJob({
-        id: "",
-        state: "failed",
-        label: "cleanup",
-        output: e instanceof Error ? e.message : String(e),
-      })
+      fail(action, e)
     }
   }
 
-  const onJobFinished = React.useCallback(() => {
-    setBusy(null)
+  const onJobFinished = React.useCallback(
+    (finished: Job) => {
+      setBusy(null)
+      if (runningAction) {
+        setOutputs((o) => ({ ...o, [runningAction]: finished.output }))
+        setRunningAction(null)
+      }
+      void services.refresh()
+      void state.refresh()
+      void catalogue.refresh()
+      if (runningAction?.startsWith("cleanup")) void storage.refresh()
+    },
+    [runningAction, services, state, catalogue, storage]
+  )
+
+  const refreshAll = () => {
     void services.refresh()
+    void state.refresh()
     void storage.refresh()
-  }, [services, storage])
+    void ports.refresh()
+    void catalogue.refresh()
+  }
 
   return (
     <div className="min-h-screen">
@@ -161,16 +193,7 @@ export default function App() {
                 {counts.other > 0 && <Badge variant="secondary">{counts.other} stopped</Badge>}
               </>
             )}
-            <Button
-              size="icon"
-              variant="ghost"
-              onClick={() => {
-                void services.refresh()
-                void state.refresh()
-                void storage.refresh()
-              }}
-              aria-label="Refresh"
-            >
+            <Button size="icon" variant="ghost" onClick={refreshAll} aria-label="Refresh">
               <RefreshCwIcon />
             </Button>
             <Button size="icon" variant="ghost" onClick={toggle} aria-label="Toggle theme">
@@ -186,7 +209,9 @@ export default function App() {
             <CardContent className="flex items-start gap-2 text-sm">
               <AlertTriangleIcon className="text-destructive mt-0.5 size-4 shrink-0" />
               <div>
-                <p className="font-medium">The action agent is unreachable, so the buttons cannot work.</p>
+                <p className="font-medium">
+                  The action agent is unreachable, so no button here can work.
+                </p>
                 <p className="text-muted-foreground mt-1 text-xs">
                   {state.data.agent_error || "no detail"}. Check it with{" "}
                   <code className="text-foreground">sudo corex manage agent test</code>, which also
@@ -211,7 +236,7 @@ export default function App() {
         <JobPanel job={job} setJob={setJob} onFinished={onJobFinished} />
 
         <Tabs value={tab} onValueChange={setTab}>
-          <TabsList>
+          <TabsList className="flex-wrap">
             {TABS.map(({ id, label, icon: Icon }) => (
               <TabsTrigger key={id} value={id}>
                 <Icon />
@@ -225,24 +250,42 @@ export default function App() {
               services={svcList}
               loading={services.loading}
               busy={busy}
-              onAction={runAction}
+              onAction={runService}
               onLogs={(svc) => setLogs({ container: svc.container, label: svc.label })}
             />
+          </TabsContent>
+          <TabsContent value="health">
+            <HealthTab outputs={outputs} running={runningAction} onRun={runBox} />
           </TabsContent>
           <TabsContent value="storage">
             <StorageTab
               output={storage.data?.output ?? ""}
               loading={storage.loading}
               error={storage.error}
-              busy={busy === "cleanup"}
-              onCleanup={runCleanup}
+              busy={!!runningAction?.startsWith("cleanup")}
+              onCleanup={(dryRun) => runBox(dryRun ? "cleanup-preview" : "cleanup")}
             />
           </TabsContent>
           <TabsContent value="network">
-            <NetworkTab services={svcList} state={state.data} />
+            <NetworkTab
+              services={svcList}
+              state={state.data}
+              outputs={outputs}
+              running={runningAction}
+              onRun={runBox}
+            />
+          </TabsContent>
+          <TabsContent value="catalogue">
+            <CatalogueTab entries={catalogue.data ?? []} loading={catalogue.loading} />
           </TabsContent>
           <TabsContent value="system">
-            <SystemTab state={state.data} ports={ports.data ?? []} />
+            <SystemTab
+              state={state.data}
+              ports={ports.data ?? []}
+              outputs={outputs}
+              running={runningAction}
+              onUpdateAll={() => runBox("update-all")}
+            />
           </TabsContent>
         </Tabs>
 

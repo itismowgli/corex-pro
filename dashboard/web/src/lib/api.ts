@@ -40,6 +40,22 @@ export type Job = {
 
 export type Port = { service: string; url: string; note: string }
 
+export type CatalogueEntry = {
+  name: string
+  label: string
+  category: string
+  description: string
+  ram_mb: number
+  disk_gb: number
+  needs_domain: boolean
+  installed: boolean
+  enabled: boolean
+}
+
+// Box-wide actions, as opposed to the per-service ones. The names match the
+// agent's whitelist, and the agent checks them again on its side.
+export type RunAction = "health" | "watchdog" | "network-check" | "route-list" | "doctor"
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     ...init,
@@ -69,6 +85,9 @@ export const api = {
   services: () => req<Service[]>("/api/services"),
   storage: () => req<{ output: string }>("/api/storage"),
   ports: () => req<Port[]>("/api/ports"),
+  catalogue: () => req<CatalogueEntry[]>("/api/catalogue"),
+  run: (action: RunAction) => req<Job>(`/api/run/${action}`, { method: "POST" }),
+  updateAll: () => req<Job>("/api/update-all", { method: "POST" }),
   act: (service: string, action: ServiceAction) =>
     req<Job>(`/api/service/${encodeURIComponent(service)}/${action}`, { method: "POST" }),
   job: (id: string) => req<Job>(`/api/job/${encodeURIComponent(id)}`),

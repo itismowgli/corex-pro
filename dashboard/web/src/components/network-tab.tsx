@@ -1,11 +1,24 @@
-import { GlobeIcon, InfoIcon } from "lucide-react"
+import { GlobeIcon, InfoIcon, RouteIcon, ShieldCheckIcon } from "lucide-react"
 
+import { CommandPanel } from "@/components/command-panel"
 import { StatusBadge } from "@/components/status-badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import type { Service, State } from "@/lib/api"
 
-export function NetworkTab({ services, state }: { services: Service[]; state: State | null }) {
+export function NetworkTab({
+  services,
+  state,
+  outputs,
+  running,
+  onRun,
+}: {
+  services: Service[]
+  state: State | null
+  outputs: Record<string, string>
+  running: string | null
+  onRun: (action: string) => void
+}) {
   return (
     <div className="flex flex-col gap-3">
       <Card className="gap-0 py-0">
@@ -61,6 +74,40 @@ export function NetworkTab({ services, state }: { services: Service[]; state: St
           </Table>
         </CardContent>
       </Card>
+
+      <CommandPanel
+        title="Reachability and certificates"
+        description={
+          <>
+            Requests every hostname and reports the HTTP status, the certificate expiry, and
+            whether DNS resolves to the server or out to Cloudflare. The table above says what a
+            hostname should be; this says what it actually does.
+          </>
+        }
+        action="network-check"
+        icon={ShieldCheckIcon}
+        buttonLabel="Check every hostname"
+        output={outputs["network-check"]}
+        running={running === "network-check"}
+        onRun={onRun}
+      />
+
+      <CommandPanel
+        title="Extra Traefik routes"
+        description={
+          <>
+            Routes written into Traefik's file-provider directory, for containers CoreX did not
+            deploy. A service CoreX manages routes itself by Docker label and does not appear
+            here; a Coolify app needs an entry.
+          </>
+        }
+        action="route-list"
+        icon={RouteIcon}
+        buttonLabel="List routes"
+        output={outputs["route-list"]}
+        running={running === "route-list"}
+        onRun={onRun}
+      />
 
       <Card>
         <CardHeader>

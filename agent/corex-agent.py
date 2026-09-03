@@ -84,6 +84,19 @@ ACTIONS = {
     "list":    (["list"],              False, False),
     "health":  (["health"],            False, False),
     "storage": (["storage"],           False, False),
+    # ── Read-only reporting, for the dashboard ───────────────────────────────
+    # These answer "what is degrading this box" and "is every hostname
+    # actually reachable", which is the half of monitoring an HTTP check
+    # cannot cover. They change nothing, but they are slow enough to want a
+    # job rather than a synchronous reply: network-check curls every service
+    # and inspects a certificate per hostname.
+    "watchdog":      (["watchdog"],      False, True),
+    "network-check": (["network-check"], False, True),
+    "route-list":    (["route", "list"], False, False),
+    # doctor repairs whatever it finds unhealthy. That is not new privilege:
+    # repair is already reachable per service, and doctor is repair applied to
+    # the ones that need it.
+    "doctor":        (["doctor"],        False, True),
 }
 # Actions that change the system, and so are announced when they finish.
 MUTATING = {"start", "stop", "restart", "repair", "update", "cleanup"}

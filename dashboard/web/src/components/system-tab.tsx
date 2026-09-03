@@ -1,5 +1,6 @@
-import { CpuIcon, KeyRoundIcon, PlugIcon, TerminalIcon } from "lucide-react"
+import { CpuIcon, DownloadIcon, KeyRoundIcon, PlugIcon, TerminalIcon } from "lucide-react"
 
+import { CommandPanel } from "@/components/command-panel"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table"
 import type { Port, State } from "@/lib/api"
@@ -26,7 +27,19 @@ function Row({ k, v }: { k: string; v: string }) {
   )
 }
 
-export function SystemTab({ state, ports }: { state: State | null; ports: Port[] }) {
+export function SystemTab({
+  state,
+  ports,
+  outputs,
+  running,
+  onUpdateAll,
+}: {
+  state: State | null
+  ports: Port[]
+  outputs: Record<string, string>
+  running: string | null
+  onUpdateAll: () => void
+}) {
   const port = state?.ssh_port || "22"
   return (
     <div className="flex flex-col gap-3">
@@ -117,6 +130,26 @@ export function SystemTab({ state, ports }: { state: State | null; ports: Port[]
           </CardContent>
         </Card>
       )}
+
+      <CommandPanel
+        title="Update every service"
+        description={
+          <>
+            Pulls new images for all installed services and recreates what changed. It reports
+            which images actually moved, because a tag that has stopped moving upstream is
+            otherwise invisible: one image here sat ten months behind while every update run
+            reported success. Run Doctor afterwards.
+          </>
+        }
+        action="update-all"
+        icon={DownloadIcon}
+        buttonLabel="Update all"
+        variant="outline"
+        confirm="Pull new images for every installed service and recreate the ones that changed?"
+        output={outputs["update-all"]}
+        running={running === "update-all"}
+        onRun={onUpdateAll}
+      />
 
       <Card>
         <CardHeader>

@@ -801,12 +801,38 @@ regenerated each run.
 
 ### What the tabs do
 
+Six tabs, covering what you would otherwise SSH for.
+
 Services is a card per installed service: its health, the addresses it answers
 on, and buttons for start, stop, restart, repair and update, plus a live log
-stream. Storage breaks usage down by service and can preview or run a cleanup.
-Network lists every address with its status. System shows host details, the
-SSH command with the right port, the direct ports for the services you
-actually have, and a command reference.
+stream.
+
+Health is the half of monitoring that a reachability check cannot see. CPU
+temperature, SMART status per disk, the dpkg state and whether the last
+shutdown was clean, then the resource watchdog: memory, disk, heat, a
+container stopped while its restart policy says otherwise, one whose restart
+count is climbing, one that was OOM killed. None of those changes an HTTP
+response. Doctor lives here too, since it is health-check plus repair.
+
+Storage breaks usage down by service and can preview or run a cleanup.
+
+Network lists every address with its status, then checks them: HTTP status,
+certificate expiry, and whether DNS resolves to the server or out through
+Cloudflare. The table says what a hostname should be; the check says what it
+does. Extra Traefik routes are listed here as well.
+
+Catalogue is every service module CoreX has, installed or not, with what each
+one replaces, its RAM and disk estimate, and whether it needs a domain. The
+metadata is read from the modules themselves, so it cannot drift from
+`corex manage list` and a new module appears with no other change.
+
+System shows host details, the SSH command with the right port, the direct
+ports for the services you actually have, a command reference, and update-all.
+
+Command output is shown as the command's own output, colour and alignment
+intact, rather than a summary of it. These commands are the source of truth
+for the CLI too, and a dashboard that paraphrases them is a second place for
+the answer to be wrong.
 
 Statuses refresh by themselves every fifteen seconds, and immediately after an
 action finishes. An earlier version left every badge stale until you clicked a

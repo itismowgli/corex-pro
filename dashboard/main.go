@@ -95,6 +95,18 @@ type jobView struct {
 	Output string `json:"output"`
 }
 
+type catalogueEntry struct {
+	Name        string `json:"name"`
+	Label       string `json:"label"`
+	Category    string `json:"category"`
+	Description string `json:"description"`
+	RAMMB       int    `json:"ram_mb"`
+	DiskGB      int    `json:"disk_gb"`
+	NeedsDomain bool   `json:"needs_domain"`
+	Installed   bool   `json:"installed"`
+	Enabled     bool   `json:"enabled"`
+}
+
 type portRow struct {
 	Service string `json:"service"`
 	URL     string `json:"url"`
@@ -211,6 +223,9 @@ func main() {
 	mux.HandleFunc("/api/services", servicesHandler)
 	mux.HandleFunc("/api/storage", storageHandler)
 	mux.HandleFunc("/api/ports", portsHandler)
+	mux.HandleFunc("/api/catalogue", catalogueHandler)
+	mux.HandleFunc("/api/run/", runHandler)
+	mux.HandleFunc("/api/update-all", updateAllHandler)
 	mux.HandleFunc("/api/service/", serviceActionHandler)
 	mux.HandleFunc("/api/cleanup", cleanupHandler)
 	mux.HandleFunc("/api/job/", jobHandler)
@@ -712,6 +727,137 @@ func storageHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"output": out})
+}
+
+// catalogueHandler lists every service module, installed or not.
+//
+// It reads the modules themselves rather than asking the agent, because the
+// metadata is not privileged: the repo is mounted read-only into this
+// container and sourcing a module in a subshell needs nothing but bash. That
+// also means the catalogue cannot drift from `corex manage list`, since both
+// read the same files.
+//
+// printf with a tab separator rather than eval, so a module cannot inject
+// anything into this process by defining a crafted value.
+func catalogueHandler(w http.ResponseWriter, r *http.Request) {
+	root := strings.TrimSuffix(manage, "/corex-manage.sh")
+	dir := root + "/lib/services"
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, fmt.Sprintf("cannot read %s: %v", dir, err))
+		return
+	}
+	state := loadState()
+	out := []catalogueEntry{}
+	for _, e := range entries {
+		name := e.Name()
+		// Skip AppleDouble sidecars and anything not a module. A macOS tar
+		// once left lib/services/._dashboard.sh behind, which matches the
+		// glob, is binary, and killed service discovery outright (gotcha #30).
+		if e.IsDir() || !strings.HasSuffix(name, ".sh") || strings.HasPrefix(name, "._") {
+			continue
+		}
+		meta, err := runCmd("bash", "-c",
+			`source `+dir+`/`+name+` 2>/dev/null; printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' `+
+				`"$SERVICE_NAME" "$SERVICE_LABEL" "$SERVICE_CATEGORY" "$SERVICE_DESCRIPTION" `+
+				`"$SERVICE_RAM_MB" "$SERVICE_DISK_GB" "$SERVICE_NEEDS_DOMAIN"`)
+		if err != nil {
+			log.Printf("catalogue: cannot read %s: %v", name, err)
+			continue
+		}
+		f := strings.Split(strings.TrimRight(meta, "\n"), "\t")
+		if len(f) < 7 || f[0] == "" {
+			continue
+		}
+		entry := state.Services[f[0]]
+		out = append(out, catalogueEntry{
+			Name:        f[0],
+			Label:       f[1],
+			Category:    f[2],
+			Description: f[3],
+			RAMMB:       atoiSafe(f[4]),
+			DiskGB:      atoiSafe(f[5]),
+			NeedsDomain: f[6] == "true",
+			Installed:   entry.Installed,
+			Enabled:     entry.Enabled,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Category != out[j].Category {
+			return out[i].Category < out[j].Category
+		}
+		return out[i].Name < out[j].Name
+	})
+	writeJSON(w, http.StatusOK, out)
+}
+
+func atoiSafe(s string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+// runHandler starts one of the whitelisted box-wide actions. The service
+// actions have their own endpoint; these take no service.
+//
+// The list here mirrors the agent's, and the agent checks it again. Two
+// checks rather than one because this process is web-facing and the agent is
+// not: if a request gets past the first, the second is what still refuses it.
+func runHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	action := strings.TrimPrefix(r.URL.Path, "/api/run/")
+	switch action {
+	case "health", "watchdog", "network-check", "route-list", "doctor", "status", "list":
+	default:
+		writeErr(w, http.StatusBadRequest, "unknown action: "+action)
+		return
+	}
+	res, err := agentCall(map[string]interface{}{"action": action}, 180*time.Second)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	if !agentOK(res) {
+		writeErr(w, http.StatusBadGateway, agentString(res, "error"))
+		return
+	}
+	job := jobFromAgent(res, action)
+	if job.ID != "" {
+		if !jobIDRe.MatchString(job.ID) {
+			writeErr(w, http.StatusBadGateway, "the agent returned a malformed job id")
+			return
+		}
+		job.State = "running"
+	}
+	writeJSON(w, http.StatusOK, job)
+}
+
+// updateAllHandler pulls new images for every installed service. Separate
+// from the per-service action because the agent takes "all" as the service.
+func updateAllHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	res, err := agentCall(map[string]interface{}{"action": "update", "service": "all"}, 60*time.Second)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	if !agentOK(res) {
+		writeErr(w, http.StatusBadGateway, agentString(res, "error"))
+		return
+	}
+	job := jobFromAgent(res, "update all")
+	if job.ID != "" {
+		job.State = "running"
+	}
+	writeJSON(w, http.StatusOK, job)
 }
 
 // portsHandler lists the direct ports worth knowing, for the services that are
