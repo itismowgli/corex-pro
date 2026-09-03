@@ -63,7 +63,7 @@ export function NetworkTab({
                       ))
                     ) : (
                       <span className="text-muted-foreground font-mono text-xs">
-                        no browsable address
+                        not reachable over the web
                       </span>
                     )}
                   </TableCell>

@@ -96,6 +96,7 @@ _agent_files() {
     # root-only CLI behind `corex manage dashboard-user`. No secrets in the
     # module itself, so it matches corex_common's mode.
     install -m 0644 "${src}/corex_users.py"  "${AGENT_LIB_DIR}/corex_users.py"
+    install -m 0644 "${src}/corex_metrics.py" "${AGENT_LIB_DIR}/corex_metrics.py"
     install -m 0750 "${src}/corex-usersctl.py"       /usr/local/bin/corex-usersctl
     install -m 0750 "${src}/corex-agent.py"          /usr/local/bin/corex-agent.py
     install -m 0750 "${src}/corex-telegram-setup.py" /usr/local/bin/corex-telegram-setup.py

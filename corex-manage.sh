@@ -2211,6 +2211,7 @@ cmd_agent() {
             echo "    status list health storage logs"
             echo "    watchdog network-check route-list doctor"
             echo "    users-get users-put auth-reset  (the dashboard's login)"
+            echo "    metrics  (temp, disks, series, monitors, SMART, as data)"
             echo "  Deliberately not reachable: remove, replace, add, migrate, nuke."
             echo ""
             if [[ -r /var/log/corex-agent.log ]]; then

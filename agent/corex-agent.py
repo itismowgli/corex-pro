@@ -37,6 +37,16 @@ WHAT IT WILL NOT DO
     reachable here is reversible, so a compromised Telegram account or
     dashboard session cannot destroy data or an install. Those stay on SSH.
 
+THE DASHBOARD'S NUMBERS
+    `metrics` returns temperature, load, memory, both disks, Docker's
+    reclaimable space, the blackbox time series, watchdog findings, SMART, the
+    dpkg state and Uptime Kuma's monitor states, as data rather than as
+    terminal output. It lives here because the container sees its own
+    filesystem rather than the host's, so `df` in there measures the wrong
+    thing, and the obvious fix of bind-mounting the data root would hand a
+    web-facing container every service's files and the bot token inside Kuma's
+    configuration.
+
 THE DASHBOARD'S ACCOUNTS
     Three more actions, users-get, users-put and auth-reset, exist so the
     dashboard can have a login of its own. /etc/corex/dashboard-users.json is
@@ -71,6 +81,7 @@ import uuid
 sys.path.insert(0, "/usr/local/lib/corex")
 import corex_common as cc  # noqa: E402
 import corex_users as cu  # noqa: E402
+import corex_metrics as cm  # noqa: E402
 
 CONF = cc.read_conf()
 REPO_ROOT = CONF.get("COREX_REPO_ROOT", "/opt/corex-pro")
@@ -416,8 +427,8 @@ def handle(req):
 
     if action == "services":
         return {"ok": True, "services": sorted(SERVICES),
-                "actions": sorted(ACTIONS) + ["logs", "users-get", "users-put",
-                                              "auth-reset"]}
+                "actions": sorted(ACTIONS) + ["logs", "metrics", "users-get",
+                                              "users-put", "auth-reset"]}
 
     if action == "logs":
         if not valid_service(service, action):
@@ -428,6 +439,17 @@ def handle(req):
             tail = 40
         rc, out = action_logs(service, tail)
         return {"ok": rc == 0, "output": out}
+
+    if action == "metrics":
+        # Read-only and cheap apart from `du`, which caches itself. It is not
+        # on the ACTIONS whitelist because that maps to corex-manage
+        # subcommands, and this answers with data rather than terminal output.
+        try:
+            return {"ok": True, "metrics": cm.collect(
+                want_sizes=bool(req.get("sizes", True)))}
+        except Exception as exc:                    # never take the agent down
+            say("metrics failed: %r" % (exc,))
+            return {"ok": False, "error": "could not collect metrics"}
 
     if action in ("users-get", "users-put", "auth-reset"):
         return handle_users(action, req)

@@ -50,6 +50,9 @@ export type CatalogueEntry = {
   needs_domain: boolean
   installed: boolean
   enabled: boolean
+  // Where it answers, or would answer once installed. "Needs a domain" was
+  // not something a reader could act on; the hostname is.
+  urls: string[]
 }
 
 // Box-wide actions, as opposed to the per-service ones. The names match the
@@ -148,12 +151,120 @@ export const auth = {
     post<{ ok: boolean }>("/api/auth/reset/complete", { username, code, password }),
 }
 
+
+// ── The overview payload ─────────────────────────────────────────────────────
+//
+// Everything on this page is a number, not terminal output. The rest of the
+// dashboard shows a command's own output deliberately, because those commands
+// are the source of truth; that argument does not apply to a temperature or a
+// disk percentage, which are better seen than read.
+
+export type Sample = {
+  t: string
+  temp: number
+  load: number
+  mem_used_mb: number
+  mem_total_mb: number
+  swap_used_mb: number
+  throttled: boolean
+  containers: number
+}
+
+export type Disk = {
+  path: string
+  label: string
+  used_b: number
+  total_b: number
+  free_b: number
+  pct: number
+}
+
+export type DockerUsage = {
+  count: number
+  active: number
+  size: string
+  reclaimable: string
+  size_b: number
+  reclaimable_b: number
+}
+
+export type Monitor = {
+  name: string
+  active: boolean
+  type: string
+  status: "up" | "down" | "pending" | "maintenance" | "unknown"
+  last_check: string
+  message: string
+  ping_ms: number | null
+}
+
+export type Finding = { t: string; level: "down" | "up" | "info"; text: string }
+
+export type Metrics = {
+  at: number
+  cpu: {
+    temp_c: number | null
+    temp_source: string
+    temp_state: "ok" | "warn" | "hot" | "unknown"
+    load: number[]
+    cores: number
+  }
+  memory: {
+    used_mb?: number
+    total_mb?: number
+    swap_used_mb?: number
+    swap_total_mb?: number
+  }
+  uptime_s: number | null
+  disks: Disk[]
+  docker: Record<string, DockerUsage> | null
+  service_sizes: { name: string; bytes: number }[]
+  series: Sample[]
+  watchdog: Finding[]
+  thermal: {
+    enabled: boolean
+    warn_c: number | null
+    shed_c: number | null
+    emergency_c: number | null
+    shed: string[]
+  }
+  monitors: Monitor[]
+  smart: { device: string; status: string }[]
+  dpkg: { clean: boolean; packages: string[] } | null
+}
+
+export type ContainerRow = {
+  name: string
+  service: string
+  status: string
+  health: string
+  cpu_percent: number
+  mem_bytes: number
+  mem_limit: number
+  mem_percent: number
+  restarts: number
+  oom_killed: boolean
+  since: string
+}
+
+export type Overview = {
+  metrics: Metrics | null
+  services: { healthy: number; unhealthy: number; stopped: number; missing: number }
+  containers: { running: number; total: number; restarting: number; unhealthy: number }
+  top: ContainerRow[]
+  agent_ok: boolean
+  agent_error: string
+  collected_at: string
+}
+
 export const api = {
   state: () => req<State>("/api/state"),
   services: () => req<Service[]>("/api/services"),
   storage: () => req<{ output: string }>("/api/storage"),
   ports: () => req<Port[]>("/api/ports"),
   catalogue: () => req<CatalogueEntry[]>("/api/catalogue"),
+  overview: () => req<Overview>("/api/overview"),
+  containers: () => req<ContainerRow[]>("/api/containers"),
   run: (action: RunAction) => req<Job>(`/api/run/${action}`, { method: "POST" }),
   updateAll: () => req<Job>("/api/update-all", { method: "POST" }),
   act: (service: string, action: ServiceAction) =>

@@ -56,7 +56,7 @@ WORKDIR /build
 
 # No external Go dependencies, stdlib only, so there is no go.sum.
 COPY go.mod ./
-COPY main.go auth.go auth_test.go ./
+COPY main.go auth.go overview.go auth_test.go ./
 COPY --from=web /web/dist ./web/dist
 
 # The tests run here, not somewhere else, for the same reason the frontend's

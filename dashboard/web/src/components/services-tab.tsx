@@ -108,15 +108,23 @@ function ServiceCard({
   return (
     <Card className="gap-3">
       <CardHeader>
-        <CardTitle className="flex items-start justify-between gap-2 text-sm">
-          <span className="min-w-0 truncate" title={svc.label}>
+        {/* min-w-0 on the title itself, not only on the span inside it.
+            CardHeader is a grid, so CardTitle is a grid item and defaults to
+            min-width:auto, which refuses to shrink below its content. The
+            longest label, "Monitoring, Uptime Kuma + Grafana + Prometheus",
+            therefore pushed the status badge out past the edge of the card
+            and it was rendered clipped. */}
+        <CardTitle className="flex min-w-0 items-start justify-between gap-2 text-sm">
+          <span className="min-w-0 flex-1 truncate" title={svc.label}>
             {svc.label}
           </span>
-          {busy ? (
-            <Loader2Icon className="text-muted-foreground size-4 shrink-0 animate-spin" />
-          ) : (
-            <StatusBadge status={svc.status} />
-          )}
+          <span className="shrink-0">
+            {busy ? (
+              <Loader2Icon className="text-muted-foreground size-4 animate-spin" />
+            ) : (
+              <StatusBadge status={svc.status} />
+            )}
+          </span>
         </CardTitle>
         <div className="flex min-w-0 flex-col gap-0.5">
           {svc.urls?.length ? (
@@ -133,7 +141,7 @@ function ServiceCard({
               </a>
             ))
           ) : (
-            <span className="text-muted-foreground font-mono text-xs">no browsable address</span>
+            <span className="text-muted-foreground font-mono text-xs">not reachable over the web</span>
           )}
         </div>
       </CardHeader>

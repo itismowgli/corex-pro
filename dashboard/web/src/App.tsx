@@ -1,6 +1,7 @@
 import * as React from "react"
 import {
   AlertTriangleIcon,
+  GaugeIcon,
   HardDriveIcon,
   HeartPulseIcon,
   LayoutGridIcon,
@@ -15,6 +16,7 @@ import {
 } from "lucide-react"
 
 import { AccountTab } from "@/components/account-tab"
+import { OverviewTab } from "@/components/overview-tab"
 import { CatalogueTab } from "@/components/catalogue-tab"
 import { HealthTab } from "@/components/health-tab"
 import { JobPanel } from "@/components/job-panel"
@@ -33,6 +35,7 @@ import {
   auth,
   UNAUTHENTICATED_EVENT,
   type Job,
+  type Overview,
   type Me,
   type RunAction,
   type Service,
@@ -41,6 +44,7 @@ import {
 import { usePoll } from "@/lib/use-poll"
 
 const TABS = [
+  { id: "overview", label: "Overview", icon: GaugeIcon },
   { id: "services", label: "Services", icon: ServerIcon },
   { id: "health", label: "Health", icon: HeartPulseIcon },
   { id: "storage", label: "Storage", icon: HardDriveIcon },
@@ -148,7 +152,7 @@ function Dashboard({
   dark: boolean
   toggleTheme: () => void
 }) {
-  const [tab, setTab] = React.useState(() => location.hash.replace("#", "") || "services")
+  const [tab, setTab] = React.useState(() => location.hash.replace("#", "") || "overview")
   const [job, setJob] = React.useState<Job | null>(null)
   // Which service is mid-action, so its own card shows it, and which box-wide
   // command is running, so its panel does.
@@ -164,6 +168,9 @@ function Dashboard({
   // badge is never more than a moment behind what the box is doing.
   const services = usePoll(api.services, 15_000)
   const storage = usePoll(api.storage, 0)
+  // 20s, matching the blackbox sampler: polling faster shows the same numbers
+  // twice, and this call walks both disks and Kuma's database.
+  const overview = usePoll(api.overview, 20_000)
   const ports = usePoll(api.ports, 0)
   const catalogue = usePoll(api.catalogue, 0)
 
@@ -246,9 +253,10 @@ function Dashboard({
       void services.refresh()
       void state.refresh()
       void catalogue.refresh()
+      void overview.refresh()
       if (runningAction?.startsWith("cleanup")) void storage.refresh()
     },
-    [runningAction, services, state, catalogue, storage]
+    [runningAction, services, state, catalogue, storage, overview]
   )
 
   // The agent serialises jobs, so one running action locks the rest.
@@ -260,6 +268,7 @@ function Dashboard({
     void storage.refresh()
     void ports.refresh()
     void catalogue.refresh()
+    void overview.refresh()
   }
 
   return (
@@ -359,6 +368,13 @@ function Dashboard({
             ))}
           </TabsList>
 
+          <TabsContent value="overview">
+            <OverviewTab
+              data={overview.data as Overview | null}
+              loading={overview.loading}
+              error={overview.error}
+            />
+          </TabsContent>
           <TabsContent value="services">
             <ServicesTab
               services={svcList}
@@ -371,6 +387,7 @@ function Dashboard({
           </TabsContent>
           <TabsContent value="health">
             <HealthTab
+              metrics={overview.data?.metrics ?? null}
               outputs={outputs}
               running={runningAction}
               locked={locked}
@@ -379,8 +396,9 @@ function Dashboard({
           </TabsContent>
           <TabsContent value="storage">
             <StorageTab
-              output={storage.data?.output ?? ""}
-              loading={storage.loading}
+              metrics={overview.data?.metrics ?? null}
+              raw={storage.data?.output ?? ""}
+              loading={overview.loading}
               error={storage.error}
               busy={!!runningAction?.startsWith("cleanup")}
               locked={locked}

@@ -1,71 +1,222 @@
 import { EraserIcon, HardDriveIcon, SearchIcon } from "lucide-react"
 
+import { Ansi } from "@/lib/ansi"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import { Meter } from "@/components/ui/spark"
+import type { Metrics } from "@/lib/api"
+import { bytes } from "@/lib/format"
+
+/**
+ * What is on the disks, and what can be had back.
+ *
+ * This used to print `corex manage storage` verbatim, which was wrong twice
+ * over: the escape codes were rendered literally, so the page showed
+ * "[0;36m[1mCoreX Storage Report[0m", and even correct they were a table of
+ * numbers a reader had to parse. The same figures now come from the agent as
+ * data. The raw report is still available underneath, because the command
+ * remains the source of truth and this is a rendering of it.
+ */
+
+const DOCKER_ROWS: { key: string; label: string; note: string }[] = [
+  { key: "images", label: "Images", note: "layers pulled or built" },
+  { key: "containers", label: "Containers", note: "writable layers" },
+  { key: "local_volumes", label: "Volumes", note: "named volumes" },
+  { key: "build_cache", label: "Build cache", note: "intermediate build layers" },
+]
 
 export function StorageTab({
-  output,
+  metrics,
+  raw,
   loading,
   error,
   busy,
   locked,
   onCleanup,
 }: {
-  output: string
+  metrics: Metrics | null
+  raw: string
   loading: boolean
   error: string | null
   busy: boolean
   locked: boolean
   onCleanup: (dryRun: boolean) => void
 }) {
+  const docker = metrics?.docker ?? null
+  const reclaimable = Object.values(docker ?? {}).reduce(
+    (a, d) => a + (d?.reclaimable_b ?? 0),
+    0
+  )
+  const sizes = metrics?.service_sizes ?? []
+  const biggest = sizes.length ? sizes[0].bytes : 0
+
   return (
     <div className="flex flex-col gap-3">
+      <div className="grid gap-3 lg:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <HardDriveIcon className="size-4" />
+              Disks
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-3">
+            {loading && !metrics ? (
+              <Skeleton className="h-16" />
+            ) : (
+              (metrics?.disks ?? []).map((d) => (
+                <Meter
+                  key={d.path}
+                  value={d.used_b}
+                  max={d.total_b}
+                  caption={
+                    <>
+                      {d.label} <span className="text-muted-foreground">{d.path}</span>
+                    </>
+                  }
+                  right={`${bytes(d.used_b)} of ${bytes(d.total_b)} · ${bytes(d.free_b)} free`}
+                />
+              ))
+            )}
+            <p className="text-muted-foreground text-xs">
+              The OS and Docker engine live on the internal disk, and everything persistent
+              lives on the SSD. Keeping them apart is what makes the box easy to migrate and
+              restore.
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
+              Docker usage
+              <span className="ml-auto flex gap-2">
+                <Button
+                  size="xs"
+                  variant="secondary"
+                  disabled={busy || locked}
+                  onClick={() => onCleanup(true)}
+                >
+                  <SearchIcon />
+                  Preview cleanup
+                </Button>
+                <Button
+                  size="xs"
+                  variant="outline"
+                  disabled={busy || locked || reclaimable === 0}
+                  onClick={() => {
+                    if (
+                      window.confirm(
+                        "Remove stale images and build cache? No service data is deleted."
+                      )
+                    )
+                      onCleanup(false)
+                  }}
+                >
+                  <EraserIcon />
+                  Reclaim {bytes(reclaimable)}
+                </Button>
+              </span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {!docker ? (
+              <p className="text-muted-foreground text-xs">
+                Docker did not report its usage.
+              </p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>What</TableHead>
+                    <TableHead className="text-right">Count</TableHead>
+                    <TableHead className="text-right">Size</TableHead>
+                    <TableHead className="text-right">Purgeable</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {DOCKER_ROWS.map(({ key, label, note }) => {
+                    const row = docker[key]
+                    if (!row) return null
+                    return (
+                      <TableRow key={key}>
+                        <TableCell>
+                          <div>{label}</div>
+                          <div className="text-muted-foreground text-xs">{note}</div>
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-xs">
+                          {row.active}/{row.count}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-xs">
+                          {bytes(row.size_b)}
+                        </TableCell>
+                        <TableCell
+                          className={`text-right font-mono text-xs ${
+                            row.reclaimable_b > 0 ? "text-warn" : "text-muted-foreground"
+                          }`}
+                        >
+                          {row.reclaimable_b > 0 ? bytes(row.reclaimable_b) : "-"}
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
+                </TableBody>
+              </Table>
+            )}
+            <p className="text-muted-foreground mt-3 text-xs">
+              Cleanup removes images unused for seven days or more and build cache older than
+              three days. It never touches service data, and it never runs a volume prune,
+              because that would destroy every unnamed volume including ones in use.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+
       <Card>
         <CardHeader>
-          <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
-            <HardDriveIcon className="size-4" />
-            Disk usage by service
-            <span className="ml-auto flex gap-2">
-              <Button size="xs" variant="secondary" disabled={busy || locked} onClick={() => onCleanup(true)}>
-                <SearchIcon />
-                Preview cleanup
-              </Button>
-              <Button
-                size="xs"
-                variant="outline"
-                disabled={busy || locked}
-                onClick={() => {
-                  if (
-                    window.confirm(
-                      "Remove stale images and build cache? No service data is deleted."
-                    )
-                  )
-                    onCleanup(false)
-                }}
-              >
-                <EraserIcon />
-                Run cleanup
-              </Button>
-            </span>
-          </CardTitle>
+          <CardTitle className="text-sm">Space per service</CardTitle>
         </CardHeader>
-        <CardContent>
-          {loading ? (
-            <Skeleton className="h-48" />
+        <CardContent className="grid gap-2">
+          {sizes.length === 0 ? (
+            <p className="text-muted-foreground text-xs">
+              Still measuring. Walking a photo library takes a while, so this is computed in
+              the background and refreshed every fifteen minutes.
+            </p>
           ) : (
-            <pre className="term bg-background max-h-[60vh] rounded-md border p-3">
-              {output?.trim() ||
-                error ||
-                "No storage report. corex-manage.sh storage returned nothing."}
-            </pre>
+            sizes.map((s) => (
+              <Meter
+                key={s.name}
+                value={s.bytes}
+                max={biggest || 1}
+                tone="neutral"
+                caption={s.name}
+                right={bytes(s.bytes)}
+              />
+            ))
           )}
         </CardContent>
       </Card>
-      <p className="text-muted-foreground text-xs">
-        Cleanup removes images unused for 7 days or more and build cache older than 3 days. It
-        never touches service data, and it never runs a volume prune.
-      </p>
+
+      {(raw || error) && (
+        <details className="text-muted-foreground text-xs">
+          <summary className="cursor-pointer select-none">
+            The report this is rendered from
+          </summary>
+          <Ansi
+            text={raw || error || ""}
+            className="term bg-background mt-2 max-h-[40vh] overflow-auto rounded-md border p-3"
+          />
+        </details>
+      )}
     </div>
   )
 }

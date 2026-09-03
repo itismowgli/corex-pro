@@ -105,6 +105,12 @@ type catalogueEntry struct {
 	NeedsDomain bool   `json:"needs_domain"`
 	Installed   bool   `json:"installed"`
 	Enabled     bool   `json:"enabled"`
+
+	// The addresses this module answers on, or would answer on once
+	// installed. "Needs a domain" told the reader nothing they could act on:
+	// the domain is already configured, so the useful answer is the hostname
+	// the service will actually get.
+	URLs []string `json:"urls"`
 }
 
 type portRow struct {
@@ -226,6 +232,8 @@ func main() {
 	api.HandleFunc("/api/storage", storageHandler)
 	api.HandleFunc("/api/ports", portsHandler)
 	api.HandleFunc("/api/catalogue", catalogueHandler)
+	api.HandleFunc("/api/overview", overviewHandler)
+	api.HandleFunc("/api/containers", containersHandler)
 	api.HandleFunc("/api/run/", runHandler)
 	api.HandleFunc("/api/update-all", updateAllHandler)
 	api.HandleFunc("/api/service/", serviceActionHandler)
@@ -501,6 +509,47 @@ func containerExists(name string) bool {
 
 // ── Services ──────────────────────────────────────────────────────────────────
 
+// serviceAddresses builds the addresses a module answers on, substituting the
+// configured domain and IP. Shared by the service list and the catalogue, so
+// an entry that is not installed yet can still say where it will appear
+// rather than the unhelpful "needs a domain".
+//
+// It returns an empty slice, never nil. A nil slice marshals to JSON null, the
+// client types this as an array, and `urls.length` on null blanked the entire
+// dashboard through the error boundary.
+func serviceAddresses(name string, state CoreXState) []string {
+	urls := []string{}
+	for _, tpl := range serviceURLs[name] {
+		u := tpl
+		if strings.Contains(u, "{DOMAIN}") {
+			if state.Domain == "" {
+				continue
+			}
+			u = strings.ReplaceAll(u, "{DOMAIN}", state.Domain)
+		}
+		if strings.Contains(u, "{IP}") {
+			if state.ServerIP == "" {
+				continue
+			}
+			u = strings.ReplaceAll(u, "{IP}", state.ServerIP)
+		}
+		urls = append(urls, u)
+	}
+
+	// Follow an overridden hostname, or the dashboard keeps linking to the
+	// name the user moved away from. n8n accepts a space separated list whose
+	// first entry is the primary one.
+	if name == "n8n" && state.N8nSubdomain != "" && state.Domain != "" {
+		if first := strings.Fields(strings.Trim(state.N8nSubdomain, "\"'")); len(first) > 0 {
+			urls = []string{"https://" + first[0] + "." + state.Domain}
+		}
+	}
+	if name == "calcom" && state.CalcomSubdomain != "" && state.Domain != "" {
+		urls = []string{"https://" + strings.Trim(state.CalcomSubdomain, "\"'") + "." + state.Domain}
+	}
+	return urls
+}
+
 func getServices(state CoreXState) []ServiceInfo {
 	running := getRunningContainers()
 	var svcs []ServiceInfo
@@ -549,41 +598,7 @@ func getServices(state CoreXState) []ServiceInfo {
 			status = ms
 		}
 
-		// Not `var urls []string`. A nil slice marshals to JSON null, not [],
-		// and three services have no browsable address at all (cloudflared,
-		// crowdsec, traefik), so the page that reads .length on it crashed
-		// and the error boundary blanked the whole dashboard. Any field the
-		// client types as an array has to leave here as one.
-		urls := []string{}
-		for _, tpl := range serviceURLs[name] {
-			u := tpl
-			if strings.Contains(u, "{DOMAIN}") {
-				if state.Domain == "" {
-					continue
-				}
-				u = strings.ReplaceAll(u, "{DOMAIN}", state.Domain)
-			}
-			if strings.Contains(u, "{IP}") {
-				if state.ServerIP == "" {
-					continue
-				}
-				u = strings.ReplaceAll(u, "{IP}", state.ServerIP)
-			}
-			urls = append(urls, u)
-		}
-
-		// Follow an overridden hostname, or the dashboard would keep linking
-		// to the name the user moved away from. n8n accepts a space separated
-		// list, whose first entry is the primary one.
-		if name == "n8n" && state.N8nSubdomain != "" && state.Domain != "" {
-			first := strings.Fields(strings.Trim(state.N8nSubdomain, "\"'"))
-			if len(first) > 0 {
-				urls = []string{"https://" + first[0] + "." + state.Domain}
-			}
-		}
-		if name == "calcom" && state.CalcomSubdomain != "" && state.Domain != "" {
-			urls = []string{"https://" + strings.Trim(state.CalcomSubdomain, "\"'") + "." + state.Domain}
-		}
+		urls := serviceAddresses(name, state)
 
 		label := serviceLabels[name]
 		if label == "" {
@@ -789,6 +804,7 @@ func catalogueHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		entry := state.Services[f[0]]
 		out = append(out, catalogueEntry{
+			URLs:        serviceAddresses(f[0], state),
 			Name:        f[0],
 			Label:       f[1],
 			Category:    f[2],

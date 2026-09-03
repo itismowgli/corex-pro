@@ -1,0 +1,460 @@
+"""Everything the dashboard needs to show the box at a glance, as data.
+
+WHY THIS IS ON THE PRIVILEGED SIDE
+    The dashboard container is `nobody` and sees its own filesystem, not the
+    host's, so `df` in there measures the wrong thing entirely. The obvious
+    fix, bind-mounting /mnt/corex-data, hands a web-facing container every
+    service's data: Vaultwarden's vault, Immich's photos, and the Telegram bot
+    token that sits in Uptime Kuma's notification config. So the agent reads
+    it and returns numbers.
+
+    Nothing here returns a credential. The Kuma reader takes monitor names and
+    heartbeat states and never touches the `notification` table.
+
+WHY THE HISTORY IS FREE
+    /mnt/corex-data/blackbox.log already records temperature, load, memory,
+    swap, throttle count and container count every twenty seconds, because it
+    is the only evidence that survives an unclean shutdown (gotcha #16). That
+    makes it a time series nobody had to collect: the graphs read it rather
+    than adding a second sampler.
+
+EVERY READER FAILS SOFT
+    A dashboard that shows nothing because one disk did not answer is worse
+    than one showing eight panels and a gap. Each collector returns its own
+    piece or None, and the caller assembles whatever arrived.
+"""
+
+import json
+import os
+import re
+import shutil
+import sqlite3
+import subprocess
+import threading
+import time
+
+BLACKBOX = "/mnt/corex-data/blackbox.log"
+WATCHDOG_LOG = "/var/log/corex-watchdog.log"
+THERMAL_CONF = "/etc/corex/thermal.conf"
+THERMAL_SHED = "/var/lib/corex/thermal-shed.list"
+KUMA_DB = "/mnt/corex-data/service-data/uptime-kuma/kuma.db"
+DATA_ROOT = "/mnt/corex-data"
+
+# Sampled every 20s, so 360 points is two hours, which is the window that
+# actually answers "what happened just before it got hot".
+SERIES_POINTS = 360
+
+
+def _run(argv, timeout=20):
+    try:
+        p = subprocess.run(argv, capture_output=True, text=True,
+                           timeout=timeout, check=False)
+        return p.returncode, p.stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return 1, ""
+
+
+# ── Host vitals ─────────────────────────────────────────────────────────────
+
+def cpu_temp():
+    """Tctl if lm-sensors is present, else the hottest thermal zone.
+
+    Without lm-sensors the most common hardware failure on this class of
+    machine is invisible (gotcha #17), so the absence is reported rather than
+    silently read as zero.
+    """
+    rc, out = _run(["sensors", "-u"], timeout=10)
+    if rc == 0:
+        m = re.search(r"^(?:Tctl|Tdie|Package id 0):\n\s+\S+:\s+([0-9.]+)",
+                      out, re.M)
+        if m:
+            return float(m.group(1)), "sensors"
+    best = None
+    try:
+        for name in os.listdir("/sys/class/thermal"):
+            if not name.startswith("thermal_zone"):
+                continue
+            try:
+                with open("/sys/class/thermal/%s/temp" % name) as fh:
+                    v = int(fh.read().strip()) / 1000.0
+            except (OSError, ValueError):
+                continue
+            if best is None or v > best:
+                best = v
+    except OSError:
+        pass
+    return (best, "thermal_zone") if best is not None else (None, "none")
+
+
+def meminfo():
+    out = {}
+    try:
+        with open("/proc/meminfo") as fh:
+            for line in fh:
+                k, _, v = line.partition(":")
+                out[k.strip()] = int(v.split()[0])  # kB
+    except (OSError, ValueError, IndexError):
+        return None
+    total = out.get("MemTotal", 0) // 1024
+    avail = out.get("MemAvailable", 0) // 1024
+    swt = out.get("SwapTotal", 0) // 1024
+    swf = out.get("SwapFree", 0) // 1024
+    return {
+        "used_mb": total - avail, "total_mb": total,
+        "swap_used_mb": swt - swf, "swap_total_mb": swt,
+    }
+
+
+def uptime_seconds():
+    try:
+        with open("/proc/uptime") as fh:
+            return int(float(fh.read().split()[0]))
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def disks():
+    """The two that matter: the OS disk and the data SSD.
+
+    "Brains on System, muscle on SSD" is the whole storage design, so these are
+    two separate answers and a single combined figure would hide the one that
+    is filling.
+    """
+    out = []
+    for path, label in (("/", "OS disk"), (DATA_ROOT, "Data SSD")):
+        try:
+            u = shutil.disk_usage(path)
+        except OSError:
+            continue
+        out.append({
+            "path": path, "label": label,
+            "used_b": u.used, "total_b": u.total, "free_b": u.free,
+            "pct": round(u.used * 100.0 / u.total, 1) if u.total else 0,
+        })
+    return out
+
+
+# ── The time series, read from the blackbox ─────────────────────────────────
+
+_SAMPLE = re.compile(
+    r"^(?P<t>\S+) temp=(?P<temp>[0-9.]+)C load=(?P<l1>[0-9.]+)/[0-9.]+/[0-9.]+"
+    r" mem=(?P<mu>\d+)/(?P<mt>\d+)MB swap=(?P<su>\d+)/\d+MB"
+    r" throttle=(?P<thr>\S+) containers=(?P<c>\d+)")
+
+
+def series(points=SERIES_POINTS, path=BLACKBOX):
+    """The last N samples. Read from the tail rather than parsed whole.
+
+    The file grows forever and is already thousands of lines; reading all of
+    it on every dashboard poll would be the most expensive thing this process
+    does.
+    """
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as fh:
+            # ~110 bytes a line, so this over-reads a little on purpose.
+            back = min(size, points * 160)
+            fh.seek(size - back)
+            raw = fh.read().decode("utf-8", "replace")
+    except (OSError, ValueError):
+        return []
+
+    out = []
+    for line in raw.splitlines()[-points:]:
+        m = _SAMPLE.match(line.strip())
+        if not m:
+            continue
+        out.append({
+            "t": m.group("t"),
+            "temp": float(m.group("temp")),
+            "load": float(m.group("l1")),
+            "mem_used_mb": int(m.group("mu")),
+            "mem_total_mb": int(m.group("mt")),
+            "swap_used_mb": int(m.group("su")),
+            "throttled": m.group("thr") not in ("-", "0"),
+            "containers": int(m.group("c")),
+        })
+    return out
+
+
+# ── Docker ──────────────────────────────────────────────────────────────────
+
+def docker_df():
+    """Image, container, volume and build-cache totals, and what is reclaimable.
+
+    Reclaimable is the number worth surfacing: it is disk you can have back
+    without deleting anything you use.
+    """
+    rc, out = _run(["docker", "system", "df", "--format", "{{json .}}"], timeout=40)
+    if rc != 0:
+        return None
+    rows = {}
+    for line in out.splitlines():
+        try:
+            d = json.loads(line)
+        except ValueError:
+            continue
+        kind = (d.get("Type") or "").lower().replace(" ", "_")
+        if not kind:
+            continue
+        rows[kind] = {
+            "count": _int(d.get("TotalCount")),
+            "active": _int(d.get("Active")),
+            "size": d.get("Size", ""),
+            "reclaimable": d.get("Reclaimable", ""),
+            "size_b": _size_to_bytes(d.get("Size")),
+            "reclaimable_b": _size_to_bytes(d.get("Reclaimable")),
+        }
+    return rows or None
+
+
+_UNITS = {"b": 1, "kb": 10**3, "mb": 10**6, "gb": 10**9, "tb": 10**12,
+          "kib": 1024, "mib": 1024**2, "gib": 1024**3, "tib": 1024**4}
+
+
+def _size_to_bytes(text):
+    """Docker prints "34.55GB" and "576.5MB (1%)". Both have to parse."""
+    if not text:
+        return 0
+    m = re.match(r"\s*([0-9.]+)\s*([A-Za-z]+)", str(text))
+    if not m:
+        return 0
+    try:
+        return int(float(m.group(1)) * _UNITS.get(m.group(2).lower(), 1))
+    except (ValueError, TypeError):
+        return 0
+
+
+def _int(v):
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return 0
+
+
+# ── Per-service disk use, cached because du is slow ─────────────────────────
+
+_sizes = {"at": 0.0, "rows": [], "running": False}
+_sizes_lock = threading.Lock()
+SIZES_TTL = 900
+
+
+def service_sizes(refresh=False):
+    """Bytes per service directory, recomputed at most every 15 minutes.
+
+    `du` over a photo library is tens of seconds of disk, which is far too
+    slow for a dashboard poll, so a stale answer is served while a fresh one
+    is computed in the background. The first call returns nothing and the
+    panel says so, rather than blocking the whole page on it.
+    """
+    with _sizes_lock:
+        fresh = time.time() - _sizes["at"] < SIZES_TTL
+        if fresh and not refresh:
+            return _sizes["rows"]
+        if _sizes["running"]:
+            return _sizes["rows"]
+        _sizes["running"] = True
+    threading.Thread(target=_compute_sizes, daemon=True).start()
+    return _sizes["rows"]
+
+
+def _compute_sizes():
+    rows = []
+    base = os.path.join(DATA_ROOT, "service-data")
+    try:
+        names = sorted(os.listdir(base))
+    except OSError:
+        names = []
+    for name in names:
+        path = os.path.join(base, name)
+        if not os.path.isdir(path):
+            continue
+        rc, out = _run(["du", "-sb", path], timeout=120)
+        if rc != 0:
+            continue
+        try:
+            rows.append({"name": name, "bytes": int(out.split()[0])})
+        except (ValueError, IndexError):
+            continue
+    rows.sort(key=lambda r: -r["bytes"])
+    with _sizes_lock:
+        _sizes["rows"] = rows
+        _sizes["at"] = time.time()
+        _sizes["running"] = False
+
+
+# ── Watchdog, thermal, Kuma ─────────────────────────────────────────────────
+
+_WD = re.compile(r"^(?P<t>\S+) watchdog: (?P<body>.*)$")
+
+
+def watchdog_findings(limit=25, path=WATCHDOG_LOG):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            lines = fh.readlines()[-400:]
+    except OSError:
+        return []
+    out = []
+    for line in reversed(lines):
+        m = _WD.match(line.strip())
+        if not m:
+            continue
+        body = m.group("body")
+        level = "down" if " DOWN" in body else ("up" if " UP" in body else "info")
+        out.append({"t": m.group("t"), "level": level, "text": body})
+        if len(out) >= limit:
+            break
+    return out
+
+
+def thermal_state():
+    conf = {}
+    try:
+        with open(THERMAL_CONF, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, _, v = line.partition("=")
+                    conf[k.strip()] = v.strip().strip("\"'")
+    except OSError:
+        pass
+    shed = []
+    try:
+        with open(THERMAL_SHED, encoding="utf-8") as fh:
+            shed = [l.strip() for l in fh if l.strip()]
+    except OSError:
+        pass
+    return {
+        "enabled": conf.get("THERMAL_ENABLED", "true").lower() != "false",
+        "warn_c": _float(conf.get("THERMAL_WARN_C")),
+        "shed_c": _float(conf.get("THERMAL_SHED_C")),
+        "emergency_c": _float(conf.get("THERMAL_EMERGENCY_C")),
+        "shed": shed,
+    }
+
+
+def _float(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def kuma_monitors(db_path=KUMA_DB, limit=40):
+    """Monitor names and their latest heartbeat.
+
+    Deliberately never reads the `notification` table: that is where the
+    Telegram bot token lives, and this answer is rendered by a web-facing
+    container.
+    """
+    if not os.path.exists(db_path):
+        return []
+    try:
+        db = sqlite3.connect("file:%s?mode=ro" % db_path, uri=True, timeout=5)
+    except sqlite3.Error:
+        return []
+    try:
+        db.row_factory = sqlite3.Row
+        rows = db.execute(
+            "SELECT m.id, m.name, m.active, m.type,"
+            "       h.status, h.time, h.msg, h.ping"
+            "  FROM monitor m"
+            "  LEFT JOIN heartbeat h ON h.id = ("
+            "       SELECT id FROM heartbeat WHERE monitor_id = m.id"
+            "        ORDER BY time DESC LIMIT 1)"
+            " ORDER BY m.name LIMIT ?", (limit,)).fetchall()
+    except sqlite3.Error:
+        return []
+    finally:
+        db.close()
+
+    # Kuma's status codes: 0 down, 1 up, 2 pending, 3 maintenance.
+    names = {0: "down", 1: "up", 2: "pending", 3: "maintenance"}
+    out = []
+    for r in rows:
+        out.append({
+            "name": r["name"],
+            "active": bool(r["active"]),
+            "type": r["type"],
+            "status": names.get(r["status"], "unknown"),
+            "last_check": r["time"],
+            "message": (r["msg"] or "")[:160],
+            "ping_ms": r["ping"],
+        })
+    return out
+
+
+# ── SMART and dpkg, the two that predict a bad morning ──────────────────────
+
+def smart():
+    out = []
+    rc, listing = _run(["lsblk", "-dno", "NAME,TYPE"], timeout=15)
+    devs = []
+    for line in listing.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[1] == "disk":
+            devs.append("/dev/" + parts[0])
+    for dev in devs:
+        rc, text = _run(["smartctl", "-H", dev], timeout=25)
+        verdict = "unknown"
+        m = re.search(r"(?:overall-health self-assessment test result|SMART Health Status):\s*(\S+)",
+                      text)
+        if m:
+            verdict = m.group(1)
+        elif "Unknown USB bridge" in text or "Unsupported" in text:
+            # A USB-attached SSD often will not pass SMART through its bridge.
+            verdict = "not reported"
+        out.append({"device": dev, "status": verdict})
+    return out
+
+
+def dpkg_clean():
+    """Whether dpkg has half-configured packages.
+
+    An unattended kernel upgrade interrupted by a thermal trip leaves systemd
+    and libc unpacked but unconfigured, and every later boot re-breaks it
+    (gotcha #18).
+    """
+    rc, out = _run(["dpkg", "-l"], timeout=30)
+    if rc != 0:
+        return None
+    bad = [l.split()[1] for l in out.splitlines()
+           if l[:2] in ("iF", "iU", "rU", "hU", "iH")]
+    return {"clean": not bad, "packages": bad[:10]}
+
+
+# ── Assembly ────────────────────────────────────────────────────────────────
+
+def collect(want_sizes=True):
+    temp, temp_src = cpu_temp()
+    mem = meminfo() or {}
+    try:
+        load = list(os.getloadavg())
+    except OSError:
+        load = []
+    thermal = thermal_state()
+
+    state = "unknown"
+    if temp is not None:
+        warn = thermal.get("warn_c") or 80.0
+        shed = thermal.get("shed_c") or 88.0
+        state = "hot" if temp >= shed else "warn" if temp >= warn else "ok"
+
+    return {
+        "at": int(time.time()),
+        "cpu": {
+            "temp_c": temp, "temp_source": temp_src, "temp_state": state,
+            "load": load, "cores": os.cpu_count(),
+        },
+        "memory": mem,
+        "uptime_s": uptime_seconds(),
+        "disks": disks(),
+        "docker": docker_df(),
+        "service_sizes": service_sizes() if want_sizes else [],
+        "series": series(),
+        "watchdog": watchdog_findings(),
+        "thermal": thermal,
+        "monitors": kuma_monitors(),
+        "smart": smart(),
+        "dpkg": dpkg_clean(),
+    }

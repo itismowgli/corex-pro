@@ -36,7 +36,7 @@ const bundle = fs.readFileSync(entryPath, "utf8")
 // Every tab, not just the default one. Radix renders tab content lazily, so a
 // component that throws is invisible until someone opens it: exactly the
 // blank page this check exists to prevent, one click further in.
-const TABS = ["services", "health", "storage", "network", "catalogue", "system", "account"]
+const TABS = ["overview", "services", "health", "storage", "network", "catalogue", "system", "account"]
 
 // Realistic payloads, not just failures.
 //
@@ -77,13 +77,65 @@ const STATE = {
   agent_error: "",
 }
 
+// A metrics payload with the awkward cases in it on purpose: a null
+// temperature, an empty series, a disk at 94%, a monitor that is down and a
+// service with no address. Panels have to render all of those.
+const METRICS = {
+  at: 1788400000,
+  cpu: { temp_c: 71.6, temp_source: "sensors", temp_state: "ok", load: [0.33, 0.42, 0.59], cores: 16 },
+  memory: { used_mb: 4701, total_mb: 31489, swap_used_mb: 4, swap_total_mb: 2047 },
+  uptime_s: 98000,
+  disks: [
+    { path: "/", label: "OS disk", used_b: 57054695424, total_b: 105089261568, free_b: 42649079808, pct: 54.3 },
+    { path: "/mnt/corex-data", label: "Data SSD", used_b: 554000000000, total_b: 589600727040, free_b: 3000000, pct: 94.0 },
+  ],
+  docker: {
+    images: { count: 36, active: 32, size: "34.55GB", reclaimable: "576.5MB", size_b: 34550000000, reclaimable_b: 576500000 },
+    build_cache: { count: 100, active: 0, size: "2.5GB", reclaimable: "2.0GB", size_b: 2553000000, reclaimable_b: 2047000000 },
+  },
+  service_sizes: [{ name: "immich", bytes: 41000000000 }, { name: "nextcloud", bytes: 9000000000 }],
+  series: Array.from({ length: 60 }, (_, i) => ({
+    t: "2026-09-03T23:00:00+05:30",
+    temp: 62 + (i % 12),
+    load: 0.2 + (i % 5) / 10,
+    mem_used_mb: 4600 + i,
+    mem_total_mb: 31489,
+    swap_used_mb: 4,
+    throttled: i === 30,
+    containers: 22,
+  })),
+  watchdog: [{ t: "2026-09-03T22:56:15+05:30", level: "down", text: "temp DOWN: 82C, over the 80C limit." }],
+  thermal: { enabled: true, warn_c: 80, shed_c: 85, emergency_c: 97, shed: [] },
+  monitors: [
+    { name: "Nextcloud", active: true, type: "http", status: "up", last_check: "2026-09-03 17:45:01", message: "200 - OK", ping_ms: 12 },
+    { name: "Immich", active: true, type: "http", status: "down", last_check: "2026-09-03 17:45:01", message: "timeout", ping_ms: null },
+  ],
+  smart: [{ device: "/dev/nvme0n1", status: "PASSED" }, { device: "/dev/sda", status: "not reported" }],
+  dpkg: { clean: true, packages: [] },
+}
+
 const DATA = {
+  "/api/overview": {
+    metrics: METRICS,
+    services: { healthy: 13, unhealthy: 0, stopped: 1, missing: 0 },
+    containers: { running: 22, total: 39, restarting: 0, unhealthy: 0 },
+    top: [
+      { name: "immich-ml", service: "immich", status: "running", health: "healthy", cpu_percent: 12.4, mem_bytes: 900000000, mem_limit: 3000000000, mem_percent: 30, restarts: 0, oom_killed: false, since: "Up 2 days" },
+    ],
+    agent_ok: true,
+    agent_error: "",
+    collected_at: "2026-09-03T23:20:00+05:30",
+  },
+  "/api/containers": [
+    { name: "immich-ml", service: "immich", status: "running", health: "healthy", cpu_percent: 12.4, mem_bytes: 900000000, mem_limit: 3000000000, mem_percent: 30, restarts: 0, oom_killed: false, since: "Up 2 days" },
+  ],
   "/api/services": SERVICES,
   "/api/state": STATE,
   "/api/storage": { output: "CoreX Storage Report\n  /mnt/corex-data  40% used" },
   "/api/ports": [{ service: "adguard", url: "http://10.0.0.2:3000", note: "admin" }],
   "/api/catalogue": [
-    { name: "gitea", label: "Gitea", category: "productivity", description: "Git server", ram_mb: 512, disk_gb: 5, needs_domain: true, installed: false, enabled: false },
+    { name: "gitea", label: "Gitea", category: "productivity", description: "Git server", ram_mb: 512, disk_gb: 5, needs_domain: true, installed: false, enabled: false, urls: ["https://git.example.com"] },
+    { name: "traefik", label: "Traefik", category: "core", description: "Reverse proxy", ram_mb: 128, disk_gb: 1, needs_domain: false, installed: true, enabled: true, urls: [] },
   ],
 }
 
