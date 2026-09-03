@@ -62,6 +62,14 @@ SERVICE_DISK_GB=12
 SERVICE_FIREWALL_SPECS=()
 SERVICE_DESCRIPTION="Share a booking link and let people pick a slot. Availability rules, calendar sync, confirmation email, and a Telegram message when someone books."
 
+# Uptime Kuma check, seeded by lib/kuma.sh so it is recreated on a fresh
+# install rather than living only in Kuma's database. Tab separated:
+# name, url, accepted status codes. The name is the key, so changing it
+# creates a second monitor and orphans the first.
+# /api/version rather than the root: the root redirects, and Traefik
+# returns a redirect even when the application behind it is dead.
+SERVICE_MONITORS="Cal.com	https://cal.${DOMAIN:-}/api/version	[\"200-299\"]"
+
 # Pinned, not :latest. Upstream's :latest currently resolves to this same
 # build, which is exactly the situation gotcha #26 is about: a tag that has
 # stopped moving looks identical to a tag that is current. Bump this

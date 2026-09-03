@@ -22,6 +22,12 @@ SERVICE_DISK_GB=2
 SERVICE_FIREWALL_SPECS=("5678/tcp")
 SERVICE_DESCRIPTION="Visual workflow automation. Connect any app to any app. 400+ integrations. Replaces Zapier, Make (formerly Integromat), and IFTTT."
 
+# Uptime Kuma check, seeded by lib/kuma.sh so it is recreated on a fresh
+# install rather than living only in Kuma's database. Tab separated:
+# name, url, accepted status codes. The name is the key, so changing it
+# creates a second monitor and orphans the first.
+SERVICE_MONITORS="n8n	https://n8n.${DOMAIN:-}	[\"200-299\"]"
+
 # ── Functions ─────────────────────────────────────────────────────────────────
 
 n8n_dirs() {

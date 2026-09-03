@@ -34,6 +34,14 @@ SERVICE_DISK_GB=1
 SERVICE_FIREWALL_SPECS=("80/tcp" "443/tcp")
 SERVICE_DESCRIPTION="Automatic HTTPS for all your services. Manages SSL certificates via Let's Encrypt. Required for all domain-based services."
 
+# Uptime Kuma check, seeded by lib/kuma.sh so it is recreated on a fresh
+# install rather than living only in Kuma's database. Tab separated:
+# name, url, accepted status codes. The name is the key, so changing it
+# creates a second monitor and orphans the first.
+# 404 is a pass: an unrouted Host reaching Traefik at all is proof
+# the proxy is up, which is the only thing this monitor can know.
+SERVICE_MONITORS="Traefik (LAN HTTPS)	https://${SERVER_IP:-}	[\"200-299\",\"404\"]"
+
 # ── Private Helpers ───────────────────────────────────────────────────────────
 
 # Generates a self-signed CA and wildcard certificate for *.DOMAIN.

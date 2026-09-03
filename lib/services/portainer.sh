@@ -23,6 +23,12 @@ SERVICE_DISK_GB=1
 SERVICE_FIREWALL_SPECS=("9443/tcp")
 SERVICE_DESCRIPTION="Web UI to manage all your Docker containers, images, and volumes. Replaces the Docker CLI for most tasks."
 
+# Uptime Kuma check, seeded by lib/kuma.sh so it is recreated on a fresh
+# install rather than living only in Kuma's database. Tab separated:
+# name, url, accepted status codes. The name is the key, so changing it
+# creates a second monitor and orphans the first.
+SERVICE_MONITORS="Portainer	https://portainer.${DOMAIN:-}	[\"200-299\"]"
+
 # ── Functions ─────────────────────────────────────────────────────────────────
 
 portainer_dirs() {

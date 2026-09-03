@@ -22,6 +22,12 @@ SERVICE_DISK_GB=20
 SERVICE_FIREWALL_SPECS=("2283/tcp")
 SERVICE_DESCRIPTION="Automatic photo and video backup from your phone. Face recognition, smart search, albums. Replaces Google Photos and iCloud."
 
+# Uptime Kuma check, seeded by lib/kuma.sh so it is recreated on a fresh
+# install rather than living only in Kuma's database. Tab separated:
+# name, url, accepted status codes. The name is the key, so changing it
+# creates a second monitor and orphans the first.
+SERVICE_MONITORS="Immich	https://photos.${DOMAIN:-}	[\"200-299\"]"
+
 # ── Functions ─────────────────────────────────────────────────────────────────
 
 immich_dirs() {

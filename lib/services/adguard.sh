@@ -24,6 +24,12 @@ SERVICE_DISK_GB=1
 SERVICE_FIREWALL_SPECS=("53" "3000/tcp" "5353/udp")
 SERVICE_DESCRIPTION="Network-wide ad blocker and DNS server. Blocks ads on all devices. Required for local domain routing (*.yourdomain → server IP)."
 
+# Uptime Kuma check, seeded by lib/kuma.sh so it is recreated on a fresh
+# install rather than living only in Kuma's database. Tab separated:
+# name, url, accepted status codes. The name is the key, so changing it
+# creates a second monitor and orphans the first.
+SERVICE_MONITORS="AdGuard Home	http://${SERVER_IP:-}:3000	[\"200-299\",\"302\"]"
+
 # ── Functions ─────────────────────────────────────────────────────────────────
 
 adguard_dirs() {

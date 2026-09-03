@@ -19,6 +19,12 @@ SERVICE_RAM_MB=128
 SERVICE_DISK_GB=1
 SERVICE_DESCRIPTION="Self-hosted password manager. Works with all Bitwarden apps. Unlimited passwords, secure notes, and 2FA on your own hardware."
 
+# Uptime Kuma check, seeded by lib/kuma.sh so it is recreated on a fresh
+# install rather than living only in Kuma's database. Tab separated:
+# name, url, accepted status codes. The name is the key, so changing it
+# creates a second monitor and orphans the first.
+SERVICE_MONITORS="Vaultwarden	https://vault.${DOMAIN:-}	[\"200-299\"]"
+
 # ── Functions ─────────────────────────────────────────────────────────────────
 
 vaultwarden_dirs() {

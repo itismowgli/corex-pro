@@ -24,6 +24,12 @@ SERVICE_DISK_GB=5
 SERVICE_FIREWALL_SPECS=("25/tcp" "587/tcp" "465/tcp" "143/tcp" "993/tcp" "4190/tcp")
 SERVICE_DESCRIPTION="Self-hosted email server with SMTP, IMAP, CalDAV, and CardDAV. Full email independence. Requires a proper domain with DNS records configured."
 
+# Uptime Kuma check, seeded by lib/kuma.sh so it is recreated on a fresh
+# install rather than living only in Kuma's database. Tab separated:
+# name, url, accepted status codes. The name is the key, so changing it
+# creates a second monitor and orphans the first.
+SERVICE_MONITORS="Stalwart Mail	https://mail.${DOMAIN:-}	[\"200-299\",\"302\"]"
+
 # ── Functions ─────────────────────────────────────────────────────────────────
 
 stalwart_dirs() {

@@ -33,6 +33,13 @@ SERVICE_RAM_MB=2048
 SERVICE_DISK_GB=10
 SERVICE_DESCRIPTION="Sync files, calendar, and contacts across all your devices. Unlimited storage on your own hardware. Replaces Google Drive, iCloud, Dropbox."
 
+# Uptime Kuma check, seeded by lib/kuma.sh so it is recreated on a fresh
+# install rather than living only in Kuma's database. Tab separated:
+# name, url, accepted status codes. The name is the key, so changing it
+# creates a second monitor and orphans the first.
+SERVICE_MONITORS="Nextcloud	https://nextcloud.${DOMAIN:-}	[\"200-299\",\"302\"]
+Nextcloud Whiteboard	https://whiteboard.${DOMAIN:-}	[\"200-299\"]"
+
 # ── Private Helpers ───────────────────────────────────────────────────────────
 
 # Generates PHP, Apache, and Nextcloud config.php performance tuning files.

@@ -25,6 +25,12 @@ SERVICE_DISK_GB=20
 SERVICE_FIREWALL_SPECS=("from ${LAN_SUBNET:-192.168.0.0/16} to any port 11434 proto tcp" "from ${LAN_SUBNET:-192.168.0.0/16} to any port 3003 proto tcp")
 SERVICE_DESCRIPTION="Local AI chat with open-source models (Llama, Mistral, etc.). No API costs, complete privacy. Includes web browsing capability for AI agents."
 
+# Uptime Kuma check, seeded by lib/kuma.sh so it is recreated on a fresh
+# install rather than living only in Kuma's database. Tab separated:
+# name, url, accepted status codes. The name is the key, so changing it
+# creates a second monitor and orphans the first.
+SERVICE_MONITORS="Open WebUI	https://ai.${DOMAIN:-}	[\"200-299\"]"
+
 # ── Functions ─────────────────────────────────────────────────────────────────
 
 ai_dirs() {
