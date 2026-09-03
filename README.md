@@ -88,8 +88,8 @@ get locked out of your own databases.
 
 ## Services
 
-Sixteen service modules, all optional except Traefik. A module can deploy more
-than one container: `monitoring` and `ai` each start three.
+Seventeen service modules, all optional except Traefik. A module can deploy
+more than one container: `monitoring`, `ai` and `calcom` each start three.
 
 | Module | What it gives you | Replaces |
 |---|---|---|
@@ -100,6 +100,7 @@ than one container: `monitoring` and `ai` each start three.
 | `vaultwarden` | Password manager, works with every Bitwarden client | 1Password, LastPass |
 | `stalwart` | Mail server with SMTP, IMAP, and JMAP | see the email section first |
 | `n8n` | Workflow automation with several hundred integrations | Zapier |
+| `calcom` | Booking links with availability rules and calendar sync | Calendly |
 | `coolify` | Deploy apps from Git, installed manually, routed by address | Heroku, Vercel |
 | `timemachine` | Time Machine target over SMB for Macs | Time Capsule |
 | `monitoring` | Uptime Kuma, Grafana, and Prometheus | Datadog |
@@ -131,6 +132,7 @@ only works if a Traefik Host rule declares it. The rules live in
 | `vaultwarden` | `https://vault.DOMAIN` | Let's Encrypt |
 | `stalwart` | `https://mail.DOMAIN` | Let's Encrypt |
 | `n8n` | `https://n8n.DOMAIN` | Let's Encrypt |
+| `calcom` | `https://cal.DOMAIN` | Let's Encrypt |
 | `ai` | `https://ai.DOMAIN` | Let's Encrypt |
 | `monitoring` | `https://grafana.DOMAIN` and `https://status.DOMAIN` | Let's Encrypt |
 | `portainer` | `https://portainer.DOMAIN` | Let's Encrypt |
@@ -153,7 +155,7 @@ Coolify's Instance FQDN in its settings, or it keeps generating links back to
 port 8000.
 
 Every Traefik router uses the same entrypoint and the same resolver
-(`websecure` and `myresolver`), so all eleven hostnames present a Let's Encrypt
+(`websecure` and `myresolver`), so all twelve hostnames present a Let's Encrypt
 certificate. If one of them shows a certificate warning while the others do
 not, the router exists but ACME has not issued for that name yet. Check
 `docker logs traefik 2>&1 | grep -i acme`.
@@ -411,6 +413,87 @@ under review.
 Webhook URLs are built from the domain rather than the container's own idea of
 its address, so workflows triggered from outside get a working HTTPS callback
 rather than an internal one that nothing can reach.
+
+### calcom
+
+Booking links, in place of Calendly. You publish an address, someone picks a
+slot from your real availability, and both of you get a confirmation. It reads
+and writes your calendar if you connect one, and works without one.
+
+| | |
+|---|---|
+| Reach it | `https://cal.DOMAIN` |
+| Containers | `calcom`, `calcom-db` (PostgreSQL 16), `calcom-helper` |
+| Ports opened | none, Traefik reaches it over the Docker network |
+| Data | `service-data/calcom-db/`, secrets in `docker-configs/calcom/.secrets.env` |
+| Needs | a domain, and a mail relay to send confirmations |
+
+Install it, open the page, and create your account. Then run
+`sudo bash corex-manage.sh repair calcom`, which does two things worth having:
+it closes public signup now that an account exists, and it turns on Telegram
+alerts for new bookings.
+
+Signup is open until that first account exists, because it has to be: closing
+it earlier would lock you out of your own instance. Leaving it open on a
+published hostname lets anyone create an account, so closing it is the point of
+that second step. If other people need their own logins, set
+`"calcom_allow_signup": "true"` in `/etc/corex/state.json` and it stays open.
+
+First start takes several minutes and looks like a hang. The container applies
+several hundred database migrations before it listens, so the page returns 502
+until it finishes. Watch it with `docker logs -f calcom`. Install waits for it
+and says when it is ready.
+
+Google and Stripe are both optional, however often Cal.com's own documentation
+mentions them: the Stripe settings exist for its hosted paid plans. Cal.com
+sends confirmation mail through the relay the installer collected, and a Google
+account is only needed if you want your Google Calendar kept in sync.
+Without a relay it starts and runs and cannot send a single confirmation, which
+is a booking tool that does not really book, so the install says so plainly.
+
+Two things Cal.com expects its hosting platform to provide, which
+`calcom-helper` provides instead:
+
+Scheduled work. Cal.com's own cron endpoints exist in the image but nothing
+calls them outside Vercel. Without them, reminder mail for unconfirmed bookings
+never goes out, "meeting starting now" webhooks never fire, and a connected
+Google calendar's watch subscription expires and quietly stops delivering
+changes. The helper calls each endpoint on upstream's own schedule.
+
+Notifications. Cal.com sends webhooks; it does not send you a message. The
+helper receives those webhooks and posts a plain summary to the same Telegram
+chat as your Uptime Kuma alerts:
+
+```
+Cal.com: New booking
+30 Min Meeting between you and Alex
+When:  Fri 04 Sep 2026, 15:00 (UTC+05:30)
+Who:   Alex (alex@example.com)
+Link:  https://cal.DOMAIN/video/abc123
+https://cal.DOMAIN/booking/abc123
+```
+
+New bookings, requests awaiting confirmation, reschedules, cancellations and
+meeting starts all arrive. The wiring is one webhook row per account, which you
+can see and edit in the app under Settings, Developer, Webhooks. Repair
+recreates it, so to switch the alerts off for good set
+`"calcom_telegram_hook": "off"` in `state.json` rather than deleting the row.
+The payload is signed, and the helper checks the signature before sending
+anything, so nothing else on the Docker network can make it message you. It has
+no route and no published port.
+
+The known trap is the image. Cal.com's Docker image takes
+`NEXT_PUBLIC_WEBAPP_URL` as a build argument, so every guide says you must
+rebuild it for your own domain. You do not: its entrypoint compares the
+built-in URL with the one you set and rewrites the compiled assets on boot.
+That matters because compiling a Next.js application is the hottest thing this
+project can do, hot enough to trip a small machine's thermal cutout, so CoreX
+pulls the published image and never builds it. The tag is pinned to `v6.2.0`
+for the same reason `nextcloud` is pinned to a major version: a moving tag
+carries a schema upgrade in unannounced.
+
+To use a different name than `cal`, set `"calcom_subdomain": "book"` in
+`state.json` and run repair.
 
 ### timemachine
 
@@ -973,8 +1056,9 @@ the internet again.
 Several services need to send mail, and each fails differently without it.
 Nextcloud cannot send password resets, share notifications or activity digests,
 and its own warning says the configuration is "not set or verified" without
-mentioning what breaks. Some applications refuse to start at all rather than
-run without a way to send mail.
+mentioning what breaks. Cal.com starts and runs and then cannot send a booking
+confirmation. Some applications refuse to start at all rather than run without
+a way to send mail.
 
 The installer therefore asks for a relay once, during setup, and stores it in
 `/etc/corex/smtp.conf` (0600) for any service that needs one. Skipping is fine;
@@ -1146,6 +1230,10 @@ chat are logged and ignored.
 
 The dashboard's Start, Stop, Restart, Repair and Update buttons go through the
 same path, so both work the same way and neither can do more than the other.
+
+The same chat receives Cal.com booking alerts if you have that module
+installed. Those come from `calcom-helper` rather than from the bot, and they
+are one-way: nothing you send in reply changes a booking.
 
 ### Why it is built this way
 
@@ -1460,6 +1548,9 @@ the resource watchdog, so alerts cover memory, disk, heat and container faults
 rather than only reachability, and fixed a Time Machine crash loop it found.
 v3.12.0 made the dashboard buttons work and added Telegram control, both
 through a single privileged agent rather than by granting either of them root.
+v3.13.0 moved the mail relay into the installer and gave every service a
+reference entry here. v3.14.0 added Cal.com, with the cron its hosting platform
+would normally run and a Telegram message when someone books.
 
 See [CHANGELOG.md](CHANGELOG.md) for the detail.
 

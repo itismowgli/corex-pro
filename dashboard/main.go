@@ -66,6 +66,7 @@ type PageData struct {
 var serviceLabels = map[string]string{
 	"adguard":     "AdGuard Home — DNS & Ad Blocker",
 	"ai":          "AI Stack — Ollama + WebUI",
+	"calcom":      "Cal.com — Scheduling & Booking",
 	"cloudflared": "Cloudflare Tunnel — External Access",
 	"coolify":     "Coolify — App Platform",
 	"crowdsec":    "CrowdSec — Intrusion Prevention",
@@ -99,6 +100,7 @@ var serviceLabels = map[string]string{
 var serviceURLs = map[string][]string{
 	"adguard": {"http://{IP}:3000"},
 	"ai":      {"https://ai.{DOMAIN}"},
+	"calcom":  {"https://cal.{DOMAIN}"},
 	// Routed by a Traefik file-provider rule rather than a Docker label,
 	// because Coolify sits on its own network. Port 8000 stays listed as the
 	// LAN way in and the address the route itself connects to.
@@ -125,6 +127,7 @@ var serviceURLs = map[string][]string{
 var serviceContainers = map[string]string{
 	"adguard":     "adguard",
 	"ai":          "ollama",
+	"calcom":      "calcom",
 	"cloudflared": "cloudflared",
 	"coolify":     "coolify",
 	"crowdsec":    "crowdsec",

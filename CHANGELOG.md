@@ -6,6 +6,55 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.14.0] - 2026-09-03
+
+### Added
+- **Cal.com, the seventeenth service module**, at `cal.DOMAIN`: booking links
+  with availability rules, calendar sync and confirmation mail, in place of
+  Calendly. Three containers, `calcom`, `calcom-db` (PostgreSQL 16) and
+  `calcom-helper`, nothing published to the host, and the image pinned to
+  `calcom/cal.com:v6.2.0` rather than a tag that moves.
+
+  Nothing is compiled. `NEXT_PUBLIC_WEBAPP_URL` is a build argument, which is
+  why every self-hosting guide says the image has to be rebuilt for a custom
+  domain, but the Dockerfile records the same value again as
+  `BUILT_NEXT_PUBLIC_WEBAPP_URL` and the entrypoint rewrites the compiled
+  assets on boot when the two differ. So the published image is pulled and
+  pointed at the domain at run time, which matters because compiling a Next.js
+  application is the peak thermal load on this hardware (gotcha #31).
+
+- **`calcom-helper`, which supplies the two things Cal.com expects a hosting
+  platform to provide.** Its cron endpoints exist in the image and nothing
+  calls them outside Vercel, so without them reminder mail for unconfirmed
+  bookings is never sent, scheduled webhook triggers never fire, and a
+  connected Google calendar's watch subscription expires and stops delivering
+  changes. The helper calls each on upstream's own schedule, trying POST and
+  falling back to GET on 405 because the routes disagree about which verb they
+  export, and sending either `CRON_API_KEY` bare or `Bearer CRON_SECRET`
+  because they authenticate against two different variables.
+
+- **A Telegram message when someone books.** Cal.com sends webhooks; it does
+  not send messages. The helper receives them and posts a plain-text summary
+  with the time in the organiser's own timezone to the same chat as the Uptime
+  Kuma alerts and the control bot, for new bookings, requests awaiting
+  confirmation, reschedules, cancellations, rejections and meeting starts. The
+  payload is signed and the signature is checked before anything is sent, so
+  being reachable on the Docker network is not enough to make it message you.
+  The wiring is one webhook row per account, written by deploy and repair and
+  visible in the app under Settings, Developer, Webhooks.
+
+- **Signup that closes itself.** Cal.com's signup form is open by default,
+  which on a published hostname lets strangers create accounts, and closing it
+  before the first account exists locks the owner out. It now follows the
+  account count: open at zero, closed above it, applied on the next repair.
+  Set `calcom_allow_signup` in `state.json` to keep it open.
+
+### Changed
+- **The shared mail relay is written before services deploy, not after.** It
+  was persisted in Phase 5b, so on a fresh install every module that reads
+  `/etc/corex/smtp.conf` found nothing and had to be repaired afterwards to
+  pick the relay up.
+
 ## [v3.13.0] - 2026-09-03
 
 ### Added

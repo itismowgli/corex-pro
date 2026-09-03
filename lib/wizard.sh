@@ -176,7 +176,7 @@ apply_profile() {
             SELECTED_SERVICES=(traefik adguard portainer vaultwarden monitoring)
             ;;
         full)
-            SELECTED_SERVICES=(traefik adguard portainer nextcloud immich vaultwarden stalwart n8n coolify timemachine monitoring crowdsec cloudflared ai)
+            SELECTED_SERVICES=(traefik adguard portainer nextcloud immich vaultwarden stalwart n8n calcom coolify timemachine monitoring crowdsec cloudflared ai)
             ;;
         privacy)
             SELECTED_SERVICES=(traefik adguard portainer nextcloud immich vaultwarden stalwart crowdsec cloudflared monitoring)

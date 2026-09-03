@@ -33,6 +33,7 @@ phase4_directories() {
     _svc_selected "stalwart"    && mkdir -p "${DATA_ROOT}/stalwart-data" "${DOCKER_ROOT}/stalwart"
     _svc_selected "vaultwarden" && mkdir -p "${DATA_ROOT}/vaultwarden" "${DOCKER_ROOT}/vaultwarden"
     _svc_selected "n8n"         && mkdir -p "${DATA_ROOT}/n8n" "${DOCKER_ROOT}/n8n"
+    _svc_selected "calcom"      && mkdir -p "${DATA_ROOT}/calcom-db" "${DOCKER_ROOT}/calcom"
     _svc_selected "ai"          && mkdir -p "${DATA_ROOT}"/{ollama,open-webui,browserless} \
         "${DOCKER_ROOT}/ai"
     _svc_selected "monitoring"  && mkdir -p "${DATA_ROOT}"/{uptime-kuma,grafana,prometheus} \
@@ -53,6 +54,9 @@ phase4_directories() {
     [[ -d "${DATA_ROOT}/nextcloud-html" ]]  && chown -R 33:33 "${DATA_ROOT}/nextcloud-html"
     [[ -d "${DATA_ROOT}/grafana" ]]         && chown -R 472:472 "${DATA_ROOT}/grafana"
     [[ -d "${DATA_ROOT}/prometheus" ]]      && chown -R 65534:65534 "${DATA_ROOT}/prometheus"
+    # postgres:16 runs as uid 999, and refuses to start on a data directory
+    # it does not own.
+    [[ -d "${DATA_ROOT}/calcom-db" ]]       && chown -R 999:999 "${DATA_ROOT}/calcom-db"
 
     log_success "Directory structure created on SSD (selected services only)."
 }

@@ -28,9 +28,9 @@ learning nginx, SSL, Docker networking, or Linux hardening.
 - Re-run on existing server = health-check + repair broken services only
 - No live server required for testing (Docker-in-Docker + bats)
 
-**Current version:** v3.13.0
-**Current service modules:** 16 (Traefik, AdGuard, Portainer, Nextcloud,
-Immich, Vaultwarden, Stalwart Mail, Coolify, n8n, Time Machine,
+**Current version:** v3.14.0
+**Current service modules:** 17 (Traefik, AdGuard, Portainer, Nextcloud,
+Immich, Vaultwarden, Stalwart Mail, Coolify, n8n, Cal.com, Time Machine,
 Uptime Kuma + Grafana + Prometheus (monitoring), Ollama + OpenWebUI +
 Browserless (ai), CrowdSec, Cloudflared, Dashboard, UPS)
 
@@ -278,6 +278,10 @@ Immich          <- depends on immich-db (PostgreSQL) + immich-redis + immich-ml
 Vaultwarden     <- standalone (SQLite internal)
 Stalwart Mail   <- standalone; requires domain
 n8n             <- standalone (SQLite internal)
+Cal.com         <- depends on calcom-db (PostgreSQL 16) + calcom-helper, which
+                   supplies the cron Vercel would run and turns booking
+                   webhooks into Telegram messages; prebuilt image, never
+                   built; needs a domain, and an SMTP relay to send anything
 Coolify         <- standalone; MANUAL install only (port conflict)
 
 Uptime Kuma     <- standalone
@@ -304,6 +308,7 @@ Time Machine    <- host networking; depends on avahi-daemon on host
 | Immich | YES | - | - |
 | Vaultwarden | YES | - | - |
 | n8n | YES | - | - |
+| Cal.com (web, helper, db) | YES | - | - |
 | Stalwart | YES | - | - |
 | Uptime Kuma | YES | YES | - |
 | Grafana | YES | YES | - |
@@ -1290,6 +1295,50 @@ rejected the application's own connection string outright with
 running it restarts every few seconds, which the resource watchdog correctly
 reports once a minute. Stop its containers, set `restart=no`, mark the service
 disabled, and print exactly what is missing.
+
+### 33. An app built for a platform leaves out what the platform supplied
+
+Cal.com runs on Vercel upstream, so two things a booking tool needs come from
+the platform rather than from the application. A plain `docker compose up`
+has neither, and nothing reports their absence.
+
+**Cron.** `apps/web/vercel.json` lists the schedules. The endpoints exist in
+the image and answer correctly; nothing calls them. Without them scheduled
+webhook triggers never fire, reminder mail for unconfirmed bookings is never
+sent, and the watch subscription on a connected Google calendar expires and
+stops delivering changes. Two details make this harder than adding a timer.
+The routes disagree about which verb they export, so a caller has to try POST
+and fall back to GET on 405, and they authenticate against two different
+variables: most compare `authorization` to `CRON_API_KEY` bare, while the
+tasker routes want `Bearer ${CRON_SECRET}`. The wrong one gives 401 per tick
+and no other symptom.
+
+**A notification anyone will see.** Cal.com sends webhooks; it does not send
+messages. Its webhooks are per account and are created through its own UI, so
+a fresh instance has none, and the first account only exists after someone
+signs up. `calcom-helper` covers both jobs in one small container, and
+`_calcom_register_hook` writes the webhook row once an account exists, which
+is why the deploy prints "create your account, then repair".
+
+Two smaller traps from the same work.
+
+**A build argument is not proof that a rebuild is needed.**
+`NEXT_PUBLIC_WEBAPP_URL` is a build argument, and every self-hosting guide
+therefore says the image must be rebuilt for a custom domain. The Dockerfile
+records the same value again as `BUILT_NEXT_PUBLIC_WEBAPP_URL`, and
+`scripts/start.sh` compares the two on boot and rewrites the compiled assets
+when they differ. Read the entrypoint before deciding to compile: gotcha #31
+is what compiling costs on this hardware.
+
+**Signup has to be open exactly once.** Cal.com's signup form is open by
+default, which on a published hostname lets strangers create accounts, and
+closing it before the first account exists locks the owner out.
+`NEXT_PUBLIC_DISABLE_SIGNUP` therefore follows the account count: open at
+zero, closed above it, applied on the next deploy or repair. Note where the
+check lives. The variable is inlined into the client bundle at build time, so
+a runtime value never reaches the page and the form may still render; the
+signup API reads `process.env` and answers 403, so the refusal is real even
+though the form looks available.
 
 ---
 

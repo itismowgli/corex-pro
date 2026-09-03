@@ -259,3 +259,96 @@ assert_compose_contains() {
     monitoring_deploy
     assert_compose_contains "monitoring" "monitoring-net"
 }
+
+# ─── Cal.com ──────────────────────────────────────────────────────────────────
+#
+# These call the generation functions rather than calcom_deploy. Deploy pulls a
+# 1.6GB image, waits for a database and applies several hundred migrations,
+# none of which belongs in a smoke test; compose generation is the part this
+# file exists to check.
+
+calcom_prepare() {
+    source_service "calcom"
+    state_get() { echo "null"; }
+    export -f state_get
+    calcom_dirs
+    _calcom_secrets
+    _calcom_write_helper
+    _calcom_write_compose
+}
+
+@test "calcom: compose is generated" {
+    calcom_prepare
+    [ -f "${DOCKER_ROOT}/calcom/docker-compose.yml" ]
+}
+
+@test "calcom: web is routed on its own subdomain" {
+    calcom_prepare
+    assert_compose_contains "calcom" "Host(\`cal.test.example.com\`)"
+}
+
+@test "calcom: traefik targets the container port, not a host port" {
+    calcom_prepare
+    assert_compose_contains "calcom" "loadbalancer.server.port=3000"
+}
+
+# The image is only usable unbuilt because start.sh rewrites the compiled
+# assets when the runtime URL differs from the built-in one. If this ever
+# stopped being the public HTTPS address, every generated link would point at
+# localhost and the fix would look like "rebuild the image".
+@test "calcom: the app is told its public https address" {
+    calcom_prepare
+    assert_compose_contains "calcom" 'NEXT_PUBLIC_WEBAPP_URL: "https://cal.test.example.com"'
+    assert_compose_contains "calcom" 'NEXTAUTH_URL: "https://cal.test.example.com"'
+}
+
+# A moving tag here would carry a major upgrade into a database that has to
+# migrate for it (gotcha #19 and #26).
+@test "calcom: the image is pinned to a version" {
+    calcom_prepare
+    run grep -E 'image: calcom/cal\.com:v[0-9]+\.[0-9]+\.[0-9]+' \
+        "${DOCKER_ROOT}/calcom/docker-compose.yml"
+    [ "$status" -eq 0 ]
+}
+
+# start.sh passes this to wait-for-it.sh, so it needs the port too. Without it
+# the first migration races the database.
+@test "calcom: the database host carries its port" {
+    calcom_prepare
+    assert_compose_contains "calcom" 'DATABASE_HOST: "calcom-db:5432"'
+}
+
+@test "calcom: nothing is published to the host" {
+    calcom_prepare
+    run grep -E '^\s+- "[0-9]+:[0-9]+"' "${DOCKER_ROOT}/calcom/docker-compose.yml"
+    [ "$status" -ne 0 ]
+}
+
+@test "calcom: the compose file is not world readable" {
+    calcom_prepare
+    run stat -c '%a' "${DOCKER_ROOT}/calcom/docker-compose.yml"
+    [ "$output" = "600" ]
+}
+
+@test "calcom: secrets file is not world readable" {
+    calcom_prepare
+    run stat -c '%a' "${DOCKER_ROOT}/calcom/.secrets.env"
+    [ "$output" = "600" ]
+}
+
+# The encryption key is an AES-256 key upstream rejects at any other length.
+@test "calcom: the encryption key is exactly 32 characters" {
+    calcom_prepare
+    run grep -cE '^CALCOM_ENCRYPTION_KEY=[0-9a-f]{32}$' "${DOCKER_ROOT}/calcom/.secrets.env"
+    [ "$output" = "1" ]
+}
+
+@test "calcom: the helper is valid python" {
+    calcom_prepare
+    [ -f "${DOCKER_ROOT}/calcom/helper.py" ]
+    if ! command -v python3 &>/dev/null; then
+        skip "python3 not available"
+    fi
+    run python3 -m py_compile "${DOCKER_ROOT}/calcom/helper.py"
+    [ "$status" -eq 0 ]
+}

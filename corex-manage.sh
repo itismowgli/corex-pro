@@ -1755,6 +1755,7 @@ cmd_network_check() {
         ["immich"]="photos"
         ["vaultwarden"]="vault"
         ["n8n"]="n8n"
+        ["calcom"]="cal"
         ["stalwart"]="mail"
         ["ai"]="ai"
         ["uptime-kuma"]="status"
