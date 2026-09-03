@@ -549,7 +549,12 @@ func getServices(state CoreXState) []ServiceInfo {
 			status = ms
 		}
 
-		var urls []string
+		// Not `var urls []string`. A nil slice marshals to JSON null, not [],
+		// and three services have no browsable address at all (cloudflared,
+		// crowdsec, traefik), so the page that reads .length on it crashed
+		// and the error boundary blanked the whole dashboard. Any field the
+		// client types as an array has to leave here as one.
+		urls := []string{}
 		for _, tpl := range serviceURLs[name] {
 			u := tpl
 			if strings.Contains(u, "{DOMAIN}") {

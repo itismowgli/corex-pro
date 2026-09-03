@@ -49,7 +49,7 @@ export function NetworkTab({
                 <TableRow key={svc.name}>
                   <TableCell className="font-medium">{svc.label}</TableCell>
                   <TableCell>
-                    {svc.urls.length ? (
+                    {svc.urls?.length ? (
                       svc.urls.map((u) => (
                         <a
                           key={u}

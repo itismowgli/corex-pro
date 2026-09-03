@@ -38,9 +38,55 @@ const bundle = fs.readFileSync(entryPath, "utf8")
 // blank page this check exists to prevent, one click further in.
 const TABS = ["services", "health", "storage", "network", "catalogue", "system", "account"]
 
-// One reply has to succeed, /api/auth/me, or the app renders the login form
-// and none of the tabs are exercised at all. Everything else still fails, so
-// each tab must render its own error state rather than depend on a server.
+// Realistic payloads, not just failures.
+//
+// The first version of this file failed every fetch, so each tab rendered its
+// error state and no service card, port row or catalogue entry was ever
+// constructed. That hid a crash that blanked the entire dashboard: the Go side
+// marshals a nil slice as JSON null, three services have no browsable address,
+// and `svc.urls.length` on null throws. Every check passed and the page was
+// blank. So the fixtures below carry the shapes the server actually sends,
+// including the null, and both modes run.
+const SERVICES = [
+  {
+    name: "nextcloud",
+    label: "Nextcloud",
+    status: "HEALTHY",
+    urls: ["https://nextcloud.example.com"],
+    container: "nextcloud",
+    enabled: true,
+  },
+  // No browsable address. The server sends null here, not [], and this row is
+  // the whole reason this fixture exists.
+  { name: "traefik", label: "Traefik", status: "HEALTHY", urls: null, container: "traefik", enabled: true },
+  { name: "coolify", label: "Coolify", status: "DISABLED", urls: null, container: "coolify", enabled: false },
+  { name: "immich", label: "Immich", status: "UNHEALTHY", urls: ["https://photos.example.com"], container: "immich-server", enabled: true },
+]
+
+const STATE = {
+  version: "3.17.0",
+  domain: "example.com",
+  server_ip: "10.0.0.2",
+  ssh_port: "2222",
+  hostname: "box",
+  kernel: "6.8.0",
+  uptime: "3 days",
+  docker: "29.7.2",
+  timezone: "UTC",
+  agent_ok: true,
+  agent_error: "",
+}
+
+const DATA = {
+  "/api/services": SERVICES,
+  "/api/state": STATE,
+  "/api/storage": { output: "CoreX Storage Report\n  /mnt/corex-data  40% used" },
+  "/api/ports": [{ service: "adguard", url: "http://10.0.0.2:3000", note: "admin" }],
+  "/api/catalogue": [
+    { name: "gitea", label: "Gitea", category: "productivity", description: "Git server", ram_mb: 512, disk_gb: 5, needs_domain: true, installed: false, enabled: false },
+  ],
+}
+
 const SIGNED_IN = {
   auth_enabled: true,
   authenticated: true,
@@ -63,7 +109,10 @@ function reply(body, status = 200) {
   }
 }
 
-function mount(url, me) {
+// withData true serves the fixtures above; false fails every call but
+// /api/auth/me, which is the state an operator sees when the agent is down.
+// Both have to render, and only the first constructs any rows.
+function mount(url, me, withData = true) {
   const dom = new JSDOM(html, {
     runScripts: "outside-only",
     pretendToBeVisual: true,
@@ -71,7 +120,13 @@ function mount(url, me) {
   })
   const { window } = dom
   window.fetch = async (path) => {
-    if (String(path).includes("/api/auth/me")) return reply(me)
+    const p = String(path)
+    if (p.includes("/api/auth/me")) return reply(me)
+    if (withData) {
+      for (const [route, body] of Object.entries(DATA)) {
+        if (p.startsWith(route)) return reply(body)
+      }
+    }
     throw new Error("render-check: network disabled")
   }
   return { dom, window }
@@ -79,8 +134,15 @@ function mount(url, me) {
 
 let failed = false
 
+// Every tab twice: once with data, once with everything failing.
+const MODES = [
+  { withData: true, label: "data" },
+  { withData: false, label: "down" },
+]
+
+for (const { withData, label: mode } of MODES)
 for (const tab of TABS) {
-  const { window } = mount("https://dashboard.example.com/#" + tab, SIGNED_IN)
+  const { window } = mount("https://dashboard.example.com/#" + tab, SIGNED_IN, withData)
   window.EventSource = class {
     close() {}
   }
@@ -121,10 +183,10 @@ for (const tab of TABS) {
 
   if (failures.length) {
     failed = true
-    console.error("render-check FAILED on the " + tab + " tab")
+    console.error("render-check FAILED on the " + tab + " tab (" + mode + ")")
     for (const f of failures) console.error("  - " + String(f).slice(0, 1200))
   } else {
-    console.error("  " + tab.padEnd(10) + " ok, " + text.length + " characters")
+    console.error("  " + tab.padEnd(10) + " " + mode.padEnd(5) + " ok, " + text.length + " characters")
   }
   window.close()
 }
@@ -137,7 +199,7 @@ for (const tab of TABS) {
   const { window } = mount("https://dashboard.example.com/", {
     ...SIGNED_IN,
     authenticated: false,
-  })
+  }, true)
   const failures = []
   window.addEventListener("error", (e) =>
     failures.push("uncaught: " + (e.error?.stack || e.message))
@@ -170,5 +232,5 @@ for (const tab of TABS) {
 }
 
 if (failed) process.exit(1)
-console.error("render-check ok: every tab and the login form mount and render")
+console.error("render-check ok: every tab renders with data and with the server down, and the login form mounts")
 process.exit(0)

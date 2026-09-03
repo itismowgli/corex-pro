@@ -119,7 +119,7 @@ function ServiceCard({
           )}
         </CardTitle>
         <div className="flex min-w-0 flex-col gap-0.5">
-          {svc.urls.length ? (
+          {svc.urls?.length ? (
             svc.urls.map((u) => (
               <a
                 key={u}
