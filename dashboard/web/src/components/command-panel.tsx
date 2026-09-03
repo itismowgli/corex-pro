@@ -23,6 +23,7 @@ export function CommandPanel({
   confirm,
   output,
   running,
+  locked,
   onRun,
   children,
 }: {
@@ -35,6 +36,10 @@ export function CommandPanel({
   confirm?: string
   output?: string
   running?: boolean
+  // The agent runs one job at a time and refuses the rest with "busy running
+  // X". Disabling every button while any job runs is clearer than letting the
+  // click through to that refusal.
+  locked?: boolean
   onRun: (action: string) => void
   children?: React.ReactNode
 }) {
@@ -52,7 +57,7 @@ export function CommandPanel({
             size="xs"
             variant={variant}
             className="ml-auto"
-            disabled={running}
+            disabled={running || locked}
             onClick={click}
           >
             {running ? <Loader2Icon className="animate-spin" /> : <Icon />}

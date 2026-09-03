@@ -9,12 +9,14 @@ export function StorageTab({
   loading,
   error,
   busy,
+  locked,
   onCleanup,
 }: {
   output: string
   loading: boolean
   error: string | null
   busy: boolean
+  locked: boolean
   onCleanup: (dryRun: boolean) => void
 }) {
   return (
@@ -25,14 +27,14 @@ export function StorageTab({
             <HardDriveIcon className="size-4" />
             Disk usage by service
             <span className="ml-auto flex gap-2">
-              <Button size="xs" variant="secondary" disabled={busy} onClick={() => onCleanup(true)}>
+              <Button size="xs" variant="secondary" disabled={busy || locked} onClick={() => onCleanup(true)}>
                 <SearchIcon />
                 Preview cleanup
               </Button>
               <Button
                 size="xs"
                 variant="outline"
-                disabled={busy}
+                disabled={busy || locked}
                 onClick={() => {
                   if (
                     window.confirm(

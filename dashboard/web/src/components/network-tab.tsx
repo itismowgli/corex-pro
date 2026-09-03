@@ -11,12 +11,14 @@ export function NetworkTab({
   state,
   outputs,
   running,
+  locked,
   onRun,
 }: {
   services: Service[]
   state: State | null
   outputs: Record<string, string>
   running: string | null
+  locked: boolean
   onRun: (action: string) => void
 }) {
   return (
@@ -81,7 +83,8 @@ export function NetworkTab({
           <>
             Requests every hostname and reports the HTTP status, the certificate expiry, and
             whether DNS resolves to the server or out to Cloudflare. The table above says what a
-            hostname should be; this says what it actually does.
+            hostname should be; this says what it actually does. It requests each one in turn, so
+            it takes a couple of minutes; the panel updates itself when it finishes.
           </>
         }
         action="network-check"
@@ -89,6 +92,7 @@ export function NetworkTab({
         buttonLabel="Check every hostname"
         output={outputs["network-check"]}
         running={running === "network-check"}
+        locked={locked}
         onRun={onRun}
       />
 
@@ -106,6 +110,7 @@ export function NetworkTab({
         buttonLabel="List routes"
         output={outputs["route-list"]}
         running={running === "route-list"}
+        locked={locked}
         onRun={onRun}
       />
 

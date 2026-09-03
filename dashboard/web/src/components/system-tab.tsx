@@ -32,12 +32,14 @@ export function SystemTab({
   ports,
   outputs,
   running,
+  locked,
   onUpdateAll,
 }: {
   state: State | null
   ports: Port[]
   outputs: Record<string, string>
   running: string | null
+  locked: boolean
   onUpdateAll: () => void
 }) {
   const port = state?.ssh_port || "22"
@@ -148,6 +150,7 @@ export function SystemTab({
         confirm="Pull new images for every installed service and recreate the ones that changed?"
         output={outputs["update-all"]}
         running={running === "update-all"}
+        locked={locked}
         onRun={onUpdateAll}
       />
 

@@ -165,6 +165,9 @@ export default function App() {
     [runningAction, services, state, catalogue, storage]
   )
 
+  // The agent serialises jobs, so one running action locks the rest.
+  const locked = job?.state === "running"
+
   const refreshAll = () => {
     void services.refresh()
     void state.refresh()
@@ -250,12 +253,18 @@ export default function App() {
               services={svcList}
               loading={services.loading}
               busy={busy}
+              locked={locked}
               onAction={runService}
               onLogs={(svc) => setLogs({ container: svc.container, label: svc.label })}
             />
           </TabsContent>
           <TabsContent value="health">
-            <HealthTab outputs={outputs} running={runningAction} onRun={runBox} />
+            <HealthTab
+              outputs={outputs}
+              running={runningAction}
+              locked={locked}
+              onRun={runBox}
+            />
           </TabsContent>
           <TabsContent value="storage">
             <StorageTab
@@ -263,6 +272,7 @@ export default function App() {
               loading={storage.loading}
               error={storage.error}
               busy={!!runningAction?.startsWith("cleanup")}
+              locked={locked}
               onCleanup={(dryRun) => runBox(dryRun ? "cleanup-preview" : "cleanup")}
             />
           </TabsContent>
@@ -272,6 +282,7 @@ export default function App() {
               state={state.data}
               outputs={outputs}
               running={runningAction}
+              locked={locked}
               onRun={runBox}
             />
           </TabsContent>
@@ -284,6 +295,7 @@ export default function App() {
               ports={ports.data ?? []}
               outputs={outputs}
               running={runningAction}
+              locked={locked}
               onUpdateAll={() => runBox("update-all")}
             />
           </TabsContent>

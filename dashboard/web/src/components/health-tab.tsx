@@ -14,10 +14,12 @@ import { CommandPanel } from "@/components/command-panel"
 export function HealthTab({
   outputs,
   running,
+  locked,
   onRun,
 }: {
   outputs: Record<string, string>
   running: string | null
+  locked: boolean
   onRun: (action: string) => void
 }) {
   return (
@@ -36,6 +38,7 @@ export function HealthTab({
         buttonLabel="Check"
         output={outputs.health}
         running={running === "health"}
+        locked={locked}
         onRun={onRun}
       />
       <CommandPanel
@@ -52,6 +55,7 @@ export function HealthTab({
         buttonLabel="Report"
         output={outputs.watchdog}
         running={running === "watchdog"}
+        locked={locked}
         onRun={onRun}
       />
       <CommandPanel
@@ -70,6 +74,7 @@ export function HealthTab({
         confirm="Health-check every service and repair whatever is unhealthy? Containers may restart. No data is deleted."
         output={outputs.doctor}
         running={running === "doctor"}
+        locked={locked}
         onRun={onRun}
       />
     </div>

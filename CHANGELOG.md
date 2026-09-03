@@ -45,6 +45,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
   renders tab content lazily, so a component that throws is invisible until
   someone opens it: the same blank page, one click further in.
 
+- **Every action button disables while any job runs.** The agent deliberately
+  serialises jobs and refuses the rest with "busy running X", and a click that
+  lands on that refusal reads as a broken button rather than as a queue. The
+  reachability check also says how long it takes, since it requests every
+  hostname in turn: 118 seconds on this box, which without a hint looks like a
+  hang.
+
 ## [v3.15.1] - 2026-09-03
 
 ### Fixed

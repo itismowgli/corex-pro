@@ -36,12 +36,14 @@ export function ServicesTab({
   services,
   loading,
   busy,
+  locked,
   onAction,
   onLogs,
 }: {
   services: Service[]
   loading: boolean
   busy: string | null
+  locked: boolean
   onAction: (svc: Service, action: ServiceAction) => void
   onLogs: (svc: Service) => void
 }) {
@@ -75,7 +77,7 @@ export function ServicesTab({
           key={svc.name}
           svc={svc}
           busy={busy === svc.name}
-          disabled={!!busy}
+          disabled={!!busy || locked}
           onAction={onAction}
           onLogs={onLogs}
         />
