@@ -6,6 +6,40 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.13.0] - 2026-09-03
+
+### Added
+- **The installer asks for an outbound mail relay.** Several services need one
+  and each fails differently without it: Nextcloud silently cannot send a
+  password reset, and some applications refuse to start rather than run with no
+  way to send mail. Collecting it once at setup and storing it in
+  `/etc/corex/smtp.conf` (0600) means a service that needs mail finds it
+  already configured rather than failing afterwards. Skipping is offered and
+  safe.
+
+  The wizard strips whitespace from the password, because Google displays app
+  passwords in four groups for readability while SMTP authentication wants the
+  sixteen characters. Values are written quoted, which is not tidiness: an
+  unquoted password containing a space is parsed by the shell as a command
+  prefix, so the variable is silently never set while the file looks correct.
+
+- **A reference entry in the README for all sixteen services**, installed or
+  not, written for someone who has not used them. Each says what the thing is,
+  where to reach it, which containers it starts, where its data lives, what it
+  needs before it will work, and what to do on first run, along with the
+  specific trap that service is known for. Stalwart's entry leads with why a
+  home connection usually cannot run a mail server, and Coolify's explains why
+  CoreX will not install it automatically.
+
+- **Two gotchas about building images locally** (#31 and #32), which matter for
+  any service without a published image. #31 records that compiling is the
+  peak thermal load on small hardware, with measurements from a build that took
+  a Ryzen mini server from 64C to 96.4C and made the thermal guardian shed
+  twelve containers, and that two services sharing an image must not both
+  declare a build or BuildKit compiles it twice in parallel. #32 records how to
+  find a container's real requirements in its compiled bundle when it
+  crash-loops without explaining itself.
+
 ## [v3.12.1] - 2026-09-03
 
 ### Changed

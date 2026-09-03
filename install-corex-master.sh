@@ -212,6 +212,10 @@ main() {
     # Runs after services exist so the thermal guardian can enumerate them,
     # and after Docker so the delay drop-in applies on the next boot.
     log_step "═══ PHASE 5b: Resilience & Self-Healing ═══"
+    # Persist the shared mail relay before services deploy, so anything that
+    # needs one finds it already there rather than failing after install.
+    declare -f smtp_conf_write >/dev/null 2>&1 && smtp_conf_write
+
     thermal_install
     # After thermal_install, so the watchdog can report on the shed list the
     # guardian owns, and after services, so its first run sees the real set.

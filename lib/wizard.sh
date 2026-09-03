@@ -195,6 +195,93 @@ apply_profile() {
 
 # ── Main Wizard ────────────────────────────────────────────────────────────────
 
+# ── Outbound mail relay ───────────────────────────────────────────────────────
+# Asked once, at install, and shared by every service that sends mail.
+#
+# This exists because "optional" email is a trap. Nextcloud silently cannot
+# send a password reset without it, and some applications refuse to start at
+# all rather than run with no way to send mail. Collecting it here means a
+# service that needs a relay finds one already configured, instead of failing
+# after install when it is least convenient.
+#
+# A relay is not a mail server. CoreX does not try to run one, because a
+# residential connection cannot: ISPs block port 25 in both directions and
+# domestic address ranges are on blocklists by default. Sending through an
+# account that is already trusted is the working answer.
+_wizard_smtp() {
+    SMTP_HOST=""; SMTP_PORT="587"; SMTP_TLS_MODE="starttls"
+    SMTP_USER=""; SMTP_PASSWORD=""; SMTP_FROM=""
+
+    local want
+    want=$(_menu "Outbound Email" \
+"Some services need to send mail: password resets, alerts, booking
+confirmations. CoreX can use any SMTP relay you already have.
+
+A Gmail account with an app password is the usual choice and takes
+two minutes: myaccount.google.com -> Security -> 2-Step Verification
+-> App passwords.
+
+Skipping is fine. Services that need mail will say so, and you can
+add it later with: corex manage mail-setup" \
+        "configure" "Set up a mail relay now (recommended)" \
+        "skip"      "Skip, configure later")
+
+    [[ "$want" != "configure" ]] && { export SMTP_HOST SMTP_PORT SMTP_TLS_MODE SMTP_USER SMTP_PASSWORD SMTP_FROM; return 0; }
+
+    SMTP_HOST=$(_inputbox "SMTP Server" \
+        "Your relay's hostname\nGmail: smtp.gmail.com" "smtp.gmail.com")
+    SMTP_PORT=$(_inputbox "SMTP Port" \
+        "587 for STARTTLS (usual), 465 for implicit TLS" "587")
+    [[ "$SMTP_PORT" == "465" ]] && SMTP_TLS_MODE="implicit" || SMTP_TLS_MODE="starttls"
+    SMTP_USER=$(_inputbox "SMTP Username" \
+        "Usually the full email address" "")
+    SMTP_PASSWORD=$(_inputbox "SMTP Password" \
+"For Gmail this is a 16-character app password, NOT your account
+password. Spaces are ignored, so paste it either way." "")
+    # Google shows app passwords in four groups for readability; SMTP AUTH
+    # wants the sixteen characters with no spaces, and an unstripped value
+    # fails authentication with a message that blames the credentials.
+    SMTP_PASSWORD="${SMTP_PASSWORD//[[:space:]]/}"
+    SMTP_FROM=$(_inputbox "Sender Address" \
+"The From address on outgoing mail.
+
+It usually has to match the account above: Gmail rewrites or rejects
+anything else. To send as you@${DOMAIN:-your-domain} you need a
+transactional relay with your domain verified, not Gmail." \
+        "${SMTP_USER}")
+
+    export SMTP_HOST SMTP_PORT SMTP_TLS_MODE SMTP_USER SMTP_PASSWORD SMTP_FROM
+}
+
+# Persist the relay where services can find it. 0600 and outside state.json,
+# which is 0644 and bind-mounted into a web-facing container (gotcha #24).
+smtp_conf_write() {
+    [[ -n "${SMTP_HOST:-}" && -n "${SMTP_USER:-}" ]] || return 0
+    mkdir -p /etc/corex
+    local prev_umask; prev_umask=$(umask); umask 077
+    cat > /etc/corex/smtp.conf << SMTPEOF
+# CoreX shared outbound mail relay. Sourced by services that send mail.
+# Values are quoted: an unquoted password containing a space is parsed as a
+# command prefix and silently never set.
+COREX_SMTP_HOST='${SMTP_HOST}'
+COREX_SMTP_PORT='${SMTP_PORT:-587}'
+COREX_SMTP_TLS_MODE='${SMTP_TLS_MODE:-starttls}'
+COREX_SMTP_USER='${SMTP_USER}'
+COREX_SMTP_PASSWORD='${SMTP_PASSWORD}'
+COREX_SMTP_FROM='${SMTP_FROM:-$SMTP_USER}'
+SMTPEOF
+    umask "$prev_umask"
+    chmod 600 /etc/corex/smtp.conf
+}
+
+# Load it, if it exists. Safe to call when absent.
+smtp_conf_load() {
+    [[ -r /etc/corex/smtp.conf ]] || return 1
+    # shellcheck source=/dev/null
+    set -a; . /etc/corex/smtp.conf; set +a
+    [[ -n "${COREX_SMTP_HOST:-}" ]]
+}
+
 run_wizard() {
     # ── Welcome ──────────────────────────────────────────────────────────────
     _msgbox "CoreX Pro v2 — Setup Wizard" \
@@ -262,6 +349,9 @@ You can add it later with: corex-manage add cloudflared" \
             "PASTE_YOUR_TUNNEL_TOKEN_HERE")
     fi
     export CLOUDFLARE_TUNNEL_TOKEN
+
+    # ── Outbound mail relay ──────────────────────────────────────────────────
+    _wizard_smtp
 
     # ── Timezone ─────────────────────────────────────────────────────────────
     local detected_tz

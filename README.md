@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://img.shields.io/badge/CoreX_Pro-v3.12.1-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
+  <img src="https://img.shields.io/badge/CoreX_Pro-v3.13.0-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
   <img src="https://img.shields.io/badge/Ubuntu-24.04_LTS-E95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Ubuntu">
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
 </div>
@@ -25,6 +25,7 @@ curl -fsSL https://raw.githubusercontent.com/itismowgli/corex-pro/main/corex.sh 
 - [Quickstart](#quickstart)
 - [Services](#services)
 - [Commands](#commands)
+- [Service reference](#service-reference)
 - [The CoreX Dashboard](#the-corex-dashboard)
 - [HTTPS and certificates](#https-and-certificates)
 - [Cloudflare Tunnel](#cloudflare-tunnel)
@@ -192,6 +193,488 @@ sudo bash corex-manage.sh agent         # the agent behind the buttons and the b
 so a CoreX fix to an environment variable, a resource limit, or a Traefik label
 reaches an install that was set up months ago. `doctor` runs `repair` on
 anything unhealthy, which makes it the command to run after an update.
+
+## Service reference
+
+One entry per module, whether or not you have it installed. Each says what the
+thing is, where to reach it, what it needs before it will work, and what to do
+on first run.
+
+Paths are relative to the SSD, `/mnt/corex-data`. `DOMAIN` is whatever you gave
+the installer. Every command assumes you are in the CoreX directory on the
+server.
+
+Install, remove or fix any of them:
+
+```bash
+sudo bash corex-manage.sh add immich
+sudo bash corex-manage.sh remove n8n
+sudo bash corex-manage.sh repair nextcloud    # regenerate config, recreate
+sudo bash corex-manage.sh disable monitoring  # stop, keep the data
+```
+
+### traefik
+
+The reverse proxy every other web service sits behind. It watches Docker for
+containers carrying `traefik.*` labels and creates routes for them
+automatically, which is why adding a service needs no proxy configuration. It
+also terminates HTTPS, so nothing else has to think about certificates.
+
+| | |
+|---|---|
+| Reach it | no public page. Its dashboard is on `127.0.0.1:8080`, reachable through an SSH tunnel |
+| Containers | `traefik` |
+| Ports opened | 80, 443 |
+| Data | `docker-configs/traefik/` including `acme.json` and `certs/` |
+| Required | yes, nothing else routes without it |
+
+Certificates come from Let's Encrypt over DNS-01, which needs a Cloudflare API
+token. Set `CLOUDFLARE_DNS_API_TOKEN` before installing, or put it in
+`docker-configs/traefik/.cf-dns-token` afterwards and run
+`corex manage repair traefik`. Without it Traefik falls back to a self-signed
+CoreX certificate, which works but makes browsers warn.
+
+DNS-01 rather than the more common HTTP challenge, because the HTTP challenge
+needs Let's Encrypt to reach port 443 from the internet, and most home
+connections block that. DNS-01 proves ownership by writing a DNS record
+instead, so it works behind any connection.
+
+### adguard
+
+Network-wide DNS with ad and tracker blocking, the same idea as Pi-hole. Point
+your router at it and every device on the network gets filtering, including
+ones you cannot install software on. It also holds the DNS rewrites that make
+`*.DOMAIN` resolve to your server on the LAN, which is what keeps local traffic
+off the internet.
+
+| | |
+|---|---|
+| Reach it | `http://SERVER_IP:3000` |
+| Containers | `adguard` |
+| Ports opened | 3000, 5353/udp, and 53 for DNS |
+| Data | `service-data/adguard-conf/`, `service-data/adguard-work/` |
+| Required | yes |
+
+On first visit it runs a setup wizard where you choose an admin username and
+password. Do that before anything else, because the admin port moves from 3000
+to 80 once the wizard finishes, and CoreX detects the change by reading
+`AdGuardHome.yaml` rather than assuming.
+
+After that, run `sudo bash corex-manage.sh lan-setup`. It adds the wildcard DNS
+rewrite automatically and prints what to change on your router.
+
+One thing to avoid: do not set a second DNS server alongside AdGuard on your
+devices. Queries race, some go to the fallback, and those come back with
+internet addresses instead of your server's, so local traffic silently starts
+going out and back again.
+
+### cloudflared
+
+Cloudflare Tunnel connector. It makes an outbound connection to Cloudflare and
+serves your sites through it, so nothing has to be forwarded on your router and
+your home address is never published. This is how CoreX gets a service on the
+internet without touching port forwarding.
+
+| | |
+|---|---|
+| Reach it | no page of its own; it carries the others |
+| Containers | `cloudflared` |
+| Ports opened | none, the connection is outbound |
+| Data | token in `docker-configs/cloudflared/.tunnel-token` (0600) |
+
+You need a tunnel token from `one.dash.cloudflare.com`, under Networks then
+Tunnels. Paste it during install, or add it later with
+`sudo bash corex-manage.sh add cloudflared`.
+
+Configure one public hostname, not one per service:
+
+| Hostname | Service | Setting |
+|---|---|---|
+| `*.DOMAIN` | `https://traefik:443` | turn on No TLS Verify |
+
+Pointing the tunnel at Traefik rather than at individual containers matters
+more than it looks. Traefik then decides every route, so a new service needs no
+Cloudflare work at all, a container port change cannot break the tunnel, and
+anything Traefik adds to a request applies to internet visitors too. With
+per-service entries it does not, because the tunnel reaches the app directly
+and skips the proxy entirely.
+
+No TLS Verify is needed because Traefik presents a certificate for your public
+hostname while cloudflared connects to it by the name `traefik`. The names do
+not match, and the hop is inside Docker anyway.
+
+### nextcloud
+
+Files, calendar, contacts, photo albums and collaborative documents, in place
+of Google Drive or Dropbox. Desktop and mobile clients sync to it the same way
+they would to a commercial service. This is usually the service people install
+CoreX for.
+
+| | |
+|---|---|
+| Reach it | `https://nextcloud.DOMAIN`, whiteboard at `https://whiteboard.DOMAIN` |
+| Containers | `nextcloud`, `nextcloud-db` (MariaDB), `nextcloud-redis`, `nextcloud-cron`, `nextcloud-whiteboard` |
+| Data | `service-data/nextcloud-html/` for files, `nextcloud-db/` for the database |
+| Needs | a domain |
+
+Create the admin account on first visit. Then install the desktop or mobile
+client and point it at your domain.
+
+For email, run `sudo bash corex-manage.sh mail-setup`. Without a relay
+Nextcloud cannot send password resets or share notifications, and it does not
+warn you.
+
+The `nextcloud-cron` container is not optional decoration. Nextcloud needs a
+scheduled job every five minutes for file scans, notifications and cleanup, and
+it fails quietly when that stops, so it has its own monitor in the resource
+watchdog rather than relying on the web container looking healthy.
+
+Two things worth knowing. Uploads are chunked at 10MB because Cloudflare
+rejects request bodies over 100MB, and the default 100MB chunk therefore fails
+on exactly the large files you most want to upload. And after any image update
+Nextcloud needs `occ upgrade` before it will accept configuration changes; a
+plain image pull leaves it in a state where every setting silently fails to
+apply. `corex manage repair nextcloud` handles the sequence.
+
+### immich
+
+Photo and video library with search, face grouping and phone backup, in place
+of Google Photos or iCloud. The mobile app uploads in the background, which is
+the part that makes it a real replacement rather than a viewer.
+
+| | |
+|---|---|
+| Reach it | `https://photos.DOMAIN` |
+| Containers | `immich-server`, `immich-ml` (machine learning), `immich-redis`, `immich-db` (PostgreSQL with vector search) |
+| Ports opened | 2283 |
+| Data | `service-data/immich-upload/` for originals, `immich-db/` for the index |
+| Needs | a domain |
+
+Create the first account on the web page, then install the Immich app and point
+it at `https://photos.DOMAIN`. Turn on background backup in the app.
+
+`immich-ml` is what does face and object recognition. It is the heaviest thing
+in the stack and the first thing worth disabling on a small machine:
+`sudo bash corex-manage.sh disable immich:immich-ml`. Search keeps working,
+faces stop being detected in new photos.
+
+The database image is pinned deliberately. Immich changes its vector extension
+between major versions and the wrong image leaves a database the server cannot
+read, so this is not a place to track a moving tag.
+
+### vaultwarden
+
+Password manager that speaks the Bitwarden protocol, so every official
+Bitwarden client works with it: browser extensions, phone apps, desktop. Your
+vault lives on your disk instead of someone else's.
+
+| | |
+|---|---|
+| Reach it | `https://vault.DOMAIN` |
+| Containers | `vaultwarden` |
+| Data | `service-data/vaultwarden/` |
+| Needs | a domain |
+
+Create your account, then in each Bitwarden client choose self-hosted and enter
+`https://vault.DOMAIN` before logging in.
+
+Public signup is turned off after the first account, so nobody who finds the
+page can create one. To add a family member, use the admin page with the token
+from `/root/corex-credentials.txt`.
+
+Back this one up before anything else. A password vault you cannot restore is
+worse than no password manager, because you will have moved everything into it.
+
+### n8n
+
+Workflow automation with several hundred integrations, in place of Zapier or
+Make. Useful for anything that connects two services on a schedule or a
+webhook, and it runs unlimited workflows because you are paying in electricity
+rather than per task.
+
+| | |
+|---|---|
+| Reach it | `https://n8n.DOMAIN`, and any extra name in `n8n_subdomain` |
+| Containers | `n8n` |
+| Ports opened | 5678 |
+| Data | `service-data/n8n/` |
+| Needs | a domain |
+
+Create the owner account on first visit.
+
+n8n can answer on more than one hostname, which exists for a specific problem:
+Google Safe Browsing sometimes flags the literal name `n8n` on a domain, and a
+browser warning is not something you can fix from your side quickly. Setting a
+second name in `state.json` gives you a working address while the first is
+under review.
+
+Webhook URLs are built from the domain rather than the container's own idea of
+its address, so workflows triggered from outside get a working HTTPS callback
+rather than an internal one that nothing can reach.
+
+### timemachine
+
+A Time Machine target for Macs over SMB, in place of buying a Time Capsule.
+Your Mac sees it as a normal backup disk and backs up on its usual schedule.
+
+| | |
+|---|---|
+| Reach it | `smb://SERVER_IP/CoreX_Backup` in Finder, or System Settings then Time Machine |
+| Containers | `timemachine` |
+| Ports opened | 445 for SMB, 5353/udp for discovery |
+| Data | `timemachine-data/` on the SSD |
+| Needs | nothing, works without a domain |
+
+The password is in `/root/corex-credentials.txt` under the Time Machine entry.
+The username is `timemachine`.
+
+It is the one service that uses host networking, because SMB and the Bonjour
+discovery that makes it appear in Finder both need it. That also means Traefik
+cannot route to it and there is no web page: you always reach it by local
+address.
+
+If it does not appear in Finder, connect manually with Cmd-K in Finder and the
+`smb://` address above, then select it in Time Machine settings.
+
+### monitoring
+
+Three tools that answer different questions. Uptime Kuma checks whether your
+services respond and messages you when one stops. Grafana draws graphs.
+Prometheus collects the numbers Grafana draws.
+
+| | |
+|---|---|
+| Reach it | Kuma at `https://status.DOMAIN`, Grafana at `https://grafana.DOMAIN` |
+| Containers | `uptime-kuma`, `grafana`, `prometheus`, `node-exporter`, `cadvisor` |
+| Ports opened | 3001, 3002, 9090 |
+| Data | `service-data/uptime-kuma/`, `grafana/`, `prometheus/` |
+| Needs | a domain |
+
+Create the admin account in Kuma on first visit, then add a notification
+channel under Settings before adding monitors, because a monitor with no
+channel is just a coloured dot on a page you will not be looking at.
+
+You can run parts of this and not others. Kuma alone is enough for most people:
+
+```bash
+sudo bash corex-manage.sh disable monitoring:prometheus
+sudo bash corex-manage.sh disable monitoring:grafana
+sudo bash corex-manage.sh disable monitoring:cadvisor
+sudo bash corex-manage.sh disable monitoring:node-exporter
+```
+
+That is worth considering on a small machine. Prometheus stores every sample it
+collects and grows steadily, and on constrained hardware it can use a
+noticeable share of a core just recording how busy the machine is.
+
+When you add monitors, set the accepted status codes per service rather than
+leaving the default of 200 to 299. Nextcloud and AdGuard redirect to a login
+page and return 302, and the CoreX dashboard returns 401 because it sits behind
+basic auth. Left at the default those three report permanently down, which
+teaches you to ignore the alerts.
+
+### dashboard
+
+A web page for daily operations, so routine work does not need SSH. Four tabs:
+services with start, stop, restart, repair and update buttons, storage, network
+and system. Log streaming is built in.
+
+| | |
+|---|---|
+| Reach it | `https://dashboard.DOMAIN` |
+| Containers | `corex-dashboard` |
+| Data | none of its own, it reads `state.json` and the Docker socket |
+| Needs | a domain |
+
+The username is `admin` and the password is in `/root/corex-credentials.txt`.
+Authentication happens at Traefik, not in the app.
+
+The buttons work through the CoreX action agent rather than directly, because
+the container runs as `nobody` and the management script needs root. Rather
+than making a web-facing container root, one privileged process accepts a fixed
+list of reversible actions over a unix socket. Removing services, changing the
+domain and uninstalling are deliberately not reachable from it.
+
+It is built from source on first install rather than pulled, so expect a minute
+or two of compiling. That is why the image is small afterwards.
+
+### portainer
+
+Container management in a browser: what is running, logs, shells into
+containers, resource usage. Useful when you want to look at something Docker is
+doing without learning the CLI first.
+
+| | |
+|---|---|
+| Reach it | `https://portainer.DOMAIN` |
+| Containers | `portainer` |
+| Ports opened | 9443 |
+| Data | `service-data/portainer/` |
+| Required | yes |
+
+Set the admin password within a few minutes of first start. Portainer locks
+itself if you do not, and unlocking means restarting the container.
+
+Portainer speaks HTTPS internally with a certificate for `0.0.0.0`, which is
+valid for nothing. Traefik is told to skip verification on that hop
+specifically, which is safe because it is inside Docker, and is why the page
+loads at all rather than failing a handshake.
+
+Chrome sometimes shows a Safe Browsing warning on admin panels like this one.
+It is a false positive on the hostname pattern, not a sign of compromise.
+
+### crowdsec
+
+Intrusion detection that reads your logs, recognises attack patterns, and
+blocks the addresses responsible using a shared community list. Fail2ban with a
+wider view.
+
+| | |
+|---|---|
+| Reach it | no web page, it works in the background |
+| Containers | `crowdsec` |
+| Data | `service-data/crowdsec-db/`, `crowdsec-config/` |
+| Needs | nothing |
+
+Nothing to configure. Check what it has caught:
+
+```bash
+docker exec crowdsec cscli decisions list
+docker exec crowdsec cscli metrics
+```
+
+CoreX installs the iptables bouncer alongside it, which is the part that
+actually drops traffic. Without a bouncer CrowdSec only writes down what it
+noticed, which is a surprisingly easy thing to get wrong and not notice.
+
+### coolify
+
+A self-hosted platform for deploying applications from Git, in place of Heroku
+or Vercel. Push a repository, it builds and runs it.
+
+| | |
+|---|---|
+| Reach it | `https://coolify.DOMAIN`, and `http://SERVER_IP:8000` on the LAN |
+| Containers | its own set, managed by Coolify rather than CoreX |
+| Ports opened | 8000 |
+| Needs | manual installation, see below |
+
+This is the one service CoreX will not install for you. Coolify installs its
+own reverse proxy on ports 80 and 443, which are already taken by Traefik, and
+letting them fight would take every other service down. `corex manage add
+coolify` writes a helper script and tells you where it is.
+
+Once Coolify is running, CoreX routes to it through a Traefik file rule rather
+than a Docker label, because Coolify's containers are on their own network and
+are not CoreX's to label.
+
+Applications you deploy through Coolify get their own hostnames. Those need a
+route adding, since Traefik does not know about them:
+
+```bash
+sudo bash corex-manage.sh route add myapp.DOMAIN http://SERVER_IP:3000
+```
+
+One trap worth knowing: Coolify uses Docker Swarm, which allocates its networks
+from a different address range than plain Docker. A firewall that only allows
+the usual range drops every packet on those networks and logs each one, which
+buries real security events in noise. CoreX allows both ranges for this reason.
+
+### ai
+
+A local AI stack: Ollama runs language models, Open WebUI is the chat interface
+in front of them, and Browserless gives models a browser for fetching pages.
+Nothing leaves the machine.
+
+| | |
+|---|---|
+| Reach it | `https://ai.DOMAIN` |
+| Containers | `ollama`, `open-webui`, `browserless` |
+| Data | `service-data/ollama/` for models, `open-webui/` for chat history |
+| Needs | a domain, and real hardware |
+
+Create an account in Open WebUI, then pull a model before it can answer
+anything:
+
+```bash
+docker exec -it ollama ollama pull qwen3-coder
+docker exec -it ollama ollama pull llama3.2      # smaller, faster
+```
+
+Be realistic about the hardware. Models are several GB each and
+`service-data/ollama/` grows quickly. Inference on a CPU without a discrete GPU
+is slow, and on a small machine it is the single heaviest thing you can run:
+the thermal guardian sheds this stack first for exactly that reason.
+
+If your machine has a mobile processor and integrated graphics, stay under
+about 14 billion parameters or the answers arrive too slowly to be useful.
+
+### stalwart
+
+A full mail server: SMTP, IMAP and JMAP, in place of Gmail or Fastmail.
+
+| | |
+|---|---|
+| Reach it | `https://mail.DOMAIN` for administration |
+| Containers | `stalwart` |
+| Ports opened | 25, 587, 465, 143, 993 |
+| Data | `service-data/stalwart-data/` |
+| Needs | a domain, and a connection that can actually run a mail server |
+
+Read this before installing it. Running your own mail server at home usually
+does not work, and the reason has nothing to do with Stalwart. Most home
+providers block port 25 in both directions, so other servers cannot deliver to
+you and you cannot deliver to them. Home address ranges are also on blocklists
+by default, so what does get out often lands in spam. None of that is fixable
+from the server.
+
+Install it if you have a static address with port 25 open in both directions
+and reverse DNS you control. Otherwise use a relay for sending, and Cloudflare
+Email Routing or a hosted inbox for receiving.
+
+If you do run it, the admin password comes from `STALWART_RECOVERY_ADMIN` in
+`user:password` form, and is kept in `docker-configs/stalwart/.admin-password`.
+Do not expect to find it in a log: earlier versions of this module set
+variables the image ignores, so Stalwart generated its own password, printed it
+once, and left a mail server nobody could log into.
+
+Two settings need applying after initial setup, and only through the admin
+interface, because they live in the database rather than in environment
+variables:
+
+| Setting | Value | Why |
+|---|---|---|
+| `proxyTrustedNetworks` | `172.16.0.0/12` | trust the Docker network |
+| `useXForwarded` | `true` | ban the real client, not the proxy |
+
+Without them, one bot probing a common path gets the reverse proxy banned
+rather than itself, and every request from the internet is refused while the
+LAN keeps working, which is a genuinely confusing way to lose a service.
+
+### ups
+
+Graceful shutdown when the power goes out, using NUT. Your machine notices the
+battery is running down and shuts itself down cleanly instead of being cut off
+mid-write.
+
+| | |
+|---|---|
+| Reach it | no web page |
+| Containers | none, it runs as host services |
+| Data | `service-data/ups-config/` |
+| Needs | a UPS connected by USB |
+
+Plug the UPS in by USB before installing, then check it was found:
+
+```bash
+upsc corexups
+```
+
+Worth more than it looks on a machine that stores anything. An unclean shutdown
+can corrupt a database or leave the package manager half-finished, and the
+second one can stop the machine booting at all. If you have a UPS and are not
+using this, you are getting none of its benefit beyond a few minutes of
+uptime.
 
 ## The CoreX Dashboard
 
@@ -487,9 +970,26 @@ the internet again.
 
 ## Outbound email
 
-Nextcloud cannot send password resets, share notifications, or activity digests
-until SMTP is set up. Its own warning says the configuration is "not set or
-verified" without mentioning what breaks.
+Several services need to send mail, and each fails differently without it.
+Nextcloud cannot send password resets, share notifications or activity digests,
+and its own warning says the configuration is "not set or verified" without
+mentioning what breaks. Some applications refuse to start at all rather than
+run without a way to send mail.
+
+The installer therefore asks for a relay once, during setup, and stores it in
+`/etc/corex/smtp.conf` (0600) for any service that needs one. Skipping is fine;
+services that need mail say so, and you can add it later with
+`sudo bash corex-manage.sh mail-setup`.
+
+A relay is not a mail server, and the difference matters. CoreX does not try to
+run one, because a home connection generally cannot (see below). Sending
+through an account that is already trusted is the part that works.
+
+One detail that costs people an hour: a Gmail app password is displayed in four
+groups of four for readability, and the spaces are not part of it. CoreX strips
+them, but if you paste one into a configuration file by hand, remove them, and
+quote the value. An unquoted password containing a space is read by the shell
+as a command prefix and silently never set at all.
 
 Self-hosting mail on a home connection usually cannot work, whichever mail
 server you run. Check before you try:

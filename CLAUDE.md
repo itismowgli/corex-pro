@@ -28,7 +28,7 @@ learning nginx, SSL, Docker networking, or Linux hardening.
 - Re-run on existing server = health-check + repair broken services only
 - No live server required for testing (Docker-in-Docker + bats)
 
-**Current version:** v3.12.1
+**Current version:** v3.13.0
 **Current service modules:** 16 (Traefik, AdGuard, Portainer, Nextcloud,
 Immich, Vaultwarden, Stalwart Mail, Coolify, n8n, Time Machine,
 Uptime Kuma + Grafana + Prometheus (monitoring), Ollama + OpenWebUI +
@@ -449,6 +449,11 @@ Use unique end markers per heredoc to prevent nesting confusion:
 - `CREDEOF`: credential files
 - `DOCSEOF`: documentation files
 - Use `'ENDMARKER'` (single-quoted) to suppress variable substitution
+- An unquoted heredoc still runs command substitution, so a backtick in a YAML
+  comment inside one is executed. A comment reading ``# no `build:` block``
+  produced `line 205: build:: command not found` and bash blamed the line the
+  redirect was on, not the line the backtick was on. Escape them (`` \` ``) or
+  write the word plainly
 
 ### Error handling pattern
 
@@ -1211,6 +1216,80 @@ sidecar, `lib/services/._dashboard.sh`, which matches the service-module glob
 and is binary, so service discovery died on a `UnicodeDecodeError` before the
 agent could start. Any code that globs a directory written by other machines
 wants `errors="replace"` and a `._*` skip.
+
+### 31. Compiling from source is the hottest thing this project does
+
+Every service should use a published image. When one has to be built locally,
+that build, not any steady-state workload, is the peak thermal load on the
+machine, and this class of hardware trips at TjMax with no warning (gotcha
+#17).
+
+Measured on a Ryzen 9 5900HX mini server while building a Next.js application
+from source:
+
+| Moment | Tctl |
+|---|---|
+| before the build | 64C |
+| mid-compile | 88C |
+| exporting layers | 96.4C |
+
+The guardian fired `CRITICAL 95C` and shed twelve containers, taking down all
+of Nextcloud, all of Immich, n8n, Uptime Kuma and Time Machine. It recovered
+them on its own two at a time once the build stopped, which is the system
+working, but the outage was self-inflicted.
+
+Three rules follow.
+
+**A pre-flight temperature check is not enough on its own.** Refusing to start
+above 85C is worth having, but the machine was at 64C when this began. The
+build is what produced the heat, so the guardian is the real backstop and
+`nice -n 19` is what lets it win.
+
+**Two services sharing an image must not both declare a build.** Compose does
+not treat that as one piece of work: BuildKit schedules both graphs at once and
+compiles the same thing twice, simultaneously, which is what doubled the load
+above. Give exactly one service the `build:` block, let the others reference
+the image by name, and build it explicitly rather than letting
+`docker compose build` walk everything:
+
+```bash
+docker compose -f "$compose" build my-db my-app
+```
+
+**Constrain the build if it cannot be avoided.** BuildKit does not accept CPU
+limits, but the legacy builder does:
+
+```bash
+DOCKER_BUILDKIT=0 docker build --cpuset-cpus=0-3 ...
+```
+
+### 32. When a container will not say why it died, read its bundle
+
+A compiled JavaScript application often validates its configuration far more
+strictly than its documentation describes, and the failure arrives as a restart
+loop rather than a message. The requirements are in the bundle:
+
+```bash
+docker run --rm --entrypoint node <image> -e "
+  const s=require('fs').readFileSync('/app/dist/worker.mjs','utf8');
+  const i=s.indexOf('SOME_ENV_NAME'); console.log(s.slice(i-200,i+600));"
+```
+
+Doing that on one service turned up five requirements absent from its README:
+mandatory providers, exact numeric ranges for database pool settings enforced
+by regex, an immutable build identifier that had to match the image, a header
+the reverse proxy was expected to inject, and a TLS parameter order checked
+with a shell glob. Each produced a crash loop, none produced an explanation.
+
+Two design rules follow. **One database, two clients, two URLs.** Prisma pool
+settings are not libpq settings, so a migration container running `psql`
+rejected the application's own connection string outright with
+`invalid URI query parameter: "pool_timeout"`.
+
+**And a service with an unmet prerequisite must be parked, not started.** Left
+running it restarts every few seconds, which the resource watchdog correctly
+reports once a minute. Stop its containers, set `restart=no`, mark the service
+disabled, and print exactly what is missing.
 
 ---
 
