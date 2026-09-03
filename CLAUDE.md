@@ -28,7 +28,7 @@ learning nginx, SSL, Docker networking, or Linux hardening.
 - Re-run on existing server = health-check + repair broken services only
 - No live server required for testing (Docker-in-Docker + bats)
 
-**Current version:** v3.18.0
+**Current version:** v3.19.0
 **Current service modules:** 17 (Traefik, AdGuard, Portainer, Nextcloud,
 Immich, Vaultwarden, Stalwart Mail, Coolify, n8n, Cal.com, Time Machine,
 Uptime Kuma + Grafana + Prometheus (monitoring), Ollama + OpenWebUI +
@@ -1546,6 +1546,78 @@ the container directly on proxy-net can forge either. That is why every limit
 that matters keeps a second bucket keyed on something the caller does not
 choose: the username, or a global ceiling.
 
+### 40. A notification is read on a lock screen, so write it for one
+
+Every message this box sends was a log line pointed at a person. "temp DOWN:
+83C, over the 80C limit" is a grep target, not news, and "restart nextcloud" is
+the command that was run rather than what happened. A phone shows two lines and
+then stops, so the first one has to carry the whole point.
+
+`corex_common.message()` is now the only way a message is built, so the bot,
+the job notices and the Kuma alerts share one shape: a headline in plain words,
+the detail, then the single next step if there is one. "Running hot at 83C,
+above the 80C limit". "nextcloud has restarted". "Killed for using too much
+memory, so the limit is set too low".
+
+**Do not get clever with the Kuma template.** Telegram rejects a message whose
+MarkdownV2 does not parse, and Kuma logs that as a 400 and moves on, so a
+template that breaks on one monitor name containing a hyphen silently turns off
+alerting for that monitor. The template stays close to the default and the
+wording that carries weight lives in `msg`, which Kuma escapes for us.
+
+Two facts to check rather than assume, both of which were wrong when taken from
+documentation and right when read from the running container:
+
+- The template context is `status`, `name`, `hostnameOrURL`, `msg`,
+  `monitorJSON` and `heartbeatJSON`. There is no `heartbeat` object and no
+  `localDateTime`, so a footer using one renders empty.
+- `hostnameOrURL` on a push monitor is the push URL, which carries the token.
+  Never put it in a message.
+
+Render a template change through the running Kuma's own engine before shipping:
+
+```bash
+docker exec uptime-kuma node -e '
+  const { Liquid } = require("/app/node_modules/liquidjs");
+  const e = new Liquid({ root: "./no-such-directory-uptime-kuma", relativeReference: false });
+  console.log(e.renderSync(e.parse(TEMPLATE), { status: "🔴 Down", name: "X", msg: "y", heartbeatJSON: { status: 0 } }));'
+```
+
+**And the template only reaches a phone if it is applied to an existing
+install.** `apply_telegram_template` skipped any notification that already had
+one, which reads as politeness and is gotcha #22 again: the better wording
+shipped in the repository and changed nothing on the box that needed it. Every
+template CoreX has written is listed and upgraded; anything else is left alone.
+It lives in `lib/watchdog.sh`, so `corex manage watchdog setup` applies it, not
+`kuma-seed`.
+
+### 41. Poll the slow half, stream the fast half
+
+The overview was one poll every twenty seconds, which made a temperature up to
+twenty seconds old on hardware whose failure mode is a thermal trip with no log
+entry. Streaming all of it was not the answer either: the full payload walks
+both disks, reads Kuma's database and can wait on a `du` over a photo library.
+
+So it is split. `/api/stream/vitals` pushes temperature, load, memory,
+container counts and the heaviest containers every five seconds over SSE, with
+`sizes:false` so the agent skips the cached `du` entirely. `/api/overview`
+polls the rest more slowly. The page prefers the streamed number wherever it
+has one.
+
+Five seconds is close to the floor: `docker stats --no-stream` costs a full
+sampling interval per call, so asking much faster spends more time measuring
+than waiting. SSE rather than a websocket because the traffic is one way, it
+crosses the reverse proxy without an upgrade negotiation, and the browser
+reconnects on its own. `X-Accel-Buffering: no` is not optional; without it an
+intermediate proxy buffers the stream and nothing arrives until it closes,
+which looks exactly like a hung page.
+
+**A number tells you there is a problem, not whose it is.** Every vital is a
+button that opens the sorted list of what is consuming it, which is what
+Activity Monitor and Task Manager are for. A dashboard that only shows totals
+makes the reader open a terminal to find the cause, and then the dashboard was
+not the answer.
+
 ---
 
 ## What NOT to Do
@@ -1609,11 +1681,12 @@ mocked, validates generated `docker-compose.yml` has correct values and passes
 ```bash
 cd dashboard/web && npm run build
 ```
-`tsc`, then `vite build`, then two checks. `logline-check.mjs` parses log lines
-taken off a running box, and `render-check.mjs` mounts every tab twice, once
-against fixtures shaped like the real API responses and once with every fetch
-failing. Both had to be added after a bug they should have caught: see gotchas
-#37 and #38.
+`tsc`, then `vite build`, then three checks. `logline-check.mjs` parses log
+lines taken off a running box. `responsive-check.mjs` holds four small-screen
+rules, each one a mistake that was in the tree. `render-check.mjs` mounts every
+tab three times: against fixtures, with every fetch failing, and at 360px. All
+three were added after a bug they should have caught, which is the only honest
+reason to add a check: see gotchas #37 and #38.
 
 ### 5. Dashboard login, end to end (needs Docker)
 ```bash

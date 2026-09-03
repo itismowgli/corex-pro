@@ -858,10 +858,21 @@ disks with how much is purgeable; the containers using the most; every uptime
 check; and what the resource watchdog has logged. Anything already wrong is
 collected into a banner at the top so it cannot be scrolled past.
 
+Those top numbers are live, pushed every five seconds rather than polled, and
+the page tells you when the feed is connected. Each one is also a button: click
+the temperature or the load and you get the containers burning processor, click
+memory and you get them by size against their own limits, click disk and you
+get both volumes and then space per service. A number tells you there is a
+problem, not whose it is.
+
 The graphs cost nothing to collect. `blackbox.log` already records temperature,
 load, memory and throttling every twenty seconds, because it is the only
 evidence that survives a power cut, so the charts read that rather than
 sampling again.
+
+It works on a phone. Tables scroll in their own box rather than dragging the
+page sideways, dialogs stay inside the screen, and the tabs are one scrolling
+row.
 
 Services is a card per installed service: its health, the addresses it answers
 on, and buttons for start, stop, restart, repair and update, plus a live log

@@ -6,6 +6,67 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.19.0] - 2026-09-04
+
+### Added
+- **The overview is live.** Temperature, load, memory, container counts and the
+  heaviest containers arrive over Server-Sent Events every five seconds, and
+  the page says whether the feed is connected. Polling left the numbers up to
+  twenty seconds old, which for a temperature on hardware that trips at TjMax
+  with nothing in any log is the wrong kind of stale. The heavier half of the
+  payload, which walks both disks, reads Kuma's database and may wait on a
+  `du`, stays on a slower poll: doing that every five seconds would spend more
+  time measuring than waiting.
+
+- **Click a number to find out whose it is.** Every vital opens the answer
+  Activity Monitor and Task Manager give: a sorted list, biggest first, with a
+  bar. Heat and load open the containers burning processor, memory opens them
+  by resident size against their own limits, and disk opens both volumes and
+  then space per service with what is purgeable. It refreshes while open,
+  because the question being asked is what is doing this right now.
+
+- **A mobile layout.** Tables scroll in their own box instead of pushing the
+  page sideways, dialogs are capped to the viewport so the close control stays
+  reachable, recovery codes are one column on a narrow screen, and the tab bar
+  is one scrolling row rather than three wrapped ones.
+  `responsive-check.mjs` holds four of those rules in the build, each one a
+  mistake that was actually in the tree, and the render check now mounts every
+  tab at 360px as well.
+
+### Changed
+- **Telegram messages read like a person wrote them.** Every message is built
+  in one place, so the bot, the job notices and the Uptime Kuma alerts share
+  one shape: a headline in plain words, the detail, then the single next step.
+  A phone notification shows two lines and then stops, so the first line has to
+  carry the point.
+
+  "temp DOWN: 83C, over the 80C limit" is now "Running hot at 83C, above the
+  80C limit". "Heaviest:" is "Working hardest:". "OOM-killed, so its memory
+  limit is too low" is "Killed for using too much memory, so the limit is set
+  too low". Job notices said "restart nextcloud", which is a command rather
+  than news, and now say "nextcloud has restarted".
+
+  The Kuma template gains a blank line and a closing line that differs by
+  state, and nothing more, deliberately: Telegram rejects a message whose
+  MarkdownV2 does not parse, so a clever template that breaks on one monitor
+  name silently turns monitoring off. It was rendered through the running
+  Kuma's own Liquid engine before shipping.
+
+- **The job strip says what happened; the tab shows the output.** Running a
+  hardware check used to print the identical report twice on one screen. A
+  failure with nowhere else to go still expands on its own.
+
+- Two `code_block` implementations had drifted to opposite truncation rules,
+  each with a written rationale, and both were right for their own case. One
+  function now, with the mode named at the call site.
+
+### Fixed
+- The improved Telegram template would never have reached a phone.
+  `apply_telegram_template` skipped any notification that already had one,
+  which is gotcha #22 in a new place: a generated thing written only when
+  absent never changes on an existing install. Every template CoreX has written
+  is now listed and upgraded; anything an operator wrote is still left alone.
+
 ## [v3.18.0] - 2026-09-03
 
 ### Added
