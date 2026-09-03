@@ -564,10 +564,28 @@ TELEGRAM_TEMPLATE = (
 )
 
 
-def apply_telegram_template(cur):
-    """Set a readable message template on every Telegram notification.
+# Every template CoreX has ever written. A notification carrying one of these
+# is ours to update; anything else was written by the operator and is left
+# alone.
+#
+# This list is the whole point of the function below. The first version skipped
+# any notification that already had a template, which reads as politeness and
+# is really gotcha #22 again: a generated thing that is only written when
+# absent never changes on an existing install. The improved wording would have
+# shipped in the repository and never reached a single phone.
+COREX_TEMPLATES = {
+    # v3.11.0, the first one.
+    "{{ status }}  *{{ name }}*\n\n{{ msg }}",
+    # v3.19.0, with the state-dependent closing line.
+    TELEGRAM_TEMPLATE,
+}
 
-    Skips any notification that already has a template, so an operator who
+
+def apply_telegram_template(cur):
+    """Put CoreX's message template on every Telegram notification.
+
+    Updates a notification that has no template, and one carrying a template
+    CoreX wrote earlier. Leaves anything else untouched, so an operator who
     wrote their own keeps it. Returns the names that were changed.
     """
     changed = []
@@ -577,8 +595,13 @@ def apply_telegram_template(cur):
             conf = json.loads(cfg)
         except (ValueError, TypeError):
             continue
-        if conf.get("type") != "telegram" or conf.get("telegramUseTemplate"):
+        if conf.get("type") != "telegram":
             continue
+        current = conf.get("telegramTemplate") or ""
+        if conf.get("telegramUseTemplate") and current not in COREX_TEMPLATES:
+            continue
+        if current == TELEGRAM_TEMPLATE and conf.get("telegramUseTemplate"):
+            continue                       # already current, nothing to do
         conf["telegramUseTemplate"] = True
         conf["telegramTemplate"] = TELEGRAM_TEMPLATE
         conf["telegramTemplateParseMode"] = "MarkdownV2"
