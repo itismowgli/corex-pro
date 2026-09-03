@@ -2203,7 +2203,8 @@ cmd_agent() {
             fi
             echo ""
             echo "  Actions reachable from the dashboard and Telegram:"
-            echo "    start stop restart repair update cleanup status list health storage logs"
+            echo "    start stop restart repair update cleanup cleanup-preview"
+            echo "    status list health storage logs"
             echo "  Deliberately not reachable: remove, replace, add, migrate, nuke."
             echo ""
             if [[ -r /var/log/corex-agent.log ]]; then

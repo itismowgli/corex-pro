@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -317,6 +318,8 @@ var (
 // an element id. The agent generates hex, so anything else is not ours.
 var jobIDRe = regexp.MustCompile(`^[a-f0-9]{6,32}$`)
 
+var versionRe = regexp.MustCompile(`COREX_VERSION="([0-9][^"]*)"`)
+
 func agentCall(req map[string]interface{}, timeout time.Duration) (map[string]interface{}, error) {
 	token, err := os.ReadFile(agentTokenFile)
 	if err != nil {
@@ -580,12 +583,82 @@ func getSysInfo(state CoreXState) map[string]string {
 			info["ssh_port"] = "22"
 		}
 	}
-	hostname, _ := os.Hostname()
-	info["hostname"] = hostname
+	// The host's name, not the container's. os.Hostname() inside a container
+	// returns its own id, so the System tab confidently showed
+	// "739797d45fa4" as the server's hostname. Docker's own Name field is the
+	// host's, and this container already has the socket.
+	if name, err := runCmd("docker", "info", "--format", "{{.Name}}"); err == nil && name != "" {
+		info["hostname"] = name
+	} else {
+		hostname, _ := os.Hostname()
+		info["hostname"] = hostname
+	}
 	info["kernel"], _ = runCmd("uname", "-r")
-	info["uptime"], _ = runCmd("uptime", "-p")
+	// Read, not shelled out. `uptime -p` is a procps flag and this image is
+	// BusyBox, so the field held BusyBox's usage message: "uptime:
+	// unrecognized option: p" followed by four lines of help. /proc/uptime is
+	// not namespaced, so inside the container it is still the host's.
+	info["uptime"] = readUptime()
 	info["docker"], _ = runCmd("docker", "version", "--format", "{{.Server.Version}}")
+	// state.json records the version that installed it and is never updated,
+	// so the footer read v3.10.2 on a box running v3.15.0. The repo is mounted
+	// read-only and is the authority on what is actually installed.
+	if v := versionFromRepo(); v != "" {
+		info["corex_version"] = v
+	}
 	return info
+}
+
+// readUptime formats /proc/uptime the way `uptime -p` would.
+func readUptime() string {
+	data, err := os.ReadFile("/proc/uptime")
+	if err != nil {
+		return ""
+	}
+	fields := strings.Fields(string(data))
+	if len(fields) == 0 {
+		return ""
+	}
+	secs, err := strconv.ParseFloat(fields[0], 64)
+	if err != nil {
+		return ""
+	}
+	d := time.Duration(secs) * time.Second
+	days := int(d.Hours()) / 24
+	hours := int(d.Hours()) % 24
+	mins := int(d.Minutes()) % 60
+	parts := []string{}
+	if days > 0 {
+		parts = append(parts, plural(days, "day"))
+	}
+	if hours > 0 {
+		parts = append(parts, plural(hours, "hour"))
+	}
+	if mins > 0 || len(parts) == 0 {
+		parts = append(parts, plural(mins, "minute"))
+	}
+	return "up " + strings.Join(parts, ", ")
+}
+
+func plural(n int, unit string) string {
+	if n == 1 {
+		return fmt.Sprintf("%d %s", n, unit)
+	}
+	return fmt.Sprintf("%d %ss", n, unit)
+}
+
+// versionFromRepo reads COREX_VERSION out of corex.sh in the mounted repo.
+func versionFromRepo() string {
+	root := strings.TrimSuffix(manage, "/corex-manage.sh")
+	data, err := os.ReadFile(root + "/corex.sh")
+	if err != nil {
+		return ""
+	}
+	m := versionRe.FindSubmatch(data)
+	if len(m) < 2 {
+		return ""
+	}
+	return string(m[1])
 }
 
 // ── Route handlers ────────────────────────────────────────────────────────────
@@ -594,8 +667,12 @@ func stateHandler(w http.ResponseWriter, r *http.Request) {
 	state := loadState()
 	sys := getSysInfo(state)
 	ok, agentErr := agentReachable()
+	version := sys["corex_version"]
+	if version == "" {
+		version = state.Version
+	}
 	writeJSON(w, http.StatusOK, hostInfo{
-		Version:    state.Version,
+		Version:    version,
 		Domain:     state.Domain,
 		ServerIP:   state.ServerIP,
 		SSHPort:    sys["ssh_port"],
@@ -718,23 +795,23 @@ func cleanupHandler(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	// The dry run is read-only and quick, so it answers inline. A real cleanup
-	// prunes images and build cache and can run for minutes, so it becomes a
-	// job like any other action.
+	// Both go through the agent. The dry run used to run corex-manage here
+	// instead, which could never work: this container is nobody and
+	// cmd_cleanup calls check_root, so the button answered "Run as root"
+	// every time. That is the exact fault the agent exists to fix (gotcha
+	// #30), and it survived in this one path because the failure looked like
+	// a permissions problem rather than a design one.
+	//
+	// cleanup-preview is read-only and answers inline. A real cleanup prunes
+	// images and build cache and can run for minutes, so it becomes a job.
+	action := "cleanup"
+	label := "cleanup"
 	if r.URL.Query().Get("dry_run") == "1" {
-		out, err := runManage("cleanup", "--dry-run")
-		state := "done"
-		if err != nil {
-			state = "failed"
-			if strings.TrimSpace(out) == "" {
-				out = err.Error()
-			}
-		}
-		writeJSON(w, http.StatusOK, jobView{State: state, Label: "cleanup --dry-run", Output: out})
-		return
+		action = "cleanup-preview"
+		label = "cleanup --dry-run"
 	}
 
-	res, err := agentCall(map[string]interface{}{"action": "cleanup"}, 60*time.Second)
+	res, err := agentCall(map[string]interface{}{"action": action}, 120*time.Second)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, err.Error())
 		return
@@ -743,7 +820,7 @@ func cleanupHandler(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadGateway, agentString(res, "error"))
 		return
 	}
-	job := jobFromAgent(res, "cleanup")
+	job := jobFromAgent(res, label)
 	if job.ID != "" {
 		job.State = "running"
 	}

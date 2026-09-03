@@ -74,6 +74,12 @@ ACTIONS = {
     "repair":  (["repair"],            True,  True),
     "update":  (["update"],            True,  True),
     "cleanup": (["cleanup"],           False, True),
+    # Read-only, so it belongs on the whitelist rather than being run by the
+    # caller. The dashboard used to shell out to `corex-manage cleanup
+    # --dry-run` itself and got "Run as root" every time, because that
+    # container runs as nobody: the same fault the whole agent exists to fix
+    # (gotcha #30), left behind in one path.
+    "cleanup-preview": (["cleanup", "--dry-run"], False, False),
     "status":  (["status", "--plain"], False, False),
     "list":    (["list"],              False, False),
     "health":  (["health"],            False, False),

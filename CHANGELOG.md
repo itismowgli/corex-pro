@@ -52,6 +52,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
   in the template, so it advertised Grafana and Open WebUI on boxes that had
   neither.
 
+- **Cleanup preview goes through the agent**, as a new read-only
+  `cleanup-preview` action. It used to run `corex-manage cleanup --dry-run` in
+  the dashboard container, which is `nobody`, so it answered "Run as root"
+  every time: the exact fault the agent exists to fix (gotcha #30), left
+  behind in one path because it read as a permissions problem rather than a
+  design one.
+
+- **Three host facts were the container's, or stale.** The System tab showed
+  the container id as the server's hostname, because `os.Hostname()` inside a
+  container returns its own; it now asks Docker for the host's name. Uptime
+  held BusyBox's usage message, because `uptime -p` is a procps flag and the
+  image is Alpine; it now reads `/proc/uptime`, which is not namespaced. And
+  the version came from `state.json`, which records the version that
+  installed the box and is never updated, so the footer read v3.10.2 on a box
+  running v3.15.0; it now reads `corex.sh` from the mounted repo.
+
 - **The dashboard build has a thermal gate and runs at `nice -n 19`.** It now
   has two compilers in it, npm and Go, which makes it the second hottest thing
   CoreX does; it refuses to start above 85C (gotcha #17 and #31). BuildKit
