@@ -34,6 +34,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
   tab at 360px as well.
 
 ### Changed
+- **`status` in Telegram says how the machine is, not just the services.** The
+  reply opens with heat, load, memory and whichever disk is fuller, so one
+  command answers whether anything is wrong. The full hardware report stays
+  behind `health`, and the reply says so.
 - **Telegram messages read like a person wrote them.** Every message is built
   in one place, so the bot, the job notices and the Uptime Kuma alerts share
   one shape: a headline in plain words, the detail, then the single next step.
@@ -61,6 +65,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
   function now, with the mode named at the call site.
 
 ### Fixed
+- **The hardware report appeared twice on one screen.** The job strip decided
+  whether the tab below already owned the output by reading which action was
+  running, and that is cleared the instant a job finishes, so the answer was
+  always "no" by the time there was any output to place. The owning panel is
+  recorded when the action starts and kept until the strip is dismissed.
+- **Nothing renders above the tab bar any more.** A banner or a running job
+  there pushed the tabs and everything under them down the screen, so opening
+  the dashboard on a phone showed no dashboard.
+- **The tab bar collapses into a select below the sm breakpoint.** Eight tabs
+  in a scrolling strip means the one you want is usually off screen with
+  nothing to say so.
+- **The Account tab fits a phone.** The activity table's four columns do not
+  fit at 360px, and squeezing them makes every column unreadable rather than
+  one of them missing, so those rows stack. Addresses wrap, and a terminal
+  block is capped to its container, since overflow alone still lets the block
+  size the page.
+- **A Telegram reply that failed to send left no trace at all.** The bot logged
+  the command as received, sent nothing, and logged nothing else, which is
+  indistinguishable from success on one side and from an unanswered command on
+  the other. Telegram answers a message it cannot parse with a 400 naming the
+  offending offset, and all of that was being discarded. The reason is now
+  logged beside the first 120 characters of the refused message.
 - The improved Telegram template would never have reached a phone.
   `apply_telegram_template` skipped any notification that already had one,
   which is gotcha #22 in a new place: a generated thing written only when
