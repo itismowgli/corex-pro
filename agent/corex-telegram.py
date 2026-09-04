@@ -168,7 +168,15 @@ def reply(text):
         text = text[:limit].rstrip() + "\n\n... truncated ..."
         if text.count("```") % 2:
             text += "\n```"
-    cc.telegram_send(BOT_TOKEN, CHAT_ID, text)
+    if not cc.telegram_send(BOT_TOKEN, CHAT_ID, text):
+        # A failed send was completely invisible: the command was logged as
+        # received, nothing arrived on the phone, and there was no record of an
+        # attempt at all. That is the hardest possible fault to diagnose, and
+        # it happened. Telegram's own reason is carried back in
+        # cc.last_send_error, and it names the offending offset for a
+        # MarkdownV2 message it would not parse.
+        say("reply failed: %s | first 120 chars: %r"
+            % (cc.last_send_error[0] or "no reason given", text[:120]))
 
 
 def code_block(text, limit=3000):

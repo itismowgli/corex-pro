@@ -143,8 +143,26 @@ def telegram_send(token, chat, text, markdown=True):
     try:
         with urllib.request.urlopen(url, data=data, timeout=20) as resp:
             return resp.status == 200
-    except Exception:
+    except Exception as exc:
+        # Telegram answers a malformed MarkdownV2 message with a 400 and a
+        # description naming the offending offset. Swallowing that made a
+        # rejected message indistinguishable from a delivered one, so the
+        # reason is surfaced to the caller's log.
+        detail = ""
+        body = getattr(exc, "read", None)
+        if callable(body):
+            try:
+                detail = body()[:200].decode("utf-8", "replace")
+            except Exception:
+                detail = ""
+        last_send_error[0] = "%s %s" % (exc, detail).strip()
         return False
+
+
+# The reason the most recent send failed, for a caller that wants to log it.
+# A single slot rather than a raised exception: a notification that cannot be
+# delivered must never take down the thing that was trying to send it.
+last_send_error = [""]
 
 
 # ── Message shape ───────────────────────────────────────────────────────────
