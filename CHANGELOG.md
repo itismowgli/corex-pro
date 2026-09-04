@@ -106,7 +106,66 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
   "unknown" is shown as itself. A registry that could not be reached leaves
   the Update button exactly where it was.
 
+- **One sign-in, with two-factor, for the panels that have no real login.**
+  `lib/services/authelia.sh` puts Authelia in front of Portainer, Grafana,
+  AdGuard and n8n, and deliberately not in front of Vaultwarden, Nextcloud,
+  Immich, Cal.com or the dashboard: every one of those has a login of its own
+  and fronting them means signing in twice for one door.
+
+  Newly possible rather than newly thought of. The tunnel used to point at
+  container names, so Traefik was only in the path for LAN requests and a
+  forwardAuth middleware would have protected nothing arriving from the
+  internet. It is one wildcard route to Traefik now.
+
+  Authelia and not Authentik, and on this hardware that is the whole argument:
+  one Go binary in one container with a file backend and no Redis, against
+  Python plus PostgreSQL plus Redis plus a worker on a box that thermal trips.
+
+  The middleware label is conditional and has to be. A Traefik router naming a
+  middleware Traefik cannot find does not fall back to serving the site: the
+  router goes into an error state and the hostname answers 404. So
+  `sso_protects` checks the config and that the container is running, and
+  installing or removing Authelia regenerates the compose files of the
+  services concerned. A service switched off with `corex manage disable` stays
+  off; the label lands when it is enabled again.
+
+  AdGuard gets a Traefik router for the first time, at `adguard.DOMAIN`, and
+  keeps port 3000 published. That is the point rather than an oversight:
+  AdGuard is the DNS, so a login that needs DNS must never be the only way to
+  reach the thing that serves it. Uptime Kuma is excluded for the same kind of
+  reason, being the page you open to find out why something is down.
+
+  Two factors only where a registration link can be delivered. With the shared
+  relay configured the policy is `two_factor`; without it, asking for a second
+  factor would lock the operator out with no way to enrol a device, so it
+  drops to one and notifications are written to a file the deploy names.
+
 ### Fixed
+- **There were no backups, and there could not have been.** Two faults, either
+  of which was enough on its own, and both silent.
+
+  The generated backup script read the Restic password with
+  `sed 's/^[^:]*: //'`. `/root/corex-credentials.txt` is column aligned, so
+  that takes one space off the padding and leaves the rest inside the
+  password, while the repository was created from the properly trimmed value.
+  restic answers "wrong password or no key found", which reads as a lost
+  password rather than as two strings differing by whitespace.
+
+  And the script ran all four restic commands without looking at any exit
+  status, then logged "Backup complete". So a repository it could not even
+  open reported a successful backup every night.
+
+  Both are fixed, the repository on this box has been created, and
+  `corex manage maintenance setup` rewrites the generated scripts rather than
+  trusting whatever is installed, because a box from before v2.5.0 also has
+  the Restic password written into a world-readable file.
+
+- **`repair adguard` never rewrote resolv.conf after the first install.** The
+  installer sets the immutable bit on `/etc/resolv.conf` (gotcha #7) and the
+  deploy then tried to `rm` it, which fails with EPERM. It was the last
+  command in a function whose status nobody checked, so the file was silently
+  left as it was. The lock comes off first now.
+
 - **A deferred maintenance run no longer counts as a run.** Measured on the
   first hot hour after the timer shipped: the backup came due during a
   dashboard rebuild, the CPU was at 86C, the runner correctly declined, and

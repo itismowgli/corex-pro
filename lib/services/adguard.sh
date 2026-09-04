@@ -50,9 +50,16 @@ adguard_deploy() {
 
     # Disable systemd-resolved which holds port 53
     systemctl disable --now systemd-resolved 2>/dev/null || true
-    rm -f /etc/resolv.conf
-    printf "nameserver 1.1.1.1\nnameserver 8.8.8.8\n" > /etc/resolv.conf
-    # Lock so systemd can't overwrite on reboot
+    # The lock has to come off before the file can be replaced. A previous run
+    # of this function set it (gotcha #7), so on every run after the first the
+    # rm failed with EPERM and the file was left exactly as it was. Nothing
+    # said so, because the failure was the last command in a function nobody
+    # checked the status of.
+    chattr -i /etc/resolv.conf 2>/dev/null || true
+    rm -f /etc/resolv.conf 2>/dev/null || true
+    printf "nameserver 1.1.1.1\nnameserver 8.8.8.8\n" > /etc/resolv.conf 2>/dev/null \
+        || log_warning "Could not rewrite /etc/resolv.conf"
+    # Lock again so systemd-resolved cannot overwrite it on reboot.
     chattr +i /etc/resolv.conf 2>/dev/null || true
 
     # Detect if AdGuard has already been configured (setup wizard completed)
@@ -67,6 +74,41 @@ adguard_deploy() {
         fi
     else
         log_info "AdGuard first run — wizard will listen on port 3000"
+    fi
+
+    # AdGuard gets a Traefik router so the shared login can be put in front
+    # of it. It did not have one before: the admin panel was reached on
+    # SERVER_IP:3000 and nothing else, which is fine on the LAN and means the
+    # panel has only its own password when it is reached over the tunnel.
+    #
+    # Port 3000 stays published, and that is the point rather than an
+    # oversight. AdGuard is the DNS, so auth.DOMAIN does not resolve on the
+    # LAN while AdGuard is down: a login that needs DNS must never be the only
+    # way to fix DNS.
+    local sso_label=""
+    declare -f sso_label_for >/dev/null 2>&1 && sso_label="$(sso_label_for adguard)"
+
+    # No domain means no router. AdGuard is the one module that installs in
+    # local-only mode, and a Host rule built from an empty domain is
+    # `Host(`adguard.`)`, which Traefik rejects.
+    local adguard_labels=""
+    if [[ -n "${DOMAIN:-}" ]]; then
+        adguard_labels="$(cat << ALEOF
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.adguard.rule=Host(\`adguard.${DOMAIN}\`)"
+      - "traefik.http.routers.adguard.entrypoints=websecure"
+      - "traefik.http.routers.adguard.tls.certresolver=myresolver"
+      # The port inside the container, which AdGuard moves from 3000 to 80
+      # once its setup wizard has run, so it is read from AdGuardHome.yaml
+      # rather than hardcoded. No apostrophe in this comment on purpose: it is
+      # a heredoc body inside a command substitution, and bash scans that for
+      # quotes, so one apostrophe here is an unterminated string.
+      # See CLAUDE.md "Heredoc markers convention".
+      - "traefik.http.services.adguard.loadbalancer.server.port=${ADGUARD_INTERNAL_PORT}"
+${sso_label}
+ALEOF
+)"
     fi
 
     cat > "${dir}/docker-compose.yml" << DCEOF
@@ -90,6 +132,7 @@ services:
           cpus: "0.5"
         reservations:
           memory: 64m
+${adguard_labels}
 networks:
   proxy-net: { external: true }
 DCEOF

@@ -28,11 +28,11 @@ learning nginx, SSL, Docker networking, or Linux hardening.
 - Re-run on existing server = health-check + repair broken services only
 - No live server required for testing (Docker-in-Docker + bats)
 
-**Current version:** v3.19.0
-**Current service modules:** 17 (Traefik, AdGuard, Portainer, Nextcloud,
+**Current version:** v3.20.0
+**Current service modules:** 18 (Traefik, AdGuard, Portainer, Nextcloud,
 Immich, Vaultwarden, Stalwart Mail, Coolify, n8n, Cal.com, Time Machine,
 Uptime Kuma + Grafana + Prometheus (monitoring), Ollama + OpenWebUI +
-Browserless (ai), CrowdSec, Cloudflared, Dashboard, UPS)
+Browserless (ai), CrowdSec, Cloudflared, Dashboard, UPS, Authelia)
 
 Note the count is service *modules* in `lib/services/`, not containers, a
 single module can deploy several containers (`monitoring` and `ai` each deploy
@@ -198,6 +198,9 @@ corex-pro/
 | `/etc/corex/state.json` | [v2] Tracks installed services and configuration |
 | `/etc/corex/watchdog.conf` | Watchdog thresholds and Kuma push tokens (0640) |
 | `/etc/corex/maintenance.conf` | Maintenance schedule and temperature limit (0640) |
+| `/etc/corex/authelia.conf` | Which routers sit behind the shared login (0644) |
+| `${DOCKER_ROOT}/authelia/.secrets` | Authelia JWT, session and storage keys (0600) |
+| `${DOCKER_ROOT}/authelia/.admin-password` | Portal password, stable across re-runs (0600) |
 | `/var/lib/corex/maintenance.json` | What each scheduled task last did (0644) |
 | `/var/log/corex-maintenance.log` | Maintenance runner log |
 | `/usr/local/bin/corex-maintenance.sh` | Runs whatever is due, hourly by timer |
@@ -289,6 +292,12 @@ Nextcloud       <- depends on nextcloud-db (MariaDB) + nextcloud-redis
 Immich          <- depends on immich-db (PostgreSQL) + immich-redis + immich-ml
 
 Vaultwarden     <- standalone (SQLite internal)
+Authelia        <- standalone (SQLite, sessions in memory, no Redis); needs a
+                   domain, because the session cookie is scoped to one. The
+                   routers it protects depend on it: a Traefik router naming a
+                   middleware that is not defined answers 404, so
+                   /etc/corex/authelia.conf and a running container are both
+                   checked before the label is written
 Stalwart Mail   <- standalone; requires domain
 n8n             <- standalone (SQLite internal)
 Cal.com         <- depends on calcom-db (PostgreSQL 16) + calcom-helper, which
@@ -320,6 +329,7 @@ Time Machine    <- host networking; depends on avahi-daemon on host
 | Nextcloud | YES | - | - |
 | Immich | YES | - | - |
 | Vaultwarden | YES | - | - |
+| Authelia | YES | - | - |
 | n8n | YES | - | - |
 | Cal.com (web, helper, db) | YES | - | - |
 | Stalwart | YES | - | - |
@@ -1726,6 +1736,84 @@ only one that can leave the machine unbootable, which is gotcha #18 exactly.
 Installing the timer also removes the v1 `corex-backup` line from root's
 crontab. Leaving it means one snapshot taken twice and two history rows that
 disagree.
+
+### 44. A router that names a missing middleware returns 404, it does not fall back
+
+Authelia protects Portainer, Grafana, AdGuard and n8n with a forwardAuth
+middleware defined by a label on the Authelia container itself. That means the
+middleware exists only while Authelia does, and Traefik does not treat a
+missing middleware as something to skip: the router enters an error state and
+its hostname answers 404. A label written unconditionally therefore takes four
+working services down on every box that has not installed the SSO module.
+
+So `sso_protects` in `lib/common.sh` asks three questions before
+`sso_label_for` prints anything: does `/etc/corex/authelia.conf` exist, does it
+list this router, and is the container running. Each service module calls it
+while writing its own compose file, guarded with `declare -f` so a module
+sourced without `common.sh` degrades to no label rather than to
+`command not found`. Removing Authelia sets `AUTHELIA_ENABLED=false` **before**
+the container goes, then regenerates the protected services.
+
+Two related rules came out of the same work.
+
+**A service switched off stays off.** Applying the middleware means running
+each protected module's deploy, and doing that on a disabled service starts
+every container in it, which for `monitoring` is five. `state_service_is_enabled`
+is checked, and the label lands the next time the service is enabled, because
+enable regenerates the compose file.
+
+**Not everything with a login should be behind it.** Vaultwarden, Nextcloud,
+Immich, Cal.com and the CoreX dashboard have real logins of their own and would
+ask twice. Uptime Kuma is excluded because it is the page you open to find out
+why something is down. AdGuard is behind it and also keeps port 3000
+published, which is not an oversight: AdGuard is the DNS, so `auth.DOMAIN` does
+not resolve on the LAN while AdGuard is down, and a login that needs DNS must
+never be the only way to reach the thing that serves it.
+
+**And two factors only where the second factor can be enrolled.** Authelia
+emails the registration link. With no relay configured, a `two_factor` policy
+locks the operator out of the portal with no way to enrol a device, so the
+policy drops to `one_factor` and notifications go to a file the deploy names.
+
+### 45. There were no backups, and the log said there were
+
+`/mnt/corex-data/backups/restic-repo` did not exist for the entire life of this
+installation. Two independent faults, either sufficient on its own, and both
+silent.
+
+**A password read that leaves the column padding in.** The generated backup
+script read the Restic password with `sed 's/^[^:]*: //'`.
+`/root/corex-credentials.txt` is column aligned, so that takes one space off
+and leaves the rest inside the password:
+
+```
+Restic Backup:   oajcF3jz6R4fDR4JTg8wC0GE
+                 ^^ two spaces that ended up in the password
+```
+
+The repository is created from the properly trimmed value, so the script and
+the repository disagree by whitespace and restic reports "wrong password or no
+key found", which reads as a lost password rather than as a parsing bug.
+`cred_get` in `lib/common.sh` has always done this correctly, and there is a
+unit test meant to catch a script that parses the file by hand. It was passing,
+and the reason is worth knowing: its pattern required the pipe to follow
+`"$CRED_FILE"` immediately, and `lib/backup.sh` had a `2>/dev/null` in between.
+The test now checks for the defect, a `sed` that consumes exactly one space
+after the colon, rather than for the technique, because a generated standalone
+script cannot source `common.sh` and has to inline the expression.
+
+**Four restic commands and no exit status.** The script ran backup, forget,
+check and stats, then logged "Backup complete" whatever any of them returned.
+So a repository it could not open reported success every night.
+
+Both are fixed, and `corex manage maintenance setup` now regenerates
+`/usr/local/bin/corex-backup.sh` rather than trusting what is installed, for
+the reason in gotcha #22. A box installed before v2.5.0 has a third version of
+this script with the Restic password written into it in plain text.
+
+**The general rule: a backup that has never been restored is a hypothesis.**
+`restic snapshots --latest 1` after a run is the cheapest possible check that
+something exists, and the maintenance task fails when it comes back empty.
 
 ---
 

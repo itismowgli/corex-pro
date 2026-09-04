@@ -17,25 +17,57 @@ phase6_backup() {
         systemctl enable --now cron
     fi
 
-    # Ensure restic is installed
+    backup_install_restic
+    backup_init_repo || return 1
+    backup_write_scripts
+    backup_schedule_cron
+    log_success "Backup system ready (daily at 3AM, manual: sudo corex-backup.sh)"
+}
+
+backup_install_restic() {
     if ! command -v restic &>/dev/null; then
         log_info "Installing restic..."
         apt-get install -y -qq restic || log_error "Failed to install restic."
     fi
+}
 
+# The repository, created once. The password comes from cred_get, which is the
+# only correct way to read it: /root/corex-credentials.txt is column aligned,
+# so a label is followed by padding, and a plain `sed 's/^[^:]*: //'` takes one
+# space off and leaves the rest inside the password. That produced a repository
+# whose key was two spaces plus the password, which then refused every backup
+# the generated script attempted, with "wrong password or no key found".
+backup_init_repo() {
     mkdir -p "${BACKUP_ROOT}"
-
-    export RESTIC_REPOSITORY="${BACKUP_ROOT}/restic-repo"
-    export RESTIC_PASSWORD="${RESTIC_PASSWORD}"
-
-    if ! restic cat config &>/dev/null 2>&1; then
-        log_info "Initializing Restic backup repository..."
-        restic init || log_error "Failed to initialize Restic repository."
-        log_success "Restic repo created at ${BACKUP_ROOT}/restic-repo"
-    else
-        log_success "Restic repo already exists — skipping init."
+    local pw="${RESTIC_PASSWORD:-}"
+    [[ -n "$pw" ]] || pw="$(cred_get 'Restic Backup:')"
+    if [[ -z "$pw" ]]; then
+        log_warning "No Restic password, so no repository was created"
+        return 1
     fi
+    export RESTIC_REPOSITORY="${BACKUP_ROOT}/restic-repo"
+    export RESTIC_PASSWORD="$pw"
 
+    if restic cat config >/dev/null 2>&1; then
+        log_success "Restic repo already exists, leaving it alone."
+        return 0
+    fi
+    # An existing directory that is not a repository is either an empty
+    # mkdir or a repository keyed on a different password, and restic init
+    # refuses a non-empty target. Saying which is what makes the difference
+    # diagnosable.
+    if [[ -f "${RESTIC_REPOSITORY}/config" ]]; then
+        log_warning "There is a repository at ${RESTIC_REPOSITORY} that this password does not open."
+        echo "    Either restore the original password, or move that directory aside"
+        echo "    and re-run. Moving it aside abandons every snapshot in it."
+        return 1
+    fi
+    log_info "Initializing Restic backup repository..."
+    restic init || { log_warning "Failed to initialize Restic repository."; return 1; }
+    log_success "Restic repo created at ${RESTIC_REPOSITORY}"
+}
+
+backup_write_scripts() {
     # ── Backup script ────────────────────────────────────────────────────────
     # Uses single-quoted heredoc ('BKEOF') to prevent variable expansion.
     # Passwords are read at runtime from credentials file (not embedded).
@@ -48,31 +80,49 @@ BACKUP_ROOT="/mnt/corex-data/backups"
 DATA_ROOT="/mnt/corex-data/service-data"
 DOCKER_ROOT="/mnt/corex-data/docker-configs"
 CRED_FILE="/root/corex-credentials.txt"
+LOG="/var/log/corex-backup.log"
 export RESTIC_REPOSITORY="${BACKUP_ROOT}/restic-repo"
-# Read password at runtime — never embedded in the script file
+# Read at runtime, never embedded in this file, which is world readable.
+#
+# The trailing whitespace strip is load bearing. The credentials file is
+# column aligned, so the label is followed by padding, and taking one space
+# off after the colon leaves the rest of it inside the password. A repository
+# was created with the trimmed value and this script then presented the padded
+# one, which restic rejects as "wrong password or no key found" without saying
+# that the two differ by whitespace.
 export RESTIC_PASSWORD
-RESTIC_PASSWORD=$(grep "Restic Backup:" "$CRED_FILE" 2>/dev/null | sed 's/^[^:]*: //')
+RESTIC_PASSWORD=$(grep -m1 "Restic Backup:" "$CRED_FILE" 2>/dev/null \
+    | sed -e 's/^[^:]*:[[:space:]]*//' -e 's/[[:space:]]*$//')
 if [[ -z "$RESTIC_PASSWORD" ]]; then
-    echo "$(date '+%Y-%m-%d %H:%M:%S') — ERROR: Could not read Restic password from ${CRED_FILE}" >> "$LOG"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') -- ERROR: no Restic password in ${CRED_FILE}" >> "$LOG"
     exit 1
 fi
-LOG="/var/log/corex-backup.log"
 
-echo "$(date '+%Y-%m-%d %H:%M:%S') — Backup starting..." >> "$LOG"
+echo "$(date '+%Y-%m-%d %H:%M:%S') -- Backup starting..." >> "$LOG"
 
+# Exit statuses are kept. The previous version ran all four restic commands
+# and then logged "Backup complete" whatever happened, so a repository this
+# script could not even open reported a successful backup every night for
+# months.
+rc=0
 restic backup "${DATA_ROOT}" "${DOCKER_ROOT}" \
     --tag corex \
     --exclude="*.tmp" \
     --exclude="*.log" \
     --exclude="*/cache/*" \
-    >> "$LOG" 2>&1
+    >> "$LOG" 2>&1 || rc=$?
+
+if (( rc != 0 )); then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') -- BACKUP FAILED (exit ${rc}). Nothing below ran." >> "$LOG"
+    exit "$rc"
+fi
 
 restic forget \
     --keep-daily 7 \
     --keep-weekly 4 \
     --keep-monthly 6 \
     --prune \
-    >> "$LOG" 2>&1
+    >> "$LOG" 2>&1 || echo "$(date '+%Y-%m-%d %H:%M:%S') -- forget/prune failed, the snapshot is still there." >> "$LOG"
 
 # ── Integrity verification (spot-check 5% of data) ───────────────────────
 echo "$(date '+%Y-%m-%d %H:%M:%S') — Running integrity check..." >> "$LOG"
@@ -85,7 +135,7 @@ fi
 
 restic stats --mode raw-data >> "$LOG" 2>&1
 
-echo "$(date '+%Y-%m-%d %H:%M:%S') — Backup complete." >> "$LOG"
+echo "$(date '+%Y-%m-%d %H:%M:%S') -- Backup complete." >> "$LOG"
 BKEOF
     chmod +x /usr/local/bin/corex-backup.sh
 
@@ -99,7 +149,8 @@ DOCKER_ROOT="/mnt/corex-data/docker-configs"
 CRED_FILE="/root/corex-credentials.txt"
 export RESTIC_REPOSITORY="${BACKUP_ROOT}/restic-repo"
 export RESTIC_PASSWORD
-RESTIC_PASSWORD=$(grep "Restic Backup:" "$CRED_FILE" 2>/dev/null | sed 's/^[^:]*: //')
+RESTIC_PASSWORD=$(grep -m1 "Restic Backup:" "$CRED_FILE" 2>/dev/null \
+    | sed -e 's/^[^:]*:[[:space:]]*//' -e 's/[[:space:]]*$//')
 
 echo ""
 echo "=== CoreX Restore ==="
@@ -154,13 +205,19 @@ echo ""
 echo "Restore complete! Verify with: docker ps"
 RSEOF
     chmod +x /usr/local/bin/corex-restore.sh
+}
 
-    # ── Schedule daily cron at 3AM ───────────────────────────────────────────
-    local EXISTING_CRON
+# The daily cron entry, for an install with no maintenance timer.
+# `corex manage maintenance setup` removes this line and takes the schedule
+# over, because two things running the same backup produces one snapshot and
+# two histories that disagree about it.
+backup_schedule_cron() {
+    if systemctl is-enabled corex-maintenance.timer >/dev/null 2>&1; then
+        log_info "The maintenance timer owns the backup schedule, leaving cron alone"
+        return 0
+    fi
+    local EXISTING_CRON FILTERED_CRON
     EXISTING_CRON=$(crontab -l 2>/dev/null || true)
-    local FILTERED_CRON
     FILTERED_CRON=$(echo "$EXISTING_CRON" | grep -v "corex-backup" || true)
     printf "%s\n0 3 * * * /usr/local/bin/corex-backup.sh\n" "$FILTERED_CRON" | crontab -
-
-    log_success "Backup system ready (daily at 3AM, manual: sudo corex-backup.sh)"
 }

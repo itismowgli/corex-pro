@@ -107,6 +107,12 @@ n8n_deploy() {
         state_set "n8n_subdomain" "$subs" 2>/dev/null || true
     fi
 
+    # The shared login, when Authelia is installed and lists this router.
+    # Empty otherwise, because an empty middlewares label is rejected and a
+    # label naming an absent middleware answers 404.
+    local sso_label=""
+    declare -f sso_label_for >/dev/null 2>&1 && sso_label="$(sso_label_for n8n)"
+
     cat > "${dir}/docker-compose.yml" << DCEOF
 services:
   n8n:
@@ -151,6 +157,7 @@ services:
       - "traefik.http.routers.n8n.entrypoints=websecure"
       - "traefik.http.routers.n8n.tls.certresolver=myresolver"
       - "traefik.http.services.n8n.loadbalancer.server.port=5678"
+${sso_label}
 networks:
   proxy-net: { external: true }
 DCEOF

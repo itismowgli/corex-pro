@@ -45,6 +45,13 @@ portainer_deploy() {
     chown -R 1000:1000 "${DATA_ROOT}/portainer"
     local dir="${DOCKER_ROOT}/portainer"
 
+    # The shared login, when Authelia is installed and lists this router.
+    # Empty otherwise: an empty middlewares label is rejected by Traefik, and
+    # a label naming a middleware that does not exist puts the router into an
+    # error state and answers 404. See sso_label_for in lib/common.sh.
+    local sso_label=""
+    declare -f sso_label_for >/dev/null 2>&1 && sso_label="$(sso_label_for portainer)"
+
     cat > "${dir}/docker-compose.yml" << DCEOF
 services:
   portainer:
@@ -75,6 +82,7 @@ services:
       # verify it against the container IP and returns 500 for every request.
       # insecure-backend@file skips verification for this backend only.
       - "traefik.http.services.portainer.loadbalancer.serverstransport=insecure-backend@file"
+${sso_label}
 networks:
   proxy-net: { external: true }
 DCEOF

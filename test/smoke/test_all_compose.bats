@@ -58,6 +58,13 @@ setup() {
     log_warning() { :; }
     log_error()   { echo "ERROR: $1" >&2; exit 1; }
     export -f log_info log_step log_success log_warning log_error
+
+    # A common.sh helper the modules assume is present, because in production
+    # corex-manage.sh and the installer both source common.sh before touching
+    # a module. Without it nextcloud_deploy dies on a missing command, and the
+    # five tests after it report a compose failure that is really a mock gap.
+    generate_pass() { openssl rand -hex 12; }
+    export -f generate_pass
 }
 
 teardown() {
@@ -414,4 +421,153 @@ dashboard_prepare() {
     export -f state_get
     dashboard_prepare
     assert_valid_compose "dashboard"
+}
+
+# ─── Authelia and the shared login ────────────────────────────────────────────
+#
+# The middleware label is the part worth testing, in both directions and for
+# a reason that is not symmetrical. Missing, and four admin panels are
+# published with only their own passwords. Present when Authelia is not
+# running, and Traefik puts those four routers into an error state and their
+# hostnames answer 404, so a label written unconditionally is an outage.
+
+# The real sso_label_for from lib/common.sh, so the label text and its
+# indentation are what is being checked rather than a copy of them. Only
+# sso_protects is stubbed: it reads a fixed path and asks whether a container
+# is running, neither of which exists here.
+_sso_load() {
+    # shellcheck disable=SC1090
+    source "${REPO_DIR}/lib/common.sh"
+    # common.sh brings the real logging functions with it, and these tests
+    # want the quiet ones back.
+    log_info()    { :; }
+    log_step()    { :; }
+    log_success() { :; }
+    log_warning() { :; }
+    log_error()   { echo "ERROR: $1" >&2; exit 1; }
+    export -f log_info log_step log_success log_warning log_error
+}
+
+sso_on() {
+    _sso_load
+    sso_protects() {
+        [[ " portainer grafana adguard n8n " == *" $1 "* ]]
+    }
+    export -f sso_protects
+}
+
+sso_off() {
+    _sso_load
+    sso_protects() { return 1; }
+    export -f sso_protects
+}
+
+@test "authelia: compose is generated and defines the forwardAuth middleware" {
+    source_service "authelia"
+    _authelia_write_compose
+    assert_compose_contains "authelia" "middlewares.authelia.forwardauth.address=http://authelia:9091/api/authz/forward-auth"
+    assert_compose_contains "authelia" "routers.authelia.rule=Host(\`auth.test.example.com\`)"
+    assert_valid_compose "authelia"
+}
+
+@test "authelia: the storage key and the session secret are not the same value" {
+    source_service "authelia"
+    _authelia_secrets
+    [ -n "$AUTHELIA_STORAGE_KEY" ]
+    [ -n "$AUTHELIA_SESSION_SECRET" ]
+    [ "$AUTHELIA_STORAGE_KEY" != "$AUTHELIA_SESSION_SECRET" ]
+}
+
+@test "authelia: secrets survive a second run, because a new storage key loses every enrolled device" {
+    source_service "authelia"
+    _authelia_secrets
+    local first="$AUTHELIA_STORAGE_KEY"
+    unset AUTHELIA_STORAGE_KEY AUTHELIA_JWT_SECRET AUTHELIA_SESSION_SECRET
+    _authelia_secrets
+    [ "$AUTHELIA_STORAGE_KEY" = "$first" ]
+}
+
+@test "authelia: the config denies by default and lists every protected host" {
+    source_service "authelia"
+    _authelia_secrets
+    _authelia_write_config
+    local cfg="${DOCKER_ROOT}/authelia/configuration.yml"
+    grep -q "default_policy: deny" "$cfg"
+    grep -q "portainer.test.example.com" "$cfg"
+    grep -q "grafana.test.example.com" "$cfg"
+    grep -q "auth.test.example.com" "$cfg"
+}
+
+@test "authelia: without a relay the policy drops to one factor" {
+    source_service "authelia"
+    # No relay, so no way to deliver a registration link. Asking for a second
+    # factor here would lock the operator out of the portal with no way in.
+    smtp_conf_load() { return 1; }
+    export -f smtp_conf_load
+    _authelia_secrets
+    _authelia_write_config
+    grep -q "policy: one_factor" "${DOCKER_ROOT}/authelia/configuration.yml"
+    grep -q "filename: /config/notification.txt" "${DOCKER_ROOT}/authelia/configuration.yml"
+}
+
+@test "portainer: no middleware label when the shared login is not installed" {
+    sso_off
+    source_service "portainer"
+    portainer_deploy
+    run grep "routers.portainer.middlewares" "${DOCKER_ROOT}/portainer/docker-compose.yml"
+    [ "$status" -ne 0 ]
+    assert_valid_compose "portainer"
+}
+
+@test "portainer: the middleware label appears when it is" {
+    sso_on
+    source_service "portainer"
+    portainer_deploy
+    assert_compose_contains "portainer" "routers.portainer.middlewares=authelia@docker"
+    assert_valid_compose "portainer"
+}
+
+@test "n8n: the middleware label follows the same switch" {
+    sso_off
+    source_service "n8n"
+    n8n_deploy
+    run grep "routers.n8n.middlewares" "${DOCKER_ROOT}/n8n/docker-compose.yml"
+    [ "$status" -ne 0 ]
+    sso_on
+    n8n_deploy
+    assert_compose_contains "n8n" "routers.n8n.middlewares=authelia@docker"
+    assert_valid_compose "n8n"
+}
+
+@test "monitoring: grafana is protected and uptime kuma is not" {
+    sso_on
+    source_service "monitoring"
+    monitoring_deploy
+    assert_compose_contains "monitoring" "routers.grafana.middlewares=authelia@docker"
+    # Kuma is the page you open to find out why something is down, so it keeps
+    # its own login and stays reachable when the portal is not.
+    run grep "routers.uptime.middlewares" "${DOCKER_ROOT}/monitoring/docker-compose.yml"
+    [ "$status" -ne 0 ]
+    assert_valid_compose "monitoring"
+}
+
+@test "adguard: it gets a Traefik router, and keeps port 3000 either way" {
+    sso_on
+    source_service "adguard"
+    adguard_deploy
+    assert_compose_contains "adguard" "routers.adguard.rule=Host(\`adguard.test.example.com\`)"
+    assert_compose_contains "adguard" "routers.adguard.middlewares=authelia@docker"
+    # The escape hatch. AdGuard is the DNS, so a login that needs DNS must not
+    # be the only way to reach the thing that serves it.
+    assert_compose_contains "adguard" '"3000:'
+    assert_valid_compose "adguard"
+}
+
+@test "adguard: no domain means no router at all, not a broken one" {
+    sso_off
+    source_service "adguard"
+    DOMAIN="" adguard_deploy
+    run grep "traefik.enable" "${DOCKER_ROOT}/adguard/docker-compose.yml"
+    [ "$status" -ne 0 ]
+    assert_valid_compose "adguard"
 }

@@ -88,6 +88,12 @@ groups:
           summary: "OS disk < 10% free — check /var/lib/docker and container logs"
 ALEOF
 
+    # Grafana behind the shared login, when Authelia is installed and lists
+    # it. Only grafana: Uptime Kuma has its own login and is the page you open
+    # to find out why something is down, so it stays reachable on its own.
+    local sso_label=""
+    declare -f sso_label_for >/dev/null 2>&1 && sso_label="$(sso_label_for grafana)"
+
     cat > "${dir}/docker-compose.yml" << DCEOF
 services:
   uptime-kuma:
@@ -167,6 +173,7 @@ services:
       - "traefik.http.routers.grafana.entrypoints=websecure"
       - "traefik.http.routers.grafana.tls.certresolver=myresolver"
       - "traefik.http.services.grafana.loadbalancer.server.port=3000"
+${sso_label}
 
   node-exporter:
     image: prom/node-exporter:latest

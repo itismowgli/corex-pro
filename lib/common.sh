@@ -166,3 +166,40 @@ container_running() {
 container_exists() {
     docker inspect "$1" &>/dev/null
 }
+
+# ── Shared sign-in (Authelia) ─────────────────────────────────────────────────
+#
+# Which Traefik routers sit behind the shared login, read from
+# /etc/corex/authelia.conf so a service module does not have to know whether
+# the SSO module is installed. Every module writes its own compose file, and
+# each one asks this.
+#
+# The label is only emitted when the middleware really exists. A Traefik
+# router that names a middleware Traefik cannot find does not fall back to
+# serving the site: the router goes into an error state and the hostname
+# returns 404, so a label written unconditionally would take four working
+# services down on any box without Authelia. It is also why removing Authelia
+# has to repair the services it was protecting.
+sso_protects() {
+    local router="$1"
+    [[ -r /etc/corex/authelia.conf ]] || return 1
+    local AUTHELIA_ENABLED=false AUTHELIA_PROTECT=""
+    # shellcheck source=/dev/null
+    . /etc/corex/authelia.conf 2>/dev/null || return 1
+    [[ "$AUTHELIA_ENABLED" == "true" ]] || return 1
+    container_running "authelia" || return 1
+    [[ " ${AUTHELIA_PROTECT} " == *" ${router} "* ]]
+}
+
+# The full compose label line for one router, or nothing. Printed at the
+# indentation a service label needs, so a module can drop the result straight
+# into its heredoc on a line of its own: an empty value leaves a blank line,
+# which YAML ignores, and an empty middlewares label would be rejected
+# outright.
+#
+# Usage:  local sso_label; sso_label="$(sso_label_for portainer)"
+sso_label_for() {
+    local router="$1"
+    sso_protects "$router" || return 0
+    printf '      - "traefik.http.routers.%s.middlewares=authelia@docker"' "$router"
+}

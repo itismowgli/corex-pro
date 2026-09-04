@@ -128,6 +128,7 @@ type portRow struct {
 var serviceLabels = map[string]string{
 	"adguard":     "AdGuard Home — DNS & Ad Blocker",
 	"ai":          "AI Stack — Ollama + WebUI",
+	"authelia":    "Authelia — Shared sign-in",
 	"calcom":      "Cal.com — Scheduling & Booking",
 	"cloudflared": "Cloudflare Tunnel — External Access",
 	"coolify":     "Coolify — App Platform",
@@ -160,9 +161,15 @@ var serviceLabels = map[string]string{
 // A module can serve more than one address: monitoring answers on both
 // grafana and status.
 var serviceURLs = map[string][]string{
-	"adguard": {"http://{IP}:3000"},
-	"ai":      {"https://ai.{DOMAIN}"},
-	"calcom":  {"https://cal.{DOMAIN}"},
+	// Two addresses, and the second is not a fallback. adguard.DOMAIN goes
+	// through Traefik, and therefore through the shared login when Authelia
+	// is installed. Port 3000 on the LAN does not, deliberately: AdGuard is
+	// the DNS, so a login that needs DNS must never be the only way to reach
+	// the thing that serves it.
+	"adguard":  {"https://adguard.{DOMAIN}", "http://{IP}:3000"},
+	"ai":       {"https://ai.{DOMAIN}"},
+	"authelia": {"https://auth.{DOMAIN}"},
+	"calcom":   {"https://cal.{DOMAIN}"},
 	// Routed by a Traefik file-provider rule rather than a Docker label,
 	// because Coolify sits on its own network. Port 8000 stays listed as the
 	// LAN way in and the address the route itself connects to.
@@ -189,6 +196,7 @@ var serviceURLs = map[string][]string{
 var serviceContainers = map[string]string{
 	"adguard":     "adguard",
 	"ai":          "ollama",
+	"authelia":    "authelia",
 	"calcom":      "calcom",
 	"cloudflared": "cloudflared",
 	"coolify":     "coolify",

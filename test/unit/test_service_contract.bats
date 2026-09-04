@@ -418,19 +418,40 @@ _repair_body() {
     [ "$(cred_get 'Vaultwarden:')"  = "tok_9" ]
 }
 
-@test "no script parses the credentials file by hand" {
+@test "no script reads a credential without stripping the column padding" {
     # lib/preflight.sh used awk on a field number while corex-manage.sh used
     # sed that kept the padding, so the two resolved the same credential to
     # different strings. Immich lost access to its own database on repair.
+    #
+    # This test used to require the pipe to follow "$CRED_FILE" immediately,
+    # which meant a `2>/dev/null` in between hid the offender. lib/backup.sh
+    # had exactly that shape, and the padding it left in the Restic password
+    # meant the generated backup script could not open the repository it was
+    # paired with: every nightly run failed and logged "Backup complete".
+    #
+    # So the check is on the defect rather than on the technique. A generated
+    # standalone script cannot source common.sh, so it has to inline the
+    # parse; what it must not do is take one space off and keep the rest.
+    # Comments are excluded, and that is not laziness. This repo deliberately
+    # keeps a comment recording a trap so it is not reintroduced, and the
+    # comment in lib/backup.sh quotes the broken expression in order to
+    # explain it. A check that cannot tell a warning from the thing it warns
+    # about fails on the documentation, which is the same mistake as matching
+    # the word "claude" instead of an attribution trailer.
     local offenders=""
-    for f in "${REPO_ROOT}"/*.sh "${REPO_ROOT}"/lib/*.sh; do
+    for f in "${REPO_ROOT}"/*.sh "${REPO_ROOT}"/lib/*.sh "${REPO_ROOT}"/lib/services/*.sh; do
         [ -f "$f" ] || continue
-        grep -qE 'grep "[^"]+:" "\$CRED_FILE" \| (awk|sed)' "$f" \
-            && offenders+=" $(basename "$f")"
+        local code
+        code="$(grep -vE '^[[:space:]]*#' "$f")"
+        # A sed that consumes exactly one space after the colon.
+        echo "$code" | grep -qE "s/\^\[\^:\]\*: //" && offenders+=" $(basename "$f"):sed"
+        # An awk field split, which loses any internal space in the value.
+        echo "$code" | grep -qE 'CRED_FILE.*\| *awk' && offenders+=" $(basename "$f"):awk"
     done
     [ -z "$offenders" ] || {
-        echo "hand-rolled credential parsing in:$offenders"
-        echo "Fix: use cred_get from lib/common.sh."
+        echo "credential parsing that keeps the padding, in:$offenders"
+        echo "Fix: cred_get from lib/common.sh, or inline its exact expression:"
+        echo "  sed -e 's/^[^:]*:[[:space:]]*//' -e 's/[[:space:]]*\$//'"
         false
     }
 }
