@@ -33,6 +33,9 @@ curl -fsSL https://raw.githubusercontent.com/itismowgli/corex-pro/main/corex.sh 
 - [Outbound email](#outbound-email)
 - [Monitoring and alerting](#monitoring-and-alerting)
 - [Control from Telegram](#control-from-telegram)
+- [Scheduled maintenance](#scheduled-maintenance)
+- [Powering the machine](#powering-the-machine)
+- [Keeping a panel off the internet](#keeping-a-panel-off-the-internet)
 - [Thermal protection](#thermal-protection)
 - [UPS monitoring](#ups-monitoring)
 - [Backups](#backups)
@@ -88,7 +91,7 @@ get locked out of your own databases.
 
 ## Services
 
-Seventeen service modules, all optional except Traefik. A module can deploy
+Eighteen service modules, all optional except Traefik. A module can deploy
 more than one container: `monitoring`, `ai` and `calcom` each start three.
 
 | Module | What it gives you | Replaces |
@@ -107,6 +110,7 @@ more than one container: `monitoring`, `ai` and `calcom` each start three.
 | `ai` | Ollama, Open WebUI, and Browserless | ChatGPT subscription |
 | `crowdsec` | Intrusion detection that blocks attackers via iptables | Fail2ban, extended |
 | `portainer` | Container management in a browser | docker CLI |
+| `authelia` | One sign-in, with two-factor, for the panels that lack a real login | Cloudflare Access |
 | `cloudflared` | Cloudflare Tunnel connector | port forwarding |
 | `dashboard` | CoreX web GUI for daily operations | SSH |
 | `ups` | Graceful shutdown on power loss, using NUT | nothing, usually |
@@ -138,7 +142,8 @@ only works if a Traefik Host rule declares it. The rules live in
 | `portainer` | `https://portainer.DOMAIN` | Let's Encrypt |
 | `dashboard` | `https://dashboard.DOMAIN` | Let's Encrypt |
 | `nextcloud` whiteboard | `https://whiteboard.DOMAIN` | Let's Encrypt |
-| `adguard` | `http://SERVER_IP:3000` | none, plain HTTP on the LAN |
+| `authelia` | `https://auth.DOMAIN` | Let's Encrypt |
+| `adguard` | `https://adguard.DOMAIN`, and `http://SERVER_IP:3000` | Let's Encrypt, and none on the port |
 | `coolify` | `https://coolify.DOMAIN`, and `http://SERVER_IP:8000` | Let's Encrypt |
 | `traefik` | `http://127.0.0.1:8080`, reachable only through an SSH tunnel | none |
 | `timemachine` | `smb://SERVER_IP/CoreX_Backup` | not applicable |
@@ -189,6 +194,12 @@ sudo bash corex-manage.sh network-check # test HTTPS, certificate expiry, and DN
 sudo bash corex-manage.sh watchdog      # resource alerting: what is degrading the box
 sudo bash corex-manage.sh restart <svc> # restart its containers, nothing else
 sudo bash corex-manage.sh agent         # the agent behind the buttons and the bot
+sudo bash corex-manage.sh maintenance   # the schedule, and what each task last did
+sudo bash corex-manage.sh power         # wake-on-LAN, and the CPU clock ceiling
+sudo bash corex-manage.sh lan-only      # stop publishing a hostname, or publish it
+sudo bash corex-manage.sh dashboard-user # accounts for the dashboard's own login
+sudo bash corex-manage.sh kuma-seed     # register the checks each module declares
+sudo bash corex-manage.sh route         # route a hostname Traefik cannot discover
 ```
 
 `repair` regenerates a service's compose file before recreating the container,
@@ -606,6 +617,96 @@ loads at all rather than failing a handshake.
 Chrome sometimes shows a Safe Browsing warning on admin panels like this one.
 It is a false positive on the hostname pattern, not a sign of compromise.
 
+### authelia
+
+One sign-in page, with two-factor, in front of the admin panels that have no
+login worth relying on. Portainer has a password and no second factor, AdGuard
+has a password, Grafana has one you probably left at the default, and Prometheus
+has none at all. Authelia puts a single door in front of them.
+
+| | |
+|---|---|
+| Reach it | `https://auth.DOMAIN` |
+| Containers | `authelia` |
+| Ports opened | none, Traefik fronts it |
+| Data | `docker-configs/authelia/`, including a SQLite database |
+| Required | no |
+
+It is Authelia rather than Authentik, and on small hardware that is the whole
+argument: one Go binary in one container with a file backend and no Redis,
+against Python plus PostgreSQL plus Redis plus a worker. Sessions live in
+memory, so a restart signs you out and costs nothing else.
+
+Which hostnames sit behind it is `AUTHELIA_PROTECT` in
+`/etc/corex/authelia.conf`, and it defaults to Portainer, Grafana and AdGuard.
+Change the list and repair the services concerned:
+
+```bash
+sudo nano /etc/corex/authelia.conf
+sudo bash corex-manage.sh repair portainer
+```
+
+The account is `admin`, and its password is written once to
+`docker-configs/authelia/.admin-password` at mode 0600. That file is the record:
+the password is never regenerated on a repair, because a repair that silently
+rotates a password to a value nothing recorded is the same as losing it.
+
+#### What is deliberately not behind it
+
+Vaultwarden, Nextcloud, Immich, Cal.com and the CoreX dashboard all have real
+logins of their own, so fronting them means two prompts for one door. The
+dashboard is excluded for a second reason: its login is tied to the action
+agent, the access log and the passkey store, and it is the page you open when
+the box is already in trouble.
+
+n8n is excluded for a third reason, and it is worth understanding before you
+add anything to the list. n8n is published so that other systems can call it. A
+sign-in page in front of `/webhook/<id>` answers every incoming call with a
+redirect, so every integration fails and nothing reaches n8n to be logged. Its
+interface is also a single-page app, and Authelia answers an XHR with 401
+rather than a redirect, which no XHR can recover from: the result is a browser
+sign-in box floating over a workspace that has already loaded.
+
+The general rule, learned the hard way: before putting a login in front of a
+service, ask what calls it that is not a browser, and what watches it.
+
+#### Two factors need somewhere to send the link
+
+Authelia emails the registration link for a second factor, so the policy
+follows what the box can deliver. With the shared relay configured it is
+`two_factor`; without one, asking for a second factor would lock you out with
+no way to enrol a device, so it drops to `one_factor` and notifications are
+written to `docker-configs/authelia/notification.txt` instead.
+
+The account email matters more than it looks. It must be an address that can
+actually receive, which on a residential line is not an address at your own
+domain: no mail server can receive there. CoreX uses the relay account, since
+that is a mailbox the machine demonstrably reaches, and warns if it ends up
+with anything at your own domain.
+
+#### Three secrets that are not interchangeable
+
+`docker-configs/authelia/.secrets` holds a JWT secret, a session secret and a
+storage encryption key, generated once and never rotated. The storage key is
+the one to be careful with: replacing it does not reset a password, it makes
+every enrolled second factor unreadable. Treat it the way you treat the Restic
+password.
+
+#### If the portal itself is the problem
+
+Set `AUTHELIA_ENABLED=false` in `/etc/corex/authelia.conf` and repair the
+services. That takes the middleware off without removing anything, and is the
+way out if you cannot sign in.
+
+There is one structural trap worth knowing. The middleware is defined by a
+label on the Authelia container, so it exists only while that container does.
+A Traefik router naming a middleware Traefik cannot find does not fall back to
+serving the site: the router goes into an error state and the hostname returns
+404. CoreX checks the config, the router list and that the container is running
+before it writes the label, and removing Authelia turns the middleware off
+before the container goes. If you ever see four hostnames answer 404 at once,
+look at whether `authelia` is running before you look at anything else.
+
 ### crowdsec
 
 Intrusion detection that reads your logs, recognises attack patterns, and
@@ -828,6 +929,27 @@ recovery codes and reset codes are PBKDF2-HMAC-SHA256 with a per-account salt.
 Sessions are held in the dashboard's memory, so restarting the container signs
 everyone out.
 
+#### Confirming again, before something that cannot be undone
+
+Being signed in is enough to start, stop, repair and update a service. All of
+those come back. It is not enough to power the machine off, and the reason is
+structural rather than a matter of degree: this page runs on the machine it
+would be switching off, and the tunnel goes down with it. A stolen laptop with
+a live cookie must not be able to do that.
+
+So the dangerous actions ask again, and the answer is good for five minutes. A
+password, a current six-digit code, or a passkey will all do it. The passkey is
+the one worth preferring, and the dialog says so: it makes the authenticator
+check a fingerprint, a face or a PIN just then, which proves somebody is
+present, whereas a password proves only that the browser still remembers one.
+A password is still accepted even on an account with two-factor enrolled,
+because losing a phone must not lock you out of your own power button.
+
+The confirmation belongs to one browser rather than to the account, so
+confirming on a laptop does not arm a phone, and changing the password closes
+the window the old one opened. Every confirmation and every refusal is written
+to the access log.
+
 ### When the login itself goes wrong
 
 Every account is reachable from SSH, and none of it depends on the dashboard
@@ -849,7 +971,7 @@ sudo bash corex-manage.sh dashboard-user disable-auth
 
 ### What the tabs do
 
-Eight tabs, covering what you would otherwise SSH for.
+Nine tabs, covering what you would otherwise SSH for.
 
 Overview is the one it opens on, because the question you have when you open a
 control panel is whether anything is wrong. Temperature, load, memory and
@@ -869,6 +991,21 @@ The graphs cost nothing to collect. `blackbox.log` already records temperature,
 load, memory and throttling every twenty seconds, because it is the only
 evidence that survives a power cut, so the charts read that rather than
 sampling again.
+
+Services shows a card per module with its status and its addresses, and offers
+Update only where there is one. That check compares every image in a module
+against its registry once a day, which is fussier than it sounds: a module can
+ship five images, and a local digest and a per-platform manifest digest are
+different things by construction, so a naive comparison reports everything as
+stale forever. It also notices a tag that has stopped moving, because
+`docker pull` saying "up to date" is true and useless when upstream has quietly
+started a new release line. Where the check cannot tell, the button stays,
+since removing a working control over a network blip is worse than an extra
+button.
+
+Maintenance shows each scheduled task, when it last ran, how long it took and
+what it did, and can run one now. It reads the runner's own history rather than
+the schedule, for the reason in that section.
 
 It works on a phone. Tables scroll in their own box rather than dragging the
 page sideways, dialogs stay inside the screen, and the tabs are one scrolling
@@ -1414,6 +1551,168 @@ sudo bash corex-manage.sh agent test   # prove the socket works, including
                                        # from inside the dashboard container
 ```
 
+## Scheduled maintenance
+
+One timer, checked hourly, that runs whatever is due: a Restic snapshot daily,
+Docker cleanup weekly, a Time Machine check weekly, and a supervised OS upgrade
+monthly if you turn it on.
+
+```bash
+sudo bash corex-manage.sh maintenance          # the schedule and the last outcome
+sudo bash corex-manage.sh maintenance setup    # install the timer
+sudo bash corex-manage.sh maintenance run backup
+```
+
+One timer rather than four, because the tasks share a machine that can overheat:
+exactly one runs per invocation, and each is refused when the processor is
+already too warm. A task overdue by half its interval again runs at the next
+opportunity instead of waiting for its hour, so a machine that is switched off
+overnight still gets its backup.
+
+### The page reads the history, not the schedule
+
+This matters more than it sounds. Before any of this existed, the nightly
+backup on the machine CoreX is developed against had been failing every night
+since installation and logging "Backup complete" regardless, because there was
+no repository and nothing checked. A maintenance page that shows a schedule
+would have agreed with it.
+
+So every task records what actually happened. A task that has never run says
+so rather than showing a tick, a missing prerequisite is a failed run rather
+than a quiet success, and a run held back for temperature is a third state and
+not either of the other two. The backup task fails if `restic snapshots` comes
+back empty afterwards, because a backup that produced no snapshot did not
+happen. Failures go to Telegram.
+
+### A budget while it runs, not only a check before it starts
+
+Refusing to start above a temperature is worth having and is not enough. A
+first full snapshot on the development machine began at 66C and reached 96.8C
+six minutes later, at which point the thermal guardian shut the machine down.
+The pre-flight check had passed, correctly, thirty degrees earlier.
+
+So a running task is paused with SIGSTOP when it crosses the limit and resumed
+eight degrees lower, sampled every five seconds because this class of hardware
+can climb ten degrees in fifteen. SIGSTOP rather than a kill, because restic,
+apt and a Docker prune all resume from a stop with nothing lost, whereas
+killing any of them is a choice between a wasted run and a dirty transaction.
+Restic is also given a core budget and a cache directory, the latter because
+under systemd there is no `HOME` and it was re-reading every file on every run.
+
+Both limits are in `/etc/corex/maintenance.conf`. On a machine whose cooling is
+marginal, lower them.
+
+### `os-upgrade` is off by default
+
+It is the only task here that can leave the machine unbootable, and it is the
+one behind a confirmation in the dashboard. It refuses to start above 85C, with
+a dirty package database, or under fifteen minutes of uptime.
+
+## Powering the machine
+
+Reboot and shut down are on the System tab of the dashboard, and both ask you
+to confirm who you are first.
+
+```bash
+sudo bash corex-manage.sh power             # what is armed, and the clock ceiling
+sudo bash corex-manage.sh power wol on      # arm the NIC, now and at every boot
+sudo bash corex-manage.sh power cpu 3000    # cap the clock at 3000 MHz
+```
+
+### Switching off is easy, switching on is the honest part
+
+The dashboard cannot wake the machine, and no version of CoreX will be able to,
+because the dashboard runs on the machine and the tunnel goes down with it.
+Something else has to send a packet, or supply power. What actually works, in
+order:
+
+1. A smart plug, with "restore on AC power loss" set in the BIOS. Cut the power,
+   restore it, the machine boots. This is the only option that also recovers a
+   hung machine rather than only a cleanly stopped one, and it needs nothing on
+   the network.
+2. Wake-on-LAN from a phone or a router on the same network. Free once the NIC
+   is armed, useless from outside the house. `power wol on` arms it and installs
+   a unit to reapply it at boot, because the setting lives in the driver and not
+   in anything persistent. Wake from S5 also has to be permitted in the BIOS,
+   which nothing here can check for you.
+3. `rtcwake`, for a fixed daily schedule. No second device at all, but it cannot
+   answer an unplanned request.
+
+Shipping a shutdown button without telling you which of those is configured is
+how somebody locks themselves out of their own server, which is why the Power
+card names what it found.
+
+A clean shutdown is worth having on its own terms. The machine CoreX is
+developed against has gone down hard at 93.5C, and the difference between that
+and an orderly stop is a database that still works afterwards.
+
+### The clock ceiling
+
+`power cpu <MHz>` caps the processor and sets its energy preference, now and at
+every boot. It is off by default, because it is hardware-specific and CoreX
+does not guess.
+
+It exists because an idle machine was sitting at 86C. The AMD P-State driver
+under the `powersave` governor still boosts to the top of the range when the
+energy preference is `performance`, which is what Ubuntu leaves it at. Measured
+on a Ryzen 9 5900HX with 21 mostly idle containers:
+
+| Setting | Mean | Cores |
+|---|---|---|
+| `performance`, no cap | 86.3C | 4.1 to 4.2 GHz |
+| `balance_power`, no cap | 83.0C | 3.2 to 4.0 GHz |
+| `balance_power`, 3.0 GHz cap | 76.8C | 2.4 to 2.9 GHz |
+
+Ten degrees, for a ceiling below a base clock that chassis cannot sustain
+anyway, so the peak given up is one the machine never actually held: it was
+boosting and then shedding containers to cope. It matters beyond comfort,
+because the thermal guardian's warning band starts at 80C and does nothing
+useful above it, so getting the idle number below that is what makes the
+guardian and the maintenance budget work at all.
+
+Remove it with `power cpu off`.
+
+## Keeping a panel off the internet
+
+Some things do not belong on a public hostname. Portainer, Grafana and AdGuard
+are opened from home, so the strongest thing you can do for them is stop
+publishing them: a hostname nothing outside the house can reach cannot be
+scanned, probed, or decided by somebody else to look like a phishing page.
+
+```bash
+sudo bash corex-manage.sh lan-only                  # what is restricted
+sudo bash corex-manage.sh lan-only add portainer    # stop publishing it
+sudo bash corex-manage.sh lan-only remove portainer # publish it again
+```
+
+It works because of the shape of the tunnel. A request from the internet reaches
+Traefik from the tunnel connector's container address, which is not in your LAN
+range, so a Traefik allowlist refuses it with no forwarded header to reason
+about, while a browser at home reaches Traefik directly on 443. The allowlist
+runs before the sign-in page, so an outside request is refused without costing a
+round trip to the portal.
+
+n8n is refused a place on the list by name, because its webhook endpoints are
+the reason it is published.
+
+Two things to know before you use it. AdGuard keeps its port 3000 address
+whatever else you do, deliberately: it is your DNS, so a login that needs DNS
+must never be the only way to reach the thing that serves it. And a hostname
+you restrict is unreachable from mobile data, which is obvious in writing and
+surprising in practice when you are away from home and reach for Portainer.
+
+### The Safe Browsing warning
+
+Chrome sometimes shows "Dangerous site" on admin hostnames. It is a false
+positive on the pattern, not a sign of compromise, and putting a bare sign-in
+form in front of one makes it likelier rather than less: an unfamiliar domain
+serving a generic login is close to the middle of what those heuristics look
+for.
+
+Restricting a hostname to the LAN stops it recurring, because nothing outside
+can see it. An already-issued flag has to be appealed by hand at
+`safebrowsing.google.com/safebrowsing/report_error/`, once per hostname.
+
 ## Thermal protection
 
 Small machines often use mobile CPUs in cases with limited cooling. Under
@@ -1672,6 +1971,12 @@ bash -n install-corex-master.sh      # parse check
 ```
 
 ## Version history
+
+The current release is v3.23.1. Recent versions added step-up confirmation
+before the power actions, reboot and shutdown from the dashboard, wake-on-LAN,
+scheduled maintenance, per-service update badges, Authelia, a CPU clock
+ceiling, and `lan-only`. `CHANGELOG.md` has the detail, including the faults
+each release fixed and how they were found.
 
 v1.0.0 shipped a single-file installer with 14 services and Restic backups.
 v2.0.0 replaced it with a modular `lib/` layout, a wizard, `state.json`, and
