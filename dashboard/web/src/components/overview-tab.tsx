@@ -2,7 +2,6 @@ import * as React from "react"
 import {
   ActivityIcon,
   AlertTriangleIcon,
-  ChevronRightIcon,
   CpuIcon,
   HardDriveIcon,
   MemoryStickIcon,
@@ -16,6 +15,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Meter, Spark } from "@/components/ui/spark"
+import { StatTile } from "@/components/stat-tile"
 import type { Consumer } from "@/components/consumers-dialog"
 import type { Overview, Vitals } from "@/lib/api"
 import { ago, bytes, duration, pct } from "@/lib/format"
@@ -32,61 +32,12 @@ import { ago, bytes, duration, pct } from "@/lib/format"
  * scroll to find.
  */
 
-function Vital({
-  icon: Icon,
-  label,
-  value,
-  of,
-  ratio,
-  sub,
-  tone,
-  onOpen,
-  children,
-}: {
-  icon: React.ComponentType<{ className?: string }>
-  label: string
-  value: React.ReactNode
-  /** The capacity the value is measured against, written as it is read. */
-  of?: React.ReactNode
-  /** Where the value sits in that capacity, 0 to 1, drawn as the bar. */
-  ratio?: number
-  sub?: React.ReactNode
-  tone?: "ok" | "warn" | "danger"
-  /** Clicking the tile answers "which app is doing this". */
-  onOpen?: () => void
-  children?: React.ReactNode
-}) {
-  const color =
-    tone === "danger" ? "text-destructive" : tone === "warn" ? "text-warn" : "text-foreground"
-  const body = (
-    <CardContent className="grid gap-2 px-4">
-      <div className="text-muted-foreground flex items-center gap-1.5 text-xs">
-        <Icon className="size-3.5 shrink-0" />
-        <span className="truncate">{label}</span>
-        {onOpen && <ChevronRightIcon className="ml-auto size-3.5 shrink-0 opacity-50" />}
-      </div>
-      <div className="flex flex-wrap items-baseline gap-x-1.5">
-        <span className={`font-mono text-xl leading-none sm:text-2xl ${color}`}>{value}</span>
-        {of && <span className="text-muted-foreground text-xs">of {of}</span>}
-      </div>
-      {ratio !== undefined && (
-        <Meter value={Math.max(0, ratio)} max={1} tone={tone ?? "auto"} />
-      )}
-      {sub && <div className="text-muted-foreground text-xs">{sub}</div>}
-      {children}
-    </CardContent>
-  )
-  if (!onOpen) return <Card className="gap-2 py-4">{body}</Card>
-  return (
-    <button
-      type="button"
-      onClick={onOpen}
-      aria-label={`${label}, see what is using it`}
-      className="focus-visible:ring-ring/50 rounded-xl text-left focus-visible:ring-[3px] focus-visible:outline-none"
-    >
-      <Card className="hover:border-ring h-full gap-2 py-4 transition-colors">{body}</Card>
-    </button>
-  )
+const RANGES = { "30m": 90, "1h": 180, all: 0 } as const
+type RangeKey = keyof typeof RANGES
+const RANGE_LABEL: Record<RangeKey, string> = {
+  "30m": "30 min",
+  "1h": "1 hour",
+  all: "2 hours",
 }
 
 export function OverviewTab({
@@ -105,6 +56,8 @@ export function OverviewTab({
   error: string | null
   onDrill: (what: Consumer) => void
 }) {
+  const [range, setRange] = React.useState<RangeKey>("all")
+
   if (loading && !data) {
     return (
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -128,9 +81,13 @@ export function OverviewTab({
 
   const m = data?.metrics ?? null
   const series = m?.series ?? []
-  const temps = series.map((s) => s.temp)
-  const loads = series.map((s) => s.load)
-  const mems = series.map((s) => s.mem_used_mb)
+  // The charts follow the chosen window; the alarms below never do. An alarm
+  // that quietly narrows with the chart would answer "did this box throttle"
+  // with whichever window happened to be selected.
+  const shown = range === "all" ? series : series.slice(-RANGES[range])
+  const temps = shown.map((s) => s.temp)
+  const loads = shown.map((s) => s.load)
+  const mems = shown.map((s) => s.mem_used_mb)
   const throttled = series.some((s) => s.throttled)
 
   // The stream wins where it has an answer: it is five seconds old at worst,
@@ -200,11 +157,28 @@ export function OverviewTab({
       <div className="text-muted-foreground flex items-center gap-1.5 text-xs">
         <RadioIcon className={`size-3 ${live ? "text-ok" : "text-muted-foreground"}`} />
         {live ? "Live, updating every five seconds" : "Reconnecting to the live feed"}
-        <span className="ml-auto hidden sm:inline">Tap a tile to see what is using it</span>
+        <div className="ml-auto flex items-center gap-1">
+          <span className="mr-1 hidden lg:inline">Tap a tile to see what is using it</span>
+          {(Object.keys(RANGES) as RangeKey[]).map((k) => (
+            <button
+              key={k}
+              type="button"
+              onClick={() => setRange(k)}
+              aria-pressed={range === k}
+              className={`focus-visible:ring-ring/50 rounded-md px-2 py-1 text-xs transition-colors focus-visible:ring-[3px] focus-visible:outline-none ${
+                range === k
+                  ? "bg-accent text-accent-foreground font-medium"
+                  : "hover:text-foreground"
+              }`}
+            >
+              {RANGE_LABEL[k]}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-4">
-        <Vital
+        <StatTile
           onOpen={() => onDrill("cpu")}
           icon={ThermometerIcon}
           label="CPU temperature"
@@ -218,10 +192,10 @@ export function OverviewTab({
               : `the guardian warns at ${warnAt}°C and sheds load at ${shedAt}°C`
           }
         >
-          <Spark values={temps} warnAbove={warnAt} label="CPU temperature, last two hours" />
-        </Vital>
+          <Spark values={temps} warnAbove={warnAt} label={`CPU temperature, last ${RANGE_LABEL[range]}`} />
+        </StatTile>
 
-        <Vital
+        <StatTile
           onOpen={() => onDrill("cpu")}
           icon={CpuIcon}
           label="Load"
@@ -233,10 +207,10 @@ export function OverviewTab({
             loadRest.map((v) => v.toFixed(2)).join(" and ") || "-"
           }`}
         >
-          <Spark values={loads} color="oklch(0.62 0.14 250)" label="Load average, last two hours" />
-        </Vital>
+          <Spark values={loads} color="oklch(0.62 0.14 250)" label={`Load average, last ${RANGE_LABEL[range]}`} />
+        </StatTile>
 
-        <Vital
+        <StatTile
           onOpen={() => onDrill("memory")}
           icon={MemoryStickIcon}
           label="Memory"
@@ -247,10 +221,10 @@ export function OverviewTab({
             swapUsed > 64 ? `, swapping ${swapUsed} MB` : ""
           }`}
         >
-          <Spark values={mems} color="oklch(0.65 0.18 320)" label="Memory used, last two hours" />
-        </Vital>
+          <Spark values={mems} color="oklch(0.65 0.18 320)" label={`Memory used, last ${RANGE_LABEL[range]}`} />
+        </StatTile>
 
-        <Vital
+        <StatTile
           onOpen={() => onDrill("containers")}
           icon={ActivityIcon}
           label="Containers running"
@@ -269,7 +243,7 @@ export function OverviewTab({
               <Badge variant="secondary">{data?.services.stopped} stopped</Badge>
             )}
           </div>
-        </Vital>
+        </StatTile>
       </div>
 
       <div className="grid gap-3 lg:grid-cols-2">

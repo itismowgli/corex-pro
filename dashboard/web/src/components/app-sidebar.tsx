@@ -40,8 +40,8 @@ export function SidebarBody({
     <div className="flex h-full min-h-0 flex-col gap-3 py-3">
       <div className={cn("flex items-center gap-2 px-3", collapsed && "justify-center px-2")}>
         {!collapsed && (
-          <span className="truncate text-base font-semibold tracking-tight">
-            CoreX <span className="text-muted-foreground font-normal">Pro</span>
+          <span className="text-muted-foreground truncate text-[11px] font-medium tracking-wide uppercase">
+            Sections
           </span>
         )}
         {onToggleCollapse && (

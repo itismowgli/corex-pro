@@ -86,3 +86,7 @@ export function navItems(authEnabled: boolean | undefined): NavItem[] {
 export function navLabel(id: string, authEnabled: boolean | undefined): string {
   return navItems(authEnabled).find((i) => i.id === id)?.label ?? "Overview"
 }
+
+export function navHint(id: string, authEnabled: boolean | undefined): string {
+  return navItems(authEnabled).find((i) => i.id === id)?.hint ?? ""
+}

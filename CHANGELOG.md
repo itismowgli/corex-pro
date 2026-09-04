@@ -43,6 +43,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 - **Cards are rounder, with a lighter border and a soft shadow**, set once in
   `ui/card.tsx` and `index.css` rather than per panel.
 
+- **Every section opens with its own heading**, drawn by `page-header.tsx`
+  from the same list the sidebar and the palette read, so a section cannot be
+  described one way in the palette and another at the top of its own page. The
+  branding moved to the topbar, which is where the reference keeps it.
+
+- **The Overview charts take a time range**, 30 minutes, 1 hour or the full
+  two hours the blackbox holds. The alarms below deliberately do not follow
+  it: an alarm that narrowed with the chart would answer "did this box
+  throttle" with whichever window happened to be selected.
+
+- **Storage opens with the same tiles as Overview.** The data SSD, the OS
+  disk, what Docker occupies and what is purgeable, each as a value against
+  its capacity. The tile itself is now `stat-tile.tsx` and both pages draw it,
+  rather than each inventing a presentation for the same kind of number.
+
 ### Removed
 - `ui/tabs.tsx` and `@radix-ui/react-tabs`, which nothing imports now.
 
@@ -51,8 +66,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
   check that the fixed column is hidden on a phone, that a drawer and the
   control that opens it both exist, and that no banner or running job renders
   above that control. Each was confirmed by putting the fault back.
-- `render-check.mjs` asserts every section name is present on every mount, and
-  opens the palette with a synthetic Cmd+K, because a palette is closed until
+- `render-check.mjs` asserts every section name is present on every mount,
+  that each one drew an `h1`, and opens the palette with a synthetic Cmd+K, because a palette is closed until
   someone presses a key and no other check could see it. It looks for a
   section, a box-wide command, and a service action built from the services
   payload: the last of those can only appear if the palette read the live list.

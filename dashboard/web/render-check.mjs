@@ -250,6 +250,10 @@ function mount(url, me, withData = true, width = 1280) {
 const EXPECT = {
   system: "enp2s0",
   maintenance: "Never run",
+  // The tile row, which only exists if the panel read the disk payload.
+  storage: "Purgeable",
+  // The range toggle over the blackbox series.
+  overview: "30 min",
   // Not just the card: the sentence the check writes above the grid, which
   // only appears when an update payload arrived.
   services: "Update available",
@@ -314,6 +318,10 @@ for (const tab of TABS) {
   for (const section of SECTIONS) {
     if (!text.includes(section)) failures.push("the nav is missing " + section)
   }
+  // Every section opens with its own heading. It is rendered once in App.tsx
+  // for all of them, so its absence is every page losing its title at once,
+  // which reads as a styling slip rather than a broken component.
+  if (!root?.querySelector("h1")) failures.push("the section heading did not render")
   // One content assertion per tab, only where the tab draws something from a
   // fixture that a mounted-but-empty panel would omit. "It rendered" is not
   // the same as "it rendered the data", and the power card is the highest

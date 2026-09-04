@@ -1,4 +1,4 @@
-import { EraserIcon, HardDriveIcon, SearchIcon } from "lucide-react"
+import { BoxIcon, EraserIcon, HardDriveIcon, SearchIcon, TrashIcon } from "lucide-react"
 
 import { Ansi } from "@/lib/ansi"
 import { Button } from "@/components/ui/button"
@@ -13,6 +13,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Meter } from "@/components/ui/spark"
+import { StatTile } from "@/components/stat-tile"
 import type { Metrics } from "@/lib/api"
 import { bytes } from "@/lib/format"
 
@@ -58,9 +59,52 @@ export function StorageTab({
   )
   const sizes = metrics?.service_sizes ?? []
   const biggest = sizes.length ? sizes[0].bytes : 0
+  const disks = metrics?.disks ?? []
+  // The data SSD is the one that fills, and the one whose filling stops
+  // services rather than merely slowing them, so it is the headline.
+  const data = disks.find((d) => d.path === "/mnt/corex-data") ?? disks[disks.length - 1] ?? null
+  const root = disks.find((d) => d.path === "/") ?? null
+  const dockerTotal = Object.values(docker ?? {}).reduce((a, d) => a + (d?.size_b ?? 0), 0)
 
   return (
     <div className="flex flex-col gap-3">
+      <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-4">
+        <StatTile
+          icon={HardDriveIcon}
+          label={data ? data.label : "Data SSD"}
+          value={data ? bytes(data.used_b) : "-"}
+          of={data ? bytes(data.total_b) : undefined}
+          ratio={data ? data.used_b / data.total_b : undefined}
+          sub={data ? `${bytes(data.free_b)} free` : "not reported"}
+        />
+        <StatTile
+          icon={HardDriveIcon}
+          label={root ? root.label : "OS disk"}
+          value={root ? bytes(root.used_b) : "-"}
+          of={root ? bytes(root.total_b) : undefined}
+          ratio={root ? root.used_b / root.total_b : undefined}
+          sub={root ? `${bytes(root.free_b)} free` : "not reported"}
+        />
+        <StatTile
+          icon={BoxIcon}
+          label="Docker on the OS disk"
+          value={bytes(dockerTotal)}
+          of={root ? bytes(root.total_b) : undefined}
+          ratio={root && root.total_b ? dockerTotal / root.total_b : undefined}
+          tone="ok"
+          sub="images, containers, volumes and build cache"
+        />
+        <StatTile
+          icon={TrashIcon}
+          label="Purgeable"
+          value={bytes(reclaimable)}
+          of={dockerTotal ? bytes(dockerTotal) : undefined}
+          ratio={dockerTotal ? reclaimable / dockerTotal : undefined}
+          tone={reclaimable > 0 ? "warn" : "ok"}
+          sub={reclaimable > 0 ? "unused images and build cache" : "nothing to reclaim"}
+        />
+      </div>
+
       <div className="grid gap-3 lg:grid-cols-2">
         <Card>
           <CardHeader>

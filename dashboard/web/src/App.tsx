@@ -33,7 +33,8 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Sheet, SheetContent } from "@/components/ui/sheet"
 import { SidebarBody } from "@/components/app-sidebar"
 import { CommandPalette, usePaletteHotkey, type PaletteItem } from "@/components/command-palette"
-import { navItems, navLabel } from "@/lib/nav"
+import { PageHeader } from "@/components/page-header"
+import { navHint, navItems, navLabel } from "@/lib/nav"
 import {
   api,
   auth,
@@ -520,12 +521,9 @@ function Dashboard({
             >
               <MenuIcon />
             </Button>
-            <span className="text-base font-semibold tracking-tight md:hidden">
+            <span className="text-base font-semibold tracking-tight">
               CoreX <span className="text-muted-foreground font-normal">Pro</span>
             </span>
-            <h1 className="hidden truncate text-base font-semibold tracking-tight md:block">
-              {navLabel(tab, me?.auth_enabled)}
-            </h1>
             {state.data?.domain && (
               <span className="text-muted-foreground hidden font-mono text-xs lg:inline">
                 {state.data.domain}
@@ -578,6 +576,11 @@ function Dashboard({
         </header>
 
         <main className="mx-auto flex w-full max-w-[90rem] flex-col gap-4 p-3 sm:p-5">
+          <PageHeader
+            title={navLabel(tab, me?.auth_enabled)}
+            description={navHint(tab, me?.auth_enabled)}
+          />
+
           {/* Banners and the running job sit under the header, never above the
               navigation. On a phone the nav is the menu button in that header,
               so nothing here can push the way out of a section off screen. */}
