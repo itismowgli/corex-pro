@@ -36,6 +36,8 @@ function Vital({
   icon: Icon,
   label,
   value,
+  of,
+  ratio,
   sub,
   tone,
   onOpen,
@@ -44,6 +46,10 @@ function Vital({
   icon: React.ComponentType<{ className?: string }>
   label: string
   value: React.ReactNode
+  /** The capacity the value is measured against, written as it is read. */
+  of?: React.ReactNode
+  /** Where the value sits in that capacity, 0 to 1, drawn as the bar. */
+  ratio?: number
   sub?: React.ReactNode
   tone?: "ok" | "warn" | "danger"
   /** Clicking the tile answers "which app is doing this". */
@@ -53,18 +59,24 @@ function Vital({
   const color =
     tone === "danger" ? "text-destructive" : tone === "warn" ? "text-warn" : "text-foreground"
   const body = (
-    <CardContent className="grid gap-1.5 px-3">
+    <CardContent className="grid gap-2 px-4">
       <div className="text-muted-foreground flex items-center gap-1.5 text-xs">
         <Icon className="size-3.5 shrink-0" />
         <span className="truncate">{label}</span>
         {onOpen && <ChevronRightIcon className="ml-auto size-3.5 shrink-0 opacity-50" />}
       </div>
-      <div className={`font-mono text-xl leading-none sm:text-2xl ${color}`}>{value}</div>
+      <div className="flex flex-wrap items-baseline gap-x-1.5">
+        <span className={`font-mono text-xl leading-none sm:text-2xl ${color}`}>{value}</span>
+        {of && <span className="text-muted-foreground text-xs">of {of}</span>}
+      </div>
+      {ratio !== undefined && (
+        <Meter value={Math.max(0, ratio)} max={1} tone={tone ?? "auto"} />
+      )}
       {sub && <div className="text-muted-foreground text-xs">{sub}</div>}
       {children}
     </CardContent>
   )
-  if (!onOpen) return <Card className="gap-2 py-3">{body}</Card>
+  if (!onOpen) return <Card className="gap-2 py-4">{body}</Card>
   return (
     <button
       type="button"
@@ -72,7 +84,7 @@ function Vital({
       aria-label={`${label}, see what is using it`}
       className="focus-visible:ring-ring/50 rounded-xl text-left focus-visible:ring-[3px] focus-visible:outline-none"
     >
-      <Card className="hover:border-ring h-full gap-2 py-3 transition-colors">{body}</Card>
+      <Card className="hover:border-ring h-full gap-2 py-4 transition-colors">{body}</Card>
     </button>
   )
 }
@@ -134,6 +146,11 @@ export function OverviewTab({
   const warnAt = m?.thermal.warn_c ?? 80
   const shedAt = m?.thermal.shed_c ?? 85
   const tempTone = temp == null ? undefined : temp >= shedAt ? "danger" : temp >= warnAt ? "warn" : "ok"
+  // A load average is only legible against the core count, so the tone is the
+  // ratio and not the number: 4.0 is idle on sixteen cores and a queue on two.
+  const loadRatio = load0 != null && cores ? load0 / cores : null
+  const loadTone =
+    loadRatio == null ? undefined : loadRatio >= 1 ? "danger" : loadRatio >= 0.7 ? "warn" : "ok"
 
   const memUsed = vitals?.mem_used_mb ?? m?.memory.used_mb ?? 0
   const memTotal = vitals?.mem_total_mb ?? m?.memory.total_mb ?? 0
@@ -192,11 +209,13 @@ export function OverviewTab({
           icon={ThermometerIcon}
           label="CPU temperature"
           value={temp == null ? "no sensor" : `${temp.toFixed(1)}°C`}
+          of={temp == null ? undefined : `${shedAt}°C`}
+          ratio={temp == null ? undefined : temp / shedAt}
           tone={tempTone}
           sub={
             m?.cpu.temp_source === "none"
               ? "lm-sensors is not installed, so the most common failure here is invisible"
-              : `warns at ${warnAt}°C, sheds load at ${shedAt}°C`
+              : `the guardian warns at ${warnAt}°C and sheds load at ${shedAt}°C`
           }
         >
           <Spark values={temps} warnAbove={warnAt} label="CPU temperature, last two hours" />
@@ -207,7 +226,10 @@ export function OverviewTab({
           icon={CpuIcon}
           label="Load"
           value={load0?.toFixed(2) ?? "-"}
-          sub={`${cores ?? "?"} cores, then ${
+          of={cores ? `${cores} cores` : undefined}
+          ratio={load0 != null && cores ? load0 / cores : undefined}
+          tone={loadTone}
+          sub={`five and fifteen minutes: ${
             loadRest.map((v) => v.toFixed(2)).join(" and ") || "-"
           }`}
         >
@@ -218,8 +240,10 @@ export function OverviewTab({
           onOpen={() => onDrill("memory")}
           icon={MemoryStickIcon}
           label="Memory"
-          value={`${pct(memTotal ? (memUsed / memTotal) * 100 : 0)}`}
-          sub={`${(memUsed / 1024).toFixed(1)} of ${(memTotal / 1024).toFixed(0)} GB${
+          value={`${(memUsed / 1024).toFixed(1)} GB`}
+          of={memTotal ? `${(memTotal / 1024).toFixed(0)} GB` : undefined}
+          ratio={memTotal ? memUsed / memTotal : undefined}
+          sub={`${pct(memTotal ? (memUsed / memTotal) * 100 : 0)} used${
             swapUsed > 64 ? `, swapping ${swapUsed} MB` : ""
           }`}
         >
@@ -229,9 +253,12 @@ export function OverviewTab({
         <Vital
           onOpen={() => onDrill("containers")}
           icon={ActivityIcon}
-          label="Running"
+          label="Containers running"
           value={`${running}`}
-          sub={`of ${totalContainers} containers, up ${duration(m?.uptime_s)}`}
+          of={totalContainers ? `${totalContainers}` : undefined}
+          ratio={totalContainers ? running / totalContainers : undefined}
+          tone="ok"
+          sub={`up ${duration(m?.uptime_s)}`}
         >
           <div className="mt-1 flex flex-wrap gap-1">
             <Badge variant="ok">{data?.services.healthy ?? 0} healthy</Badge>

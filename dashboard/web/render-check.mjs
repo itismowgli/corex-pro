@@ -38,6 +38,21 @@ const bundle = fs.readFileSync(entryPath, "utf8")
 // blank page this check exists to prevent, one click further in.
 const TABS = ["overview", "services", "health", "storage", "network", "catalogue", "maintenance", "system", "account"]
 
+// The names as they appear in the sidebar. Not derived from TABS: a check
+// that computes its expectation the same way the code does agrees with the
+// code even when both are wrong.
+const SECTIONS = [
+  "Overview",
+  "Services",
+  "Catalogue",
+  "Health",
+  "Storage",
+  "Network",
+  "Maintenance",
+  "System",
+  "Account",
+]
+
 // Realistic payloads, not just failures.
 //
 // The first version of this file failed every fetch, so each tab rendered its
@@ -293,6 +308,12 @@ for (const tab of TABS) {
   }
   if (text.length < 20) failures.push("#root is empty after mount: " + JSON.stringify(text))
   if (!text.includes("CoreX")) failures.push("the header did not render")
+  // The navigation is the shell, so a section missing from it is a section
+  // nobody reaches. It renders on every mount, wide or narrow, because the
+  // drawer and the fixed column share one list.
+  for (const section of SECTIONS) {
+    if (!text.includes(section)) failures.push("the nav is missing " + section)
+  }
   // One content assertion per tab, only where the tab draws something from a
   // fixture that a mounted-but-empty panel would omit. "It rendered" is not
   // the same as "it rendered the data", and the power card is the highest
@@ -310,6 +331,69 @@ for (const tab of TABS) {
     for (const f of failures) console.error("  - " + String(f).slice(0, 1200))
   } else {
     console.error("  " + tab.padEnd(10) + " " + mode.padEnd(5) + " ok, " + text.length + " characters")
+  }
+  window.close()
+}
+
+// The command palette, which no other check can see because it is closed
+// until someone presses Cmd+K. It is the only route to most of these actions
+// on a narrow screen, and a component that throws when opened looks exactly
+// like a key that does nothing.
+{
+  const { window } = mount("https://dashboard.example.com/#overview", SIGNED_IN, true)
+  window.EventSource = class {
+    constructor() {
+      this.onmessage = null
+      this.onerror = null
+      this.onopen = null
+    }
+    close() {}
+  }
+  const failures = []
+  window.addEventListener("error", (e) =>
+    failures.push("uncaught: " + (e.error?.stack || e.message))
+  )
+  const consoleErrors = []
+  window.console = {
+    error: (...a) => consoleErrors.push(a.map(String).join(" ")),
+    warn: () => {},
+    log: () => {},
+    info: () => {},
+    debug: () => {},
+  }
+  try {
+    window.eval(bundle)
+  } catch (e) {
+    failures.push("threw while loading " + entry + ": " + (e.stack || e.message))
+  }
+  await new Promise((r) => setTimeout(r, 400))
+
+  window.dispatchEvent(
+    new window.KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true })
+  )
+  await new Promise((r) => setTimeout(r, 300))
+
+  // It portals outside #root, so this reads the whole document.
+  const text = window.document.body.textContent || ""
+  // A section, a service action built from the services payload, and a
+  // box-wide command. The middle one is the assertion that matters: it can
+  // only appear if the palette read the service list rather than a static
+  // list of its own.
+  for (const want of ["Go to", "Restart Nextcloud", "Run the doctor"]) {
+    if (!text.includes(want)) {
+      failures.push("Cmd+K opened but did not offer " + JSON.stringify(want))
+    }
+  }
+  for (const line of consoleErrors) {
+    if (line.includes("dashboard render failed")) failures.push("error boundary caught: " + line)
+  }
+
+  if (failures.length) {
+    failed = true
+    console.error("render-check FAILED on the command palette")
+    for (const f of failures) console.error("  - " + String(f).slice(0, 1200))
+  } else {
+    console.error("  palette    ok, " + text.length + " characters")
   }
   window.close()
 }

@@ -94,8 +94,19 @@ kuma_seed_http_monitors() {
     # notification and heartbeat.
     cp -a "$_KUMA_DB" "${_KUMA_DB}.pre-seed" 2>/dev/null || true
 
+    # The declarations go in a file, not down the pipe.
+    #
+    # This used to be `printf ... | python3 - "$db" << 'PYEOF'`, which is two
+    # things competing for stdin: the pipe carried the monitor list and the
+    # heredoc carried the program. The heredoc is the later redirection, so it
+    # won, python read the program correctly and then found stdin already
+    # consumed. Every run therefore iterated zero monitors and reported
+    # success, which is why a declared check never once reached Kuma and the
+    # monitors on this box had all been inserted by hand.
+    local decl; decl="$(mktemp)"
+    printf '%s\n' "$monitors" > "$decl"
     local rc=0
-    printf '%s\n' "$monitors" | python3 - "$_KUMA_DB" << 'PYEOF' || rc=$?
+    COREX_SERVER_IP="${SERVER_IP:-}" python3 - "$_KUMA_DB" "$decl" << 'PYEOF' || rc=$?
 """Create or update one HTTP monitor per declared check, and link it to every
 active notification so it actually reaches somebody.
 
@@ -105,6 +116,7 @@ from an existing monitor where one exists, so a deliberate change in Kuma's
 interface is not overwritten on the next run.
 """
 import json
+import os
 import sqlite3
 import ssl
 import sys
@@ -151,8 +163,28 @@ def _answers(url, codes):
 
     opener = urllib.request.build_opener(NoRedirect,
                                          urllib.request.HTTPSHandler(context=ctx))
+
+    # Sent to the server directly, with the hostname only in the Host header.
+    #
+    # Resolving it normally sends the request out to Cloudflare and back down
+    # the tunnel, which tests the wrong path and fails for a reason that has
+    # nothing to do with the service: Cloudflare answers a bare
+    # Python-urllib user agent with 403, so every check was skipped as "does
+    # not answer acceptably yet". Kuma itself sits inside the Docker network
+    # and reaches Traefik directly, so the LAN path is both the truer test and
+    # the faster one.
+    req = urllib.request.Request(url)
+    host = req.host.split(":")[0]
+    server_ip = os.environ.get("COREX_SERVER_IP", "")
+    if server_ip and not host.replace(".", "").isdigit():
+        target = url.replace("://" + req.host, "://" + server_ip, 1)
+        req = urllib.request.Request(target, headers={"Host": req.host})
+    # A user agent at all, because some services answer differently without
+    # one and Kuma sends its own.
+    req.add_header("User-Agent", "CoreX-Kuma-Seed/1.0")
+
     try:
-        with opener.open(url, timeout=8) as r:
+        with opener.open(req, timeout=8) as r:
             return _acceptable(r.status, codes)
     except urllib.error.HTTPError as e:
         return _acceptable(e.code, codes)
@@ -162,7 +194,7 @@ def _answers(url, codes):
 
 def main(db_path):
     checks = []
-    for line in sys.stdin:
+    for line in open(sys.argv[2], encoding="utf-8"):
         parts = line.rstrip("\n").split("\t")
         if len(parts) >= 2 and parts[0].strip() and parts[1].strip():
             checks.append((parts[0].strip(), parts[1].strip(),
@@ -259,6 +291,7 @@ if __name__ == "__main__":
         sys.exit(2)
     sys.exit(main(sys.argv[1]))
 PYEOF
+    rm -f "$decl"
 
     [[ "$was_running" == "true" ]] && docker start uptime-kuma >/dev/null 2>&1 || true
 

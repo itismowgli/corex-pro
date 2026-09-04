@@ -6,6 +6,85 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [Unreleased]
+
+### Changed
+- **The dashboard navigation is a sidebar rather than a row of tabs.** Nine
+  sections had outgrown a tab strip: on a wide screen they wrapped, and on a
+  phone they were a dropdown that gave no sense of where anything lived. The
+  sections are now grouped by what you came to do, as Dashboard, Services,
+  Monitoring and Machine, in a fixed left column that collapses to an icon
+  rail and is remembered per browser. Below the medium breakpoint that same
+  column is a drawer opened from the header, so one list serves both and
+  neither can drift from the other.
+
+  The column is fixed, which settles an older rule structurally. Nothing
+  rendered on the page can push the navigation off screen any more, because
+  the navigation is not on the page.
+
+- **Cmd+K opens a command palette.** It searches the sections, the box-wide
+  commands, and every service by name, offering restart, logs and the
+  service's own address. Words match in any order, so "restart next" finds
+  Nextcloud without knowing the wording. The list is assembled by the app from
+  the same handlers the buttons use, never redefined, because a palette that
+  defines its own actions is a second place for an action to be wrong.
+
+  Written out rather than added as a dependency, for the reason in gotcha #35:
+  this page fetches nothing at runtime.
+
+- **The Overview tiles read as a value against a capacity.** Temperature
+  against the shed threshold, load against the core count, memory against
+  total, containers running against containers present. Each carries a bar and
+  takes its colour from where it sits, which is what makes a number legible
+  without knowing the machine: 4.0 is idle on sixteen cores and a queue on
+  two. The sparklines and the click through to what is consuming a vital are
+  unchanged.
+
+- **Cards are rounder, with a lighter border and a soft shadow**, set once in
+  `ui/card.tsx` and `index.css` rather than per panel.
+
+### Removed
+- `ui/tabs.tsx` and `@radix-ui/react-tabs`, which nothing imports now.
+
+### Testing
+- `responsive-check.mjs` rules 5 and 6 are rewritten for the sidebar. They
+  check that the fixed column is hidden on a phone, that a drawer and the
+  control that opens it both exist, and that no banner or running job renders
+  above that control. Each was confirmed by putting the fault back.
+- `render-check.mjs` asserts every section name is present on every mount, and
+  opens the palette with a synthetic Cmd+K, because a palette is closed until
+  someone presses a key and no other check could see it. It looks for a
+  section, a box-wide command, and a service action built from the services
+  payload: the last of those can only appear if the palette read the live list.
+
+---
+
+## [v3.23.1] - 2026-09-05
+
+### Fixed
+- **Uptime Kuma seeding had never once worked.** The declarations were piped to
+  the seeder on stdin while the Python program was supplied by a heredoc on the
+  same stdin. The heredoc is the later redirection, so it won: the program
+  loaded correctly and then read an already-consumed stdin, iterated zero
+  monitors, and reported success. Every run since the feature shipped did
+  nothing, which is why the monitors on this box had all been inserted by hand
+  and why a newly installed service was never watched. The declarations go in a
+  file now.
+
+- **And once it ran, it skipped almost everything.** The reachability probe
+  resolved each hostname normally, which sends the request out to Cloudflare
+  and back down the tunnel: Cloudflare answers a bare `Python-urllib` user
+  agent with 403, so every check was recorded as "does not answer acceptably
+  yet". It connects to the server directly with the hostname in the Host
+  header now, which is both the truer test and the faster one, because Kuma
+  itself sits inside the Docker network and reaches Traefik directly.
+
+  Two skips are legitimate and remain: a service whose container is
+  deliberately disabled, and Uptime Kuma's own hostname, which cannot answer
+  while the seeder has it stopped.
+
+---
+
 ## [v3.23.0] - 2026-09-05
 
 ### Fixed

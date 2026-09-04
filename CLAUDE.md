@@ -2051,11 +2051,18 @@ mocked, validates generated `docker-compose.yml` has correct values and passes
 cd dashboard/web && npm run build
 ```
 `tsc`, then `vite build`, then three checks. `logline-check.mjs` parses log
-lines taken off a running box. `responsive-check.mjs` holds four small-screen
-rules, each one a mistake that was in the tree. `render-check.mjs` mounts every
-tab three times: against fixtures, with every fetch failing, and at 360px. All
-three were added after a bug they should have caught, which is the only honest
-reason to add a check: see gotchas #37 and #38.
+lines taken off a running box. `responsive-check.mjs` holds six small-screen
+rules, each one a mistake that was in the tree; two of them cover the
+navigation, which is a fixed left column on a wide screen and a drawer below
+that, so they check that the column is hidden on a phone, that the drawer and
+the control opening it both exist, and that nothing renders above that
+control. `render-check.mjs` mounts every section three times, against
+fixtures, with every fetch failing, and at 360px, then opens the command
+palette with a synthetic Cmd+K. That last one matters because a dialog renders
+nothing until it is opened, so the palette is invisible to every other check,
+which is gotcha #37's lesson one interaction further in. All three were added
+after a bug they should have caught, which is the only honest reason to add a
+check: see gotchas #37 and #38.
 
 ### 5. Dashboard login, end to end (needs Docker)
 ```bash
