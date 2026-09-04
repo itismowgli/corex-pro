@@ -354,6 +354,24 @@ cmd_add() {
     if ! _run_service_fn "$svc" "deploy"; then
         log_error "${svc} was not deployed. Look above for why."
     fi
+
+    # Register whatever reachability checks the module declares, so a service
+    # is watched from the moment it is installed.
+    #
+    # This did not happen before, and Authelia is the proof: the module
+    # declared SERVICE_MONITORS, it was installed, and Uptime Kuma knew
+    # nothing about it, because seeding only ever ran from the installer or
+    # from an explicit `kuma-seed`. A service nobody is watching is a service
+    # that fails quietly, which is the whole thing the monitoring is for.
+    #
+    # Seeding is by monitor name and adopts an existing one, so running it for
+    # every installed service rather than just this one is safe and keeps a
+    # module whose declaration changed in step with the database.
+    if [[ -f "${DATA_ROOT}/uptime-kuma/kuma.db" ]] && declare -f kuma_seed_http_monitors >/dev/null 2>&1; then
+        log_info "Registering reachability checks in Uptime Kuma..."
+        kuma_seed_http_monitors || log_warning "Could not register the check. Run: corex manage kuma-seed"
+    fi
+
     log_success "${svc} added successfully."
 }
 

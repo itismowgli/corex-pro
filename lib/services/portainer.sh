@@ -27,7 +27,12 @@ SERVICE_DESCRIPTION="Web UI to manage all your Docker containers, images, and vo
 # install rather than living only in Kuma's database. Tab separated:
 # name, url, accepted status codes. The name is the key, so changing it
 # creates a second monitor and orphans the first.
-SERVICE_MONITORS="Portainer	https://portainer.${DOMAIN:-}	[\"200-299\"]"
+# 302 is accepted because a service behind the shared login answers with a
+# redirect to the portal, and that redirect means the router is up and the
+# portal is answering. Without it the monitor reported Portainer DOWN the
+# moment Authelia went in front of it, and a monitor that cries wolf is worse
+# than no monitor: it trains you to ignore the next alert.
+SERVICE_MONITORS="Portainer	https://portainer.${DOMAIN:-}	[\"200-299\",\"302\"]"
 
 # ── Functions ─────────────────────────────────────────────────────────────────
 

@@ -6,6 +6,37 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.23.0] - 2026-09-05
+
+### Fixed
+- **Authelia in front of n8n was the wrong fit, and is removed.** Three
+  reasons, two of them measured. Its webhook endpoints needed a bypass list to
+  keep working at all. Its interface is a single-page app, and Authelia answers
+  an XHR with 401 rather than a redirect, so `/rest/settings` returned 401 and
+  the app could not recover: no XHR can follow a redirect to a login page. And
+  n8n has its own user management, so the portal was a second prompt for a door
+  that already had a lock.
+
+  Verified after removal, from a tunnel-shaped address: the interface, the API
+  and a webhook path all answer correctly.
+
+- **Adding a service did not register its Uptime Kuma check.** Authelia is the
+  proof: the module declared `SERVICE_MONITORS`, it was installed and healthy,
+  and Kuma knew nothing about it, because seeding only ever ran from the
+  installer or an explicit `kuma-seed`. `corex manage add` now registers the
+  checks a module declares, so a service is watched from the moment it exists.
+  A service nobody is watching is one that fails quietly, which is the entire
+  point of the monitoring.
+
+- **Portainer reported DOWN the moment the shared login went in front of it.**
+  Its monitor accepted only 200-299 and the hostname now answers 302, a
+  redirect to the portal, which means the router is up and the portal is
+  answering. 302 is accepted now, the way Nextcloud and AdGuard already do for
+  their own login redirects. A monitor that cries wolf is worse than no
+  monitor, because it trains you to ignore the next alert.
+
+---
+
 ## [v3.22.1] - 2026-09-04
 
 ### Fixed

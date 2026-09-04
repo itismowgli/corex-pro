@@ -66,31 +66,39 @@ for (const f of files) {
   })
 }
 
-// 5. The tab bar has to collapse on a phone. Eight tabs in a scrolling strip
-//    means the one you want is off screen with nothing to say so.
+// 5. The navigation has to be reachable on a phone. It is a fixed column on a
+//    wide screen and a drawer below that, and the button in the header is the
+//    only way into the drawer, so its absence is a dashboard with no way to
+//    change section at all.
+// 6. And nothing may render above that button. A banner or a running job
+//    there pushes it down the screen, which on a phone means opening the
+//    dashboard and being unable to leave the section you landed on.
 {
   const app = fs.readFileSync(path.join(root, "App.tsx"), "utf8")
-  if (!/id="tab-select"/.test(app) || !/sm:hidden/.test(app)) {
-    problems.push("src/App.tsx has no mobile tab selector")
+  const shellAt = app.indexOf('data-nav="sidebar"')
+  if (shellAt < 0) {
+    problems.push("src/App.tsx no longer has a recognisable sidebar")
   }
-  if (!/<TabsList className="hidden[^"]*sm:flex/.test(app)) {
-    problems.push("src/App.tsx shows the full TabsList on a phone as well as the selector")
+  const shell = shellAt < 0 ? app : app.slice(shellAt)
+
+  const aside = app.match(/data-nav="sidebar"[\s\S]{0,400}?>/)
+  if (aside && (!/\bhidden\b/.test(aside[0]) || !/\bmd:flex\b/.test(aside[0]))) {
+    problems.push("src/App.tsx shows the fixed sidebar on a phone as well as the drawer")
+  }
+  if (!/<Sheet\b/.test(app) || !/<SheetContent\b/.test(app)) {
+    problems.push("src/App.tsx has no drawer to hold the navigation on a phone")
   }
 
-  // 6. Nothing renders above the tab bar. A banner or a running job there
-  //    pushes the content down the screen, which on a phone means opening the
-  //    dashboard and seeing no dashboard.
-  const main = app.slice(app.indexOf("<main"))
-  const tabsAt = main.indexOf("<Tabs ")
-  const listAt = main.indexOf("<TabsList")
-  for (const marker of ["<JobPanel", "agent_ok", "Could not load the dashboard data"]) {
-    const at = main.indexOf(marker)
-    if (at >= 0 && at < listAt) {
-      problems.push(`src/App.tsx renders ${marker} above the tab bar`)
+  const triggerAt = shell.indexOf('data-nav="mobile-trigger"')
+  if (triggerAt < 0) {
+    problems.push("src/App.tsx has no control that opens the navigation on a phone")
+  } else {
+    for (const marker of ["<JobPanel", "agent_ok", "Could not load the dashboard data"]) {
+      const at = shell.indexOf(marker)
+      if (at >= 0 && at < triggerAt) {
+        problems.push(`src/App.tsx renders ${marker} above the navigation`)
+      }
     }
-  }
-  if (tabsAt < 0 || listAt < 0) {
-    problems.push("src/App.tsx no longer has a recognisable tab bar")
   }
 }
 
