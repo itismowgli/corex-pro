@@ -6,6 +6,37 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.20.1] - 2026-09-04
+
+### Fixed
+- **Every generated script is written atomically, not truncated where it is.**
+  CoreX generates nine scripts into `/usr/local/bin`, and several are running
+  when it regenerates them: the blackbox recorder every 20 seconds, the thermal
+  guardian every 30, the resource watchdog every 60, and the maintenance runner
+  for hours during a first Restic snapshot. Bash reads a script incrementally as
+  it executes, so the running copy resumed at its saved byte offset inside
+  content that had become something else.
+
+  Reproduced on Ubuntu with a script long enough that bash cannot have buffered
+  all of it: the old way ran garbage and exited 127 with
+  `line 3: _SHORT: command not found`, the new way let the running copy finish
+  its own tail and exit 0. Worth mentioning that the same test on macOS printed
+  the new content and looked harmless, because a short script is read in one
+  gulp and bash 3.2 differs, so a claim about process behaviour has to be
+  measured on the platform the code runs on.
+
+  `install_script` in `lib/common.sh` takes the content on stdin, writes it
+  beside the destination and moves it into place, applying the mode after the
+  move rather than inheriting `mktemp`'s 0600.
+
+- `lib/selfheal.sh`, `lib/thermal.sh` and `lib/watchdog.sh` source `common.sh`
+  explicitly instead of relying on the caller. They already depended on
+  `log_info`, so nothing is new, but a missing `install_script` fails far worse
+  than a missing log function: the generated script is never written, so the
+  guardian does not exist and nothing says so.
+
+---
+
 ## [v3.20.0] - 2026-09-04
 
 ### Added

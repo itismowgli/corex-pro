@@ -149,19 +149,11 @@ _maintenance_refresh_backup_scripts() {
 # ── The runner ───────────────────────────────────────────────────────────────
 # Self-contained, like the watchdog and the thermal guardian: it runs from
 # systemd with no CoreX libraries sourced.
-# Written to a temporary file and moved into place, not truncated where it is.
-#
-# This script can be running for hours: a first Restic snapshot of a full data
-# SSD takes that long. Bash reads a script incrementally as it executes, so
-# rewriting the file underneath a running copy makes it resume in the middle
-# of whatever now occupies that offset. `mv` is atomic and leaves the running
-# process on the old inode.
-#
-# The mode is set after the move rather than relying on it: mv from mktemp
-# carries 0600 across, which is the trap gotcha #24 records for state.json.
+# install_script rather than a plain redirect, because this one can be running
+# for hours: a first Restic snapshot of a full data SSD takes that long. See
+# install_script in lib/common.sh for why that matters.
 _maintenance_write_script() {
-    local tmp; tmp="$(mktemp /usr/local/bin/.corex-maintenance.XXXXXX)"
-    cat > "$tmp" << 'MREOF'
+    install_script /usr/local/bin/corex-maintenance.sh 750 << 'MREOF'
 #!/bin/bash
 # CoreX scheduled maintenance. Installed by lib/maintenance.sh; do not edit
 # here, the settings are in /etc/corex/maintenance.conf.
@@ -534,8 +526,6 @@ done
 
 (( ran > 0 )) || exit 0
 MREOF
-    mv -f "$tmp" /usr/local/bin/corex-maintenance.sh
-    chmod 750 /usr/local/bin/corex-maintenance.sh
 }
 
 _maintenance_write_units() {

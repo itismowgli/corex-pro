@@ -72,7 +72,7 @@ backup_write_scripts() {
     # Uses single-quoted heredoc ('BKEOF') to prevent variable expansion.
     # Passwords are read at runtime from credentials file (not embedded).
     # This prevents plaintext secrets appearing in world-readable scripts.
-    cat > /usr/local/bin/corex-backup.sh << 'BKEOF'
+    install_script /usr/local/bin/corex-backup.sh 750 << 'BKEOF'
 #!/bin/bash
 # CoreX Pro — Daily Backup Script
 # Runs automatically at 3AM via cron. Can also be run manually.
@@ -137,10 +137,9 @@ restic stats --mode raw-data >> "$LOG" 2>&1
 
 echo "$(date '+%Y-%m-%d %H:%M:%S') -- Backup complete." >> "$LOG"
 BKEOF
-    chmod +x /usr/local/bin/corex-backup.sh
 
     # ── Restore script ───────────────────────────────────────────────────────
-    cat > /usr/local/bin/corex-restore.sh << 'RSEOF'
+    install_script /usr/local/bin/corex-restore.sh 750 << 'RSEOF'
 #!/bin/bash
 # CoreX Pro — Restore Script
 # Usage: sudo corex-restore.sh [--list | --dry-run | snapshot-id]
@@ -204,7 +203,6 @@ done
 echo ""
 echo "Restore complete! Verify with: docker ps"
 RSEOF
-    chmod +x /usr/local/bin/corex-restore.sh
 }
 
 # The daily cron entry, for an install with no maintenance timer.

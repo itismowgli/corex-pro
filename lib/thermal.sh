@@ -21,6 +21,13 @@
 # See CLAUDE.md gotcha #17.
 
 # ── Thresholds (degrees C). Overridable in /etc/corex/thermal.conf ───────────
+
+# shellcheck source=lib/common.sh
+# Sourced explicitly rather than left to the caller. These files depend on
+# log_info and install_script, and a missing install_script is silent in the
+# worst way: the generated script is simply never written, so the guardian or
+# the recorder does not exist and nothing says so.
+source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 THERMAL_WARN_C="${THERMAL_WARN_C:-80}"
 THERMAL_SHED_C="${THERMAL_SHED_C:-85}"
 THERMAL_CRITICAL_C="${THERMAL_CRITICAL_C:-90}"
@@ -115,7 +122,7 @@ TCEOF
 # with no CoreX libraries sourced, and must never fail in a way that leaves
 # containers stopped with no record of why.
 _thermal_write_guard() {
-    cat > /usr/local/bin/corex-thermal-guard.sh << 'TGEOF'
+    install_script /usr/local/bin/corex-thermal-guard.sh 750 << 'TGEOF'
 #!/bin/bash
 # CoreX thermal guardian. Sheds container load as temperature rises and
 # restores it as temperature falls. Runs from corex-thermal.timer.
@@ -417,7 +424,6 @@ case "$band" in
         ;;
 esac
 TGEOF
-    chmod 750 /usr/local/bin/corex-thermal-guard.sh
 }
 
 _thermal_write_units() {

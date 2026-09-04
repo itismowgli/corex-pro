@@ -167,6 +167,49 @@ container_exists() {
     docker inspect "$1" &>/dev/null
 }
 
+# ── install_script ────────────────────────────────────────────────────────────
+#
+# Write a generated script into place from stdin, atomically.
+#
+# `cat > /usr/local/bin/whatever.sh` truncates the file where it is, and CoreX
+# generates several scripts that are running while it does that: the blackbox
+# recorder every 20 seconds, the thermal guardian every 30, the watchdog every
+# 60, and the maintenance runner for hours at a time during a first Restic
+# snapshot. Bash reads a script incrementally as it executes, so a rewrite
+# underneath a running copy makes it resume at the same byte offset in
+# different content.
+#
+# mv is atomic and leaves the running process on the old inode. Reproduced
+# both ways on the target platform, with a script long enough that bash cannot
+# have buffered all of it:
+#
+#   cat > dest      the running copy resumed at its saved byte offset in the
+#                   new content and ran garbage:
+#                   "line 3: _SHORT: command not found", exit 127
+#   install_script  the running copy finished its own tail correctly, exit 0
+#
+# Worth measuring rather than assuming: the same test on macOS printed the new
+# content and looked harmless, because a small script is read in one gulp and
+# bash 3.2 differs. The platform that matters is the one it runs on.
+#
+# The mode is applied after the move rather than relied on: mv from mktemp
+# carries 0600 across, which is the trap gotcha #24 records for state.json.
+#
+# Usage:  install_script /usr/local/bin/thing.sh 750 << 'EOF'
+install_script() {
+    local dest="$1" mode="${2:-750}" tmp
+    tmp="$(mktemp "$(dirname "$dest")/.$(basename "$dest").XXXXXX")" || return 1
+    if ! cat > "$tmp"; then
+        rm -f "$tmp"
+        return 1
+    fi
+    if ! mv -f "$tmp" "$dest"; then
+        rm -f "$tmp"
+        return 1
+    fi
+    chmod "$mode" "$dest"
+}
+
 # ── Shared sign-in (Authelia) ─────────────────────────────────────────────────
 #
 # Which Traefik routers sit behind the shared login, read from

@@ -19,6 +19,22 @@ setup() {
 
 # ─── Module contract ──────────────────────────────────────────────────────────
 
+
+# Extract a generated script from the heredoc that writes it, keyed on the
+# marker and nothing else.
+#
+# These extractions used to hardcode the whole opening line, `cat >
+# /usr/local/bin/corex-thermal-guard.sh << 'TGEOF'`, and every one of them
+# broke the day the writer changed to install_script. The marker is the
+# contract; the redirect is an implementation detail of the writer, and a test
+# coupled to it fails for a reason that has nothing to do with what it checks.
+_generated() {
+    local marker="$1" file="$2"
+    awk -v m="$marker" 'index($0, "<< \x27" m "\x27") { f = 1; next }
+                        $0 == m { f = 0 }
+                        f' "$file"
+}
+
 @test "lib/thermal.sh exists and parses" {
     [ -f "$THERMAL_LIB" ]
     run bash -n "$THERMAL_LIB"
@@ -140,8 +156,7 @@ setup() {
 @test "generated thermal guard script is valid bash" {
     # Extract the heredoc body written by _thermal_write_guard and parse it.
     local out="${BATS_TEST_TMPDIR:-/tmp}/guard.sh"
-    awk "/cat > \/usr\/local\/bin\/corex-thermal-guard.sh << 'TGEOF'/{f=1;next} /^TGEOF$/{f=0} f" \
-        "$THERMAL_LIB" > "$out"
+    _generated TGEOF "$THERMAL_LIB" > "$out"
     [ -s "$out" ]
     run bash -n "$out"
     [ "$status" -eq 0 ]
@@ -149,16 +164,14 @@ setup() {
 
 @test "generated guard never hardcodes an install path" {
     local out="${BATS_TEST_TMPDIR:-/tmp}/guard2.sh"
-    awk "/cat > \/usr\/local\/bin\/corex-thermal-guard.sh << 'TGEOF'/{f=1;next} /^TGEOF$/{f=0} f" \
-        "$THERMAL_LIB" > "$out"
+    _generated TGEOF "$THERMAL_LIB" > "$out"
     run grep -c "/opt/corex-pro" "$out"
     [ "$output" = "0" ]
 }
 
 @test "generated boot-repair script is valid bash" {
     local out="${BATS_TEST_TMPDIR:-/tmp}/repair.sh"
-    awk "/cat > \/usr\/local\/bin\/corex-boot-repair.sh << 'BREOF'/{f=1;next} /^BREOF$/{f=0} f" \
-        "${REPO_ROOT}/lib/selfheal.sh" > "$out"
+    _generated BREOF "${REPO_ROOT}/lib/selfheal.sh" > "$out"
     [ -s "$out" ]
     run bash -n "$out"
     [ "$status" -eq 0 ]
@@ -172,8 +185,7 @@ setup() {
     grep -q 'THERMAL_NEVER_SHED="ups"' "$THERMAL_LIB"
     # And the guard must actually honour the list.
     local out="${BATS_TEST_TMPDIR:-/tmp}/guard3.sh"
-    awk "/cat > \/usr\/local\/bin\/corex-thermal-guard.sh << 'TGEOF'/{f=1;next} /^TGEOF$/{f=0} f" \
-        "$THERMAL_LIB" > "$out"
+    _generated TGEOF "$THERMAL_LIB" > "$out"
     grep -q 'THERMAL_NEVER_SHED' "$out"
 }
 
@@ -203,8 +215,7 @@ setup() {
     # error, because the guardian waited for a temperature the hardware never
     # reaches.
     local out="${BATS_TEST_TMPDIR:-/tmp}/guard-recover.sh"
-    awk "/cat > \/usr\/local\/bin\/corex-thermal-guard.sh << 'TGEOF'/{f=1;next} /^TGEOF$/{f=0} f" \
-        "$THERMAL_LIB" > "$out"
+    _generated TGEOF "$THERMAL_LIB" > "$out"
     [ -s "$out" ]
     grep -qE '^\s*normal\|recover\)' "$out"
 }
@@ -220,8 +231,7 @@ setup() {
     [ "$THERMAL_RESTORE_BATCH" -le 10 ]
 
     local out="${BATS_TEST_TMPDIR:-/tmp}/guard-batch.sh"
-    awk "/cat > \/usr\/local\/bin\/corex-thermal-guard.sh << 'TGEOF'/{f=1;next} /^TGEOF$/{f=0} f" \
-        "$THERMAL_LIB" > "$out"
+    _generated TGEOF "$THERMAL_LIB" > "$out"
     grep -q 'THERMAL_RESTORE_BATCH' "$out"
     # The batch must actually cap the loop, not just be read.
     grep -qE 'restored >= batch' "$out"
@@ -239,8 +249,7 @@ setup() {
     # keys added since, so referencing one directly aborts the guardian, and
     # a guardian that aborts sheds nothing at all.
     local out="${BATS_TEST_TMPDIR:-/tmp}/guard-defaults.sh"
-    awk "/cat > \/usr\/local\/bin\/corex-thermal-guard.sh << 'TGEOF'/{f=1;next} /^TGEOF$/{f=0} f" \
-        "$THERMAL_LIB" > "$out"
+    _generated TGEOF "$THERMAL_LIB" > "$out"
     [ -s "$out" ]
     for v in THERMAL_WARN_C THERMAL_SHED_C THERMAL_CRITICAL_C THERMAL_EMERGENCY_C \
              THERMAL_RECOVER_C THERMAL_CONFIRM_SAMPLES THERMAL_RESTORE_BATCH \
@@ -254,8 +263,7 @@ setup() {
 
 @test "guard survives a config that predates the newest settings" {
     local out="${BATS_TEST_TMPDIR:-/tmp}/guard-run.sh"
-    awk "/cat > \/usr\/local\/bin\/corex-thermal-guard.sh << 'TGEOF'/{f=1;next} /^TGEOF$/{f=0} f" \
-        "$THERMAL_LIB" > "$out"
+    _generated TGEOF "$THERMAL_LIB" > "$out"
     # An old config: thresholds only, none of the newer keys.
     local conf="${BATS_TEST_TMPDIR}/thermal.conf"
     printf 'THERMAL_ENABLED=true\nTHERMAL_WARN_C=80\nTHERMAL_SHED_C=85\n' > "$conf"
@@ -288,8 +296,7 @@ setup() {
     # caused the shed in the first place: the guardian was fighting the
     # operator and losing to itself.
     local out="${BATS_TEST_TMPDIR:-/tmp}/guard-disabled.sh"
-    awk "/cat > \/usr\/local\/bin\/corex-thermal-guard.sh << 'TGEOF'/{f=1;next} /^TGEOF$/{f=0} f" \
-        "$THERMAL_LIB" > "$out"
+    _generated TGEOF "$THERMAL_LIB" > "$out"
     [ -s "$out" ]
     grep -q '_disabled_containers' "$out"
     # It must read both the module flag and the component list.
@@ -303,8 +310,7 @@ setup() {
     # Deferring it means the guardian retries a container it must never start
     # for as long as the list lives.
     local out="${BATS_TEST_TMPDIR:-/tmp}/guard-drop.sh"
-    awk "/cat > \/usr\/local\/bin\/corex-thermal-guard.sh << 'TGEOF'/{f=1;next} /^TGEOF$/{f=0} f" \
-        "$THERMAL_LIB" > "$out"
+    _generated TGEOF "$THERMAL_LIB" > "$out"
     local body
     body=$(awk '/^restore\(\)/,/^}/' "$out")
     # The disabled branch continues without appending to remaining.
@@ -320,8 +326,7 @@ setup() {
     # restored. nextcloud-cron sat at exit 137, absent from the list, with
     # Nextcloud's background jobs silently not running.
     local out="${BATS_TEST_TMPDIR:-/tmp}/guard-shed.sh"
-    awk "/cat > \/usr\/local\/bin\/corex-thermal-guard.sh << 'TGEOF'/{f=1;next} /^TGEOF$/{f=0} f" \
-        "$THERMAL_LIB" > "$out"
+    _generated TGEOF "$THERMAL_LIB" > "$out"
     local body
     body=$(awk '/^shed\(\)/,/^}/' "$out")
     [ -n "$body" ]

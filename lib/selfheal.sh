@@ -15,12 +15,19 @@
 #
 # See CLAUDE.md gotcha #16 and #17.
 
+
+# shellcheck source=lib/common.sh
+# Sourced explicitly rather than left to the caller. These files depend on
+# log_info and install_script, and a missing install_script is silent in the
+# worst way: the generated script is simply never written, so the guardian or
+# the recorder does not exist and nothing says so.
+source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 selfheal_install() {
     log_info "Installing boot-time self-repair..."
 
     mkdir -p /var/lib/corex
 
-    cat > /usr/local/bin/corex-boot-repair.sh << 'BREOF'
+    install_script /usr/local/bin/corex-boot-repair.sh 750 << 'BREOF'
 #!/bin/bash
 # Runs once per boot, before the apt timers. Detects an unclean shutdown and
 # repairs anything it broke. Every step is bounded and logged.
@@ -169,18 +176,16 @@ if [[ -s "$EMERG_LIST" ]]; then
     (( held == 1 )) && say "had to wait for the CPU to come down while doing it"
 fi
 BREOF
-    chmod 750 /usr/local/bin/corex-boot-repair.sh
 
     # Removes the marker on an orderly shutdown. If we never get here, the
     # marker survives and the next boot knows the shutdown was unclean.
-    cat > /usr/local/bin/corex-mark-clean.sh << 'MCEOF'
+    install_script /usr/local/bin/corex-mark-clean.sh 750 << 'MCEOF'
 #!/bin/bash
 rm -f /var/lib/corex/clean-shutdown 2>/dev/null
 printf '%s clean-shutdown: marker cleared, going down orderly\n' "$(date -Is)" \
     >> /mnt/corex-data/blackbox.log 2>/dev/null
 exit 0
 MCEOF
-    chmod 750 /usr/local/bin/corex-mark-clean.sh
 
     cat > /etc/systemd/system/corex-boot-repair.service << BRSEOF
 [Unit]
@@ -224,7 +229,7 @@ selfheal_install_blackbox() {
     # to a plain file on the SSD every 20s, so the last line before a crash
     # tells you the temperature, load and memory state at that moment.
     log_info "Installing crash forensics recorder..."
-    cat > /usr/local/bin/corex-blackbox.sh << 'BBEOF'
+    install_script /usr/local/bin/corex-blackbox.sh 750 << 'BBEOF'
 #!/bin/bash
 # Appends a health sample to the blackbox log. Survives unclean shutdown.
 LOG="/mnt/corex-data/blackbox.log"
@@ -250,7 +255,6 @@ if [[ $(stat -c%s "$LOG" 2>/dev/null || echo 0) -gt 20000000 ]]; then
     tail -n 100000 "$LOG" > "${LOG}.tmp" && mv "${LOG}.tmp" "$LOG"
 fi
 BBEOF
-    chmod +x /usr/local/bin/corex-blackbox.sh
 
     cat > /etc/systemd/system/corex-blackbox.service << BBSEOF
 [Unit]

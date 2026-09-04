@@ -1921,6 +1921,42 @@ governor loop along with the task and nothing ever resumes anything.
 cannot spawn more and resuming it last. Confirmed by stopping a
 `sleep 30 | cat` and checking that all three processes reach state `T`.
 
+### 48. Rewriting a generated script in place breaks the copy that is running
+
+CoreX generates nine scripts into `/usr/local/bin`, and several of them are
+running when it regenerates them: the blackbox recorder every 20 seconds, the
+thermal guardian every 30, the resource watchdog every 60, and the maintenance
+runner for hours during a first Restic snapshot. `cat > /usr/local/bin/x.sh`
+truncates the file where it is, and bash reads a script incrementally as it
+executes, so the running copy resumes at its saved byte offset inside content
+that is now something else.
+
+Reproduced on Ubuntu with a script long enough that bash cannot have buffered
+all of it:
+
+```
+cat > dest        the running copy ran garbage and exited 127:
+                  "line 3: _SHORT: command not found"
+install_script    the running copy finished its own tail, exit 0
+```
+
+`install_script` in `lib/common.sh` takes the content on stdin, writes it to a
+temp file beside the destination, and moves it into place. `mv` is atomic and
+the running process keeps the old inode. Every generated script goes through
+it, and the mode is applied after the move rather than inherited, because mv
+from `mktemp` carries 0600 across (gotcha #24).
+
+**The same test on macOS said the opposite.** It printed the new content and
+looked harmless, because a short script is read in one gulp and bash 3.2
+behaves differently. A claim about process behaviour has to be measured on the
+platform the code runs on, which for this repo is never the laptop.
+
+`lib/selfheal.sh`, `lib/thermal.sh` and `lib/watchdog.sh` now source
+`common.sh` explicitly instead of relying on the caller. They already depended
+on `log_info`, so the dependency is not new, but a missing `install_script`
+fails in a much worse way than a missing log function: the generated script is
+simply never written, so the guardian does not exist and nothing says so.
+
 ---
 
 ## What NOT to Do
