@@ -388,8 +388,37 @@ _authelia_write_users() {
         log_warning "Could not hash the portal password with ${AUTHELIA_IMAGE}"
         return 1
     }
-    local email="${EMAIL:-}"
-    [[ -n "$email" ]] || email="admin@${DOMAIN}"
+    # The relay's own address first, and state.json's email only after it.
+    #
+    # This is the difference between an account you can recover and one you
+    # cannot. state.json holds the Let's Encrypt contact address, which on
+    # this install is admin@DOMAIN: a plausible-looking address at a domain
+    # that has no mailbox, because no mail server can receive on a residential
+    # line (see the mail notes). Authelia emails the two-factor registration
+    # link, so writing that address here meant a two_factor policy nobody
+    # could ever satisfy: locked out of every protected panel with the link
+    # sent into nothing.
+    #
+    # The relay account, by contrast, is an address the box demonstrably
+    # reaches, because it is the mailbox it authenticates as to send at all.
+    local email=""
+    if _authelia_smtp && [[ -n "${AUTHELIA_SMTP_USER:-}" ]]; then
+        email="$AUTHELIA_SMTP_USER"
+    elif [[ -n "${EMAIL:-}" ]]; then
+        email="$EMAIL"
+    fi
+    if [[ -z "$email" ]]; then
+        email="admin@${DOMAIN}"
+    fi
+    # And say so when the address is at this box's own domain, which cannot
+    # receive. Better a loud warning now than a lockout at the first sign-in.
+    if [[ "$email" == *"@${DOMAIN}" ]]; then
+        log_warning "The portal account email is ${email}, at a domain with no mailbox."
+        echo "    Two-factor registration and password resets are emailed, so set a"
+        echo "    real address before turning two-factor on:"
+        echo "      sudo sed -i \"s|email: .*|email: 'you@example.com'|\" \\"
+        echo "        ${DOCKER_ROOT}/authelia/users_database.yml"
+    fi
 
     cat > "$f" << UDEOF
 # Authelia accounts. CoreX writes this once and never again, because the

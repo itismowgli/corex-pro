@@ -6,6 +6,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.22.1] - 2026-09-04
+
+### Fixed
+- **The Authelia account was created with an address that cannot receive
+  mail**, which with a `two_factor` policy is a lockout rather than an
+  inconvenience: the registration link is emailed, so nobody could ever
+  satisfy the second factor and every protected panel was unreachable.
+
+  The address came from `state.json`, which holds the Let's Encrypt contact,
+  `admin@DOMAIN` on a domain with no mailbox, because no mail server can
+  receive on a residential line. It now prefers the relay account, which is an
+  address the box demonstrably reaches since it is the mailbox it
+  authenticates as in order to send at all, and it warns loudly when the
+  chosen address is at the box's own domain.
+
+---
+
 ## [v3.22.0] - 2026-09-04
 
 ### Added
