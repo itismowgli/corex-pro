@@ -210,6 +210,48 @@ def wrap_names(names, per_line=4):
     return cc.md_escape(",\n".join(out))
 
 
+def vitals_line():
+    """A one-line reading of the machine, for the top of `status`.
+
+    `status` answers "are my services up" and `health` answers "is the machine
+    in trouble", and on a phone nobody wants to ask twice. The three numbers
+    that decide whether anything else matters go at the top: heat, because this
+    hardware trips at TjMax with nothing in any log; memory; and the fuller
+    disk. Everything else stays behind `health`.
+
+    Returns an empty string if the agent cannot answer, because a missing
+    header must not cost the reader the service list they asked for.
+    """
+    res = agent_call({"action": "metrics", "sizes": False}, timeout=30)
+    if not res.get("ok"):
+        return ""
+    m = res.get("metrics") or {}
+    cpu = m.get("cpu") or {}
+    mem = m.get("memory") or {}
+    thermal = m.get("thermal") or {}
+
+    bits = []
+    temp = cpu.get("temp_c")
+    if temp is not None:
+        warn = thermal.get("warn_c") or 80
+        mark = " (hot)" if temp >= warn else ""
+        bits.append("%.0fC%s" % (temp, mark))
+    load = cpu.get("load") or []
+    if load:
+        bits.append("load %.2f" % load[0])
+    if mem.get("total_mb"):
+        bits.append("RAM %d%%" % round(mem["used_mb"] * 100.0 / mem["total_mb"]))
+    disks = m.get("disks") or []
+    if disks:
+        worst = max(disks, key=lambda d: d.get("pct", 0))
+        bits.append("%s %.0f%% full" % (worst.get("label", "disk"), worst.get("pct", 0)))
+
+    shed = thermal.get("shed") or []
+    if shed:
+        bits.append("%d container(s) shed for heat" % len(shed))
+    return ", ".join(bits)
+
+
 def fmt_status(output):
     """`status --plain` is tab separated, so it can be grouped properly."""
     groups = {}
@@ -234,6 +276,10 @@ def fmt_status(output):
         summary.append("%d disabled" % len(disabled))
 
     lines = ["\U0001f4ca *Services*", cc.md_escape(", ".join(summary))]
+    vitals = vitals_line()
+    if vitals:
+        lines += ["", "\U0001fa7a *The machine*", cc.md_escape(vitals),
+                  cc.md_escape("Send health for the full hardware report.")]
 
     # Problems first and named individually, because those are the ones worth
     # reading. Everything healthy is collapsed into one block.
