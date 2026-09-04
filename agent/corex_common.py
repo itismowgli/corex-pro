@@ -155,7 +155,7 @@ def telegram_send(token, chat, text, markdown=True):
                 detail = body()[:200].decode("utf-8", "replace")
             except Exception:
                 detail = ""
-        last_send_error[0] = "%s %s" % (exc, detail).strip()
+        last_send_error[0] = ("%s %s" % (exc, detail)).strip()
         return False
 
 
