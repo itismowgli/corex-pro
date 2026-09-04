@@ -156,6 +156,8 @@ corex-pro/
 │   ├── backup.sh             # Phase 6 extracted
 │   ├── summary.sh            # Phase 7 extracted
 │   ├── thermal.sh            # Thermal guardian — sheds load before TjMax (#17)
+│   ├── maintenance.sh        # Hourly timer: backup, cleanup, checks (#43)
+│   ├── power.sh              # Wake-on-LAN, and what CoreX cannot do (#42)
 │   ├── watchdog.sh           # Resource alerting via Kuma push monitors (#29)
 │   ├── kuma.sh               # Seeds Kuma HTTP checks from SERVICE_MONITORS
 │   ├── agent.sh              # Privileged action agent + Telegram bot (#30)
@@ -195,6 +197,11 @@ corex-pro/
 | `/root/CoreX_Dashboard_Credentials.md` | Full dashboard and post-install guide |
 | `/etc/corex/state.json` | [v2] Tracks installed services and configuration |
 | `/etc/corex/watchdog.conf` | Watchdog thresholds and Kuma push tokens (0640) |
+| `/etc/corex/maintenance.conf` | Maintenance schedule and temperature limit (0640) |
+| `/var/lib/corex/maintenance.json` | What each scheduled task last did (0644) |
+| `/var/log/corex-maintenance.log` | Maintenance runner log |
+| `/usr/local/bin/corex-maintenance.sh` | Runs whatever is due, hourly by timer |
+| `/etc/systemd/system/corex-wol.service` | Re-arms wake-on-LAN at every boot |
 | `/etc/corex/agent.conf` | Action agent config (0640 root:corex-agent) |
 | `/etc/corex/agent.token` | Agent bearer token (0640 root:corex-agent) |
 | `/etc/corex/dashboard-users.json` | Dashboard accounts, PBKDF2 hashes, passkeys (0600 root) |
@@ -1617,6 +1624,85 @@ button that opens the sorted list of what is consuming it, which is what
 Activity Monitor and Task Manager are for. A dashboard that only shows totals
 makes the reader open a terminal to find the cause, and then the dashboard was
 not the answer.
+
+### 42. A panel that can switch the machine off needs a second gate, and the way back on is not code
+
+The dashboard is published to the internet with its own login, and a session
+cookie is enough to start, stop, repair and update every service. All of that
+is recoverable. A poweroff is not, and the reason is structural rather than a
+matter of degree: the dashboard runs on the machine it would be switching off,
+and the Cloudflare tunnel goes down with it. There is no arrangement of CoreX
+code in which the dashboard can turn the box back on.
+
+So two things ship together, and shipping the first without the second is how
+an operator locks themselves out of their own server.
+
+**Step-up confirmation.** `POST /api/auth/stepup` takes a password, a current
+TOTP code, or a passkey assertion with `userVerification: "required"`, and
+marks the session confirmed for five minutes. `requireElevated` in
+`dashboard/stepup.go` guards the route. Four details matter:
+
+- The refusal is a 403 carrying `"elevation_required": true`. A client cannot
+  tell "prove it again" from "you may never do this" by status code alone, and
+  guessing wrong means either a lost dialog or a retry loop.
+- Confirmation is found by cookie, not by username, so confirming on a laptop
+  does not arm a phone holding a session for the same account.
+- A password is always accepted, even with TOTP enrolled. A lost phone must not
+  lock the operator out of the power button, and the password is the factor
+  that cannot go missing.
+- With no account configured it passes through, exactly as `requireAuth` does.
+  Traefik basic auth is in front in that state, and refusing would leave the
+  buttons permanently dead on an install that never enabled the login.
+
+**The way back on, stated rather than implied.** `ethtool -s <iface> wol g`
+arms the NIC, does not survive a reboot, and so needs `corex-wol.service`;
+wake from S5 also has to be permitted in the BIOS, which nothing here can
+check. Even armed, a magic packet only works from the same layer 2 network. So
+`corex manage power` and the Power card rank what actually works, and put a
+smart plug with "restore on AC power loss" first, because it is the only option
+that recovers a hung machine as well as a cleanly stopped one.
+
+The agent side is a separate branch from `ACTIONS`, since these are not
+corex-manage subcommands, and it is deliberately absent from the Telegram bot's
+word lists. Everything the bot can reach is reversible, which is what makes a
+stolen chat account survivable. Both actions take the same lock every mutating
+job takes, announce to Telegram **before** acting because there is no after,
+and delay the command four seconds so the reply and the message leave while
+there is still a network.
+
+### 43. A scheduler is only as honest as the history it shows
+
+`/mnt/corex-data/backups/restic-repo` did not exist for the entire life of this
+installation. The nightly cron ran, restic asked "Is there a repository at the
+following location?", the script logged "Backup complete", and the box had no
+backups at all. Nothing was wrong in the installer: the repository was simply
+never initialised here, and nothing ever checked.
+
+That is the failure a maintenance page makes worse rather than better, because
+it would have said the backup was scheduled and running. So `lib/maintenance.sh`
+records what happened rather than what was meant to: a missing prerequisite is
+a failed run, a task that has never run says so instead of showing a tick, and
+a run held back for temperature is a third state rather than either. The
+Maintenance tab reads `/var/lib/corex/maintenance.json`, never the schedule.
+
+Three structural choices follow from the hardware:
+
+One timer, not four. The tasks share a machine that thermal trips, so exactly
+one runs per invocation, each is refused above `MAINTENANCE_MAX_TEMP_C`, and a
+`flock` keeps a long backup from colliding with the next hour's tick. Four
+timers would have spread that decision across four places.
+
+A task overdue by half its interval again runs at the next opportunity rather
+than waiting for its configured hour. Without that clause a backup set for
+03:00 never happens on a machine that is off overnight, and the history reads
+"due" forever.
+
+`os-upgrade` is off by default and is the one task behind a step-up. It is the
+only one that can leave the machine unbootable, which is gotcha #18 exactly.
+
+Installing the timer also removes the v1 `corex-backup` line from root's
+crontab. Leaving it means one snapshot taken twice and two history rows that
+disagree.
 
 ---
 

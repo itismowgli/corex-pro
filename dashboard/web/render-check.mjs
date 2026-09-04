@@ -36,7 +36,7 @@ const bundle = fs.readFileSync(entryPath, "utf8")
 // Every tab, not just the default one. Radix renders tab content lazily, so a
 // component that throws is invisible until someone opens it: exactly the
 // blank page this check exists to prevent, one click further in.
-const TABS = ["overview", "services", "health", "storage", "network", "catalogue", "system", "account"]
+const TABS = ["overview", "services", "health", "storage", "network", "catalogue", "maintenance", "system", "account"]
 
 // Realistic payloads, not just failures.
 //
@@ -78,8 +78,9 @@ const STATE = {
 }
 
 // A metrics payload with the awkward cases in it on purpose: a null
-// temperature, an empty series, a disk at 94%, a monitor that is down and a
-// service with no address. Panels have to render all of those.
+// temperature, an empty series, a disk at 94%, a monitor that is down, a
+// service with no address, and a wake-on-LAN entry that the hardware supports
+// but nobody armed. Panels have to render all of those.
 const METRICS = {
   at: 1788400000,
   cpu: { temp_c: 71.6, temp_source: "sensors", temp_state: "ok", load: [0.33, 0.42, 0.59], cores: 16 },
@@ -112,6 +113,24 @@ const METRICS = {
   ],
   smart: [{ device: "/dev/nvme0n1", status: "PASSED" }, { device: "/dev/sda", status: "not reported" }],
   dpkg: { clean: true, packages: [] },
+  wol: [
+    { interface: "enp2s0", supported: true, enabled: false, modes: "d" },
+    { interface: "wlp3s0", supported: false, enabled: false, modes: "d" },
+  ],
+  // One of each outcome on purpose: a task that has never run must not draw a
+  // tick, a failure has to be legible, and a task held back for temperature
+  // is neither of those.
+  maintenance: {
+    installed: true,
+    timer_active: true,
+    enabled: true,
+    tasks: [
+      { name: "backup", label: "Backup", description: "Restic snapshot.", enabled: true, interval_h: 24, hour: 3, last: 1788400000, next: 1788486400, state: "ok", elapsed: 412, detail: "latest snapshot 2026-09-04T03:07:11+05:30" },
+      { name: "cleanup", label: "Docker cleanup", description: "Prune unused images.", enabled: true, interval_h: 168, hour: 4, last: 1788300000, next: 1788904800, state: "failed", elapsed: 9, detail: "cannot find corex-manage.sh" },
+      { name: "timemachine", label: "Time Machine check", description: "Share and restart count.", enabled: true, interval_h: 168, hour: 5, last: 1788350000, next: 1788954800, state: "deferred", elapsed: 0, detail: "deferred, CPU at 91C" },
+      { name: "os-upgrade", label: "OS packages", description: "Supervised apt upgrade.", enabled: false, interval_h: 720, hour: 4, last: 0, next: 0, state: "", elapsed: 0, detail: "" },
+    ],
+  },
 }
 
 const DATA = {
@@ -198,6 +217,14 @@ function mount(url, me, withData = true, width = 1280) {
   return { dom, window }
 }
 
+// Substrings that prove a panel read its fixture rather than only mounting.
+const EXPECT = {
+  system: "enp2s0",
+  maintenance: "Never run",
+  services: "Nextcloud",
+  catalogue: "Gitea",
+}
+
 let failed = false
 
 // Every tab twice: once with data, once with everything failing.
@@ -250,6 +277,13 @@ for (const tab of TABS) {
   }
   if (text.length < 20) failures.push("#root is empty after mount: " + JSON.stringify(text))
   if (!text.includes("CoreX")) failures.push("the header did not render")
+  // One content assertion per tab, only where the tab draws something from a
+  // fixture that a mounted-but-empty panel would omit. "It rendered" is not
+  // the same as "it rendered the data", and the power card is the highest
+  // consequence panel on the page: it has to name the interface it read.
+  if (withData && EXPECT[tab] && !text.includes(EXPECT[tab])) {
+    failures.push("mounted but did not show " + JSON.stringify(EXPECT[tab]))
+  }
   for (const line of consoleErrors) {
     if (line.includes("dashboard render failed")) failures.push("error boundary caught: " + line)
   }

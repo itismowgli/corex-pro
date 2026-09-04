@@ -132,6 +132,29 @@ ACTIONS = {
 # Actions that change the system, and so are announced when they finish.
 MUTATING = {"start", "stop", "restart", "repair", "update", "cleanup"}
 
+# Powering the machine is not a corex-manage subcommand, so it gets its own
+# branch rather than a row in ACTIONS. Two things follow from that separation.
+#
+# It is deliberately absent from the Telegram bot's word lists. Everything the
+# bot can reach is reversible, which is what makes a stolen chat account
+# survivable, and a poweroff is the one thing on this box nobody can undo
+# remotely: the dashboard runs on the machine it would be switching off. The
+# dashboard sends these behind a step-up confirmation instead.
+#
+# The command is delayed a few seconds so the caller gets an answer and the
+# Telegram message leaves while there is still a network.
+POWER = {
+    "reboot":   (["systemctl", "reboot"],  "Rebooting now"),
+    "shutdown": (["systemctl", "poweroff"], "Shutting down now"),
+}
+POWER_DELAY = 4
+
+# Scheduled maintenance, run on demand. Its own branch for the same reason as
+# power: the whitelisted argument is a task name, not a service, so it cannot
+# go through valid_service.
+MAINT_TASKS = ("backup", "cleanup", "timemachine", "os-upgrade")
+MAINT_SCRIPT = "/usr/local/bin/corex-maintenance.sh"
+
 JOB_TIMEOUT = {"update": 1800, "repair": 900, "cleanup": 900}
 DEFAULT_TIMEOUT = 300
 MAX_JOB_HISTORY = 60
@@ -453,6 +476,128 @@ def handle_users(action, req):
         return {"ok": True}
 
 
+# ── Maintenance ─────────────────────────────────────────────────────────────
+
+
+def _maint_worker(job_id, task):
+    started = time.time()
+    try:
+        proc = subprocess.run([MAINT_SCRIPT, task], capture_output=True,
+                              text=True, timeout=14400, check=False)
+        rc = proc.returncode
+        out = cc.strip_ansi((proc.stdout or "") + (proc.stderr or "")).strip()
+    except subprocess.TimeoutExpired:
+        rc, out = 124, "timed out after 4 hours"
+    except OSError as exc:
+        rc, out = 125, "could not run %s: %s" % (MAINT_SCRIPT, exc)
+    finally:
+        _running["job"] = None
+        _run_lock.release()
+    elapsed = int(time.time() - started)
+    # The runner writes its own history and its own Telegram notice on failure,
+    # so nothing is announced here: two messages for one event is worse than
+    # one. The output is still recorded, because that is what the page shows.
+    if not out:
+        out = "nothing was due" if rc == 0 else "no output, exit %d" % rc
+    record(job_id, state="done" if rc == 0 else "failed", rc=rc,
+           output=out, finished=time.time(), elapsed=elapsed)
+    say("maintenance %s rc=%d in %ds" % (task, rc, elapsed))
+
+
+def handle_maintenance(req):
+    task = str(req.get("task", "") or "")
+    if task not in MAINT_TASKS:
+        return {"ok": False, "error": "unknown task"}
+    if not os.path.exists(MAINT_SCRIPT):
+        return {"ok": False,
+                "error": "maintenance is not installed, run: corex manage maintenance setup"}
+    # A backup and a repair at the same time is two heavy jobs on a box that
+    # trips at TjMax, so this takes the same lock every other job does. The
+    # runner also holds its own flock, which covers the timer firing while
+    # this is going.
+    if not _run_lock.acquire(blocking=False):
+        busy = _running.get("job") or "another action"
+        return {"ok": False, "error": "busy running %s, try again shortly" % busy}
+    job_id = uuid.uuid4().hex[:12]
+    _running["job"] = "maintenance %s" % task
+    record(job_id, state="running", action="maintenance", service=task,
+           started=time.time(), output="", rc=None)
+    threading.Thread(target=_maint_worker, args=(job_id, task),
+                     daemon=True).start()
+    return {"ok": True, "job_id": job_id, "state": "running",
+            "message": "%s started" % task}
+
+
+# ── Power ───────────────────────────────────────────────────────────────────
+
+
+def _power_fire(mode, argv):
+    """Run the command after a pause, and report if it refuses to run."""
+    time.sleep(POWER_DELAY)
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True,
+                              timeout=60, check=False)
+        if proc.returncode == 0:
+            return
+        detail = cc.strip_ansi((proc.stdout or "") + (proc.stderr or "")).strip()
+    except (OSError, subprocess.SubprocessError) as exc:
+        detail = "could not run %s: %s" % (" ".join(argv), exc)
+    # Still here, so the box is not going anywhere. Say so on both channels and
+    # give the lock back, or every later action reports the box as busy.
+    say("power %s failed: %s" % (mode, detail))
+    _running["job"] = None
+    try:
+        _run_lock.release()
+    except RuntimeError:
+        pass
+    token, chat = cc.telegram_creds(CONF) if NOTIFY else ("", "")
+    if token and chat:
+        cc.telegram_send(token, chat, cc.message(
+            "fail", "The %s did not happen" % mode,
+            "systemd refused the request, so the machine is still running.",
+            detail=detail,
+            footer="Try it over SSH: sudo systemctl %s" %
+                   ("reboot" if mode == "reboot" else "poweroff")))
+
+
+def handle_power(mode, req):
+    if mode not in POWER:
+        return {"ok": False, "error": "unknown action"}
+    argv, headline = POWER[mode]
+    # The same lock every mutating job takes. Cutting power part way through a
+    # `docker compose up` or an apt transaction is how this box ended up with
+    # an unconfigured dpkg database, so a running job wins.
+    if not _run_lock.acquire(blocking=False):
+        busy = _running.get("job") or "another action"
+        return {"ok": False,
+                "error": "busy running %s, so this is not the moment" % busy}
+    _running["job"] = mode
+    actor = str(req.get("actor", "") or "unknown")
+    say("power %s requested by %s" % (mode, actor))
+    cu.auth_log_append("power-" + mode, username=actor,
+                       ip=str(req.get("ip", "")),
+                       detail=str(req.get("detail", "")))
+
+    # Sent before the command, not after: there is no after. A clean shutdown
+    # is exactly what was missing the last time this machine went down, so the
+    # message that says it was deliberate is worth as much as the shutdown.
+    token, chat = cc.telegram_creds(CONF) if NOTIFY else ("", "")
+    if token and chat:
+        if mode == "shutdown":
+            body = ("Asked for by %s from the dashboard. Nothing on the network "
+                    "can turn it back on again." % actor)
+            footer = "Cut and restore the power at the plug to boot it."
+        else:
+            body = "Asked for by %s from the dashboard." % actor
+            footer = "It should answer again in a couple of minutes."
+        cc.telegram_send(token, chat, cc.message("warn", headline, body,
+                                                 footer=footer))
+
+    threading.Thread(target=_power_fire, args=(mode, argv), daemon=True).start()
+    return {"ok": True, "state": "done", "mode": mode,
+            "output": "%s in %d seconds" % (headline.lower(), POWER_DELAY)}
+
+
 # ── Request dispatch ────────────────────────────────────────────────────────
 
 def handle(req):
@@ -477,9 +622,9 @@ def handle(req):
 
     if action == "services":
         return {"ok": True, "services": sorted(SERVICES),
-                "actions": sorted(ACTIONS) + ["logs", "metrics", "users-get",
-                                              "users-put", "auth-reset",
-                                              "auth-log"]}
+                "actions": sorted(ACTIONS) + sorted(POWER) +
+                           ["maintenance", "logs", "metrics", "users-get",
+                            "users-put", "auth-reset", "auth-log"]}
 
     if action == "logs":
         if not valid_service(service, action):
@@ -519,6 +664,12 @@ def handle(req):
 
     if action in ("users-get", "users-put", "auth-reset"):
         return handle_users(action, req)
+
+    if action in POWER:
+        return handle_power(action, req)
+
+    if action == "maintenance":
+        return handle_maintenance(req)
 
     if action not in ACTIONS:
         return {"ok": False, "error": "unknown action"}

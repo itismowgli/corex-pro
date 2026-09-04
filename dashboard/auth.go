@@ -375,6 +375,12 @@ type session struct {
 	// session can do exactly one thing: present a code.
 	AwaitingTOTP bool
 
+	// When the last step-up expires, and which factor did it. A session that
+	// has never stepped up carries the zero time. See stepup.go for what this
+	// gates and why a live session is not enough on its own.
+	ElevatedUntil time.Time
+	ElevatedBy    string
+
 	// Where it signed in from, so the account page can list the devices that
 	// hold a session and let one be dropped. The user agent is attacker
 	// controlled text, so it is trimmed and never rendered as markup.
@@ -687,6 +693,10 @@ type meResponse struct {
 	TOTPEnabled   bool   `json:"totp_enabled"`
 	RecoveryLeft  int    `json:"recovery_left"`
 	Passkeys      int    `json:"passkeys"`
+	// Seconds of elevation left, so the page can show the window closing
+	// rather than discovering it has closed on the next click.
+	ElevatedFor int    `json:"elevated_for"`
+	ElevatedBy  string `json:"elevated_by"`
 }
 
 func authMeHandler(w http.ResponseWriter, r *http.Request) {
@@ -709,6 +719,10 @@ func authMeHandler(w http.ResponseWriter, r *http.Request) {
 	out.Username = s.User
 	out.AwaitingTOTP = s.AwaitingTOTP
 	out.Authenticated = !s.AwaitingTOTP
+	if left := elevationLeft(s); left > 0 {
+		out.ElevatedFor = int(left.Seconds())
+		out.ElevatedBy = s.ElevatedBy
+	}
 	if doc, err := loadUsers(); err == nil {
 		if u := doc.Users[s.User]; u != nil {
 			out.DisplayName = u.DisplayName
@@ -975,6 +989,9 @@ func authPasswordHandler(w http.ResponseWriter, r *http.Request) {
 	// session alive has not taken the account back.
 	id, _ := currentSession(r)
 	dropSessionsFor(s.User, id)
+	// The surviving session's elevation was granted by the password that has
+	// just been replaced, so it goes too.
+	dropElevation(s.User)
 	log.Printf("auth: %s changed their password", s.User)
 	record(r, "password-changed", s.User, "from the account page")
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
@@ -1413,5 +1430,6 @@ func registerAuthRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/auth/sessions", authSessionsHandler)
 	mux.HandleFunc("/api/auth/sessions/revoke", authRevokeHandler)
 	mux.HandleFunc("/api/auth/activity", authActivityHandler)
+	registerStepupRoutes(mux)
 	registerPasskeyRoutes(mux)
 }

@@ -241,6 +241,10 @@ func main() {
 	api.HandleFunc("/api/cleanup", cleanupHandler)
 	api.HandleFunc("/api/job/", jobHandler)
 	api.HandleFunc("/api/logs/", logsSSEHandler)
+	api.HandleFunc("/api/maintenance/", maintenanceHandler)
+	// The one route on this mux that needs more than a session. See
+	// stepup.go for what requireElevated asks for and why only this needs it.
+	api.Handle("/api/power/", requireElevated(http.HandlerFunc(powerHandler)))
 
 	mux := http.NewServeMux()
 	// Signing in, and the account pages, which have to be reachable before
@@ -1011,6 +1015,97 @@ func cleanupHandler(w http.ResponseWriter, r *http.Request) {
 		job.State = "running"
 	}
 	writeJSON(w, http.StatusOK, job)
+}
+
+// Tasks the maintenance runner knows. Kept here as well as in the agent so a
+// mistyped path is a 404 from this side rather than a job that starts and
+// fails, and so the list the page offers cannot drift from the list that runs.
+var maintenanceTasks = map[string]bool{
+	"backup": true, "cleanup": true, "timemachine": true, "os-upgrade": true,
+}
+
+// maintenanceHandler serves POST /api/maintenance/<task>, running one
+// scheduled task now instead of waiting for its hour.
+//
+// Three of the four are recoverable and need no more than a session, the same
+// as repair and update. os-upgrade is not: an interrupted kernel upgrade is
+// what left this box with systemd unpacked and unconfigured, so that one asks
+// for a factor first. It also refuses itself above 85C, with a dirty dpkg
+// database, or under fifteen minutes of uptime.
+func maintenanceHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	task := strings.TrimPrefix(r.URL.Path, "/api/maintenance/")
+	if !maintenanceTasks[task] {
+		writeErr(w, http.StatusNotFound, "no such maintenance task")
+		return
+	}
+	if task == "os-upgrade" && !elevatedOrRefuse(w, r) {
+		return
+	}
+	res, err := agentCall(map[string]interface{}{
+		"action": "maintenance", "task": task,
+	}, 30*time.Second)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	if !agentOK(res) {
+		writeErr(w, http.StatusConflict, agentString(res, "error"))
+		return
+	}
+	job := jobFromAgent(res, task)
+	if job.ID != "" {
+		job.State = "running"
+	}
+	writeJSON(w, http.StatusOK, job)
+}
+
+// powerHandler serves POST /api/power/reboot and /api/power/shutdown.
+//
+// Registered behind requireElevated, so a live cookie is not enough: the
+// caller has to have proved a password, a code or a passkey in the last five
+// minutes. That is not caution for its own sake. A reboot comes back on its
+// own, but a shutdown is the one action on this box that cannot be undone from
+// anywhere on the network, because this page runs on the machine it would be
+// switching off and the tunnel goes down with it.
+//
+// The reply is what the agent said before it acted. The response to a reboot
+// arrives, and then the connection dies a few seconds later, which is the
+// correct sequence and reads as a hang if the delay is removed.
+func powerHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	mode := strings.TrimPrefix(r.URL.Path, "/api/power/")
+	if mode != "reboot" && mode != "shutdown" {
+		writeErr(w, http.StatusNotFound, "no such power action")
+		return
+	}
+	// Who asked, for the agent's own log and the Telegram notice. Read from
+	// the session rather than the request body: a client cannot name someone
+	// else as the operator.
+	actor := "the dashboard"
+	if _, sess := currentSession(r); sess != nil && sess.User != "" {
+		actor = sess.User
+	}
+	res, err := agentCall(map[string]interface{}{
+		"action": mode, "actor": actor, "ip": clientIP(r),
+		"detail": "from the dashboard",
+	}, 30*time.Second)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	if !agentOK(res) {
+		writeErr(w, http.StatusConflict, agentString(res, "error"))
+		return
+	}
+	record(r, "power-"+mode, actor, "from the dashboard")
+	writeJSON(w, http.StatusOK, jobFromAgent(res, mode))
 }
 
 // jobHandler serves GET /api/job/<id>, which the client polls while an action

@@ -423,6 +423,149 @@ def dpkg_clean():
     return {"clean": not bad, "packages": bad[:10]}
 
 
+MAINT_STATE = "/var/lib/corex/maintenance.json"
+MAINT_CONF = "/etc/corex/maintenance.conf"
+
+# task -> how it reads on the page. The runner knows the same four names, so a
+# task added there without a row here appears with its own name rather than
+# disappearing.
+MAINT_TASKS = [
+    ("backup", "Backup",
+     "A Restic snapshot of every service's data and compose file, then prune "
+     "and a five percent read check."),
+    ("cleanup", "Docker cleanup",
+     "Removes images and build cache nothing is using. This is the disk that "
+     "fills first, because Docker lives on it."),
+    ("timemachine", "Time Machine check",
+     "Confirms the share is being written to and the container is not "
+     "restart-looping, which no HTTP check can see."),
+    ("os-upgrade", "OS packages",
+     "A supervised apt upgrade, including the kernel packages "
+     "unattended-upgrades is told to leave alone. Off unless turned on."),
+]
+
+
+def maintenance():
+    """The schedule and what each task last actually did.
+
+    Two files, deliberately. The schedule says what is meant to happen and the
+    history says what happened, and a page that shows only the first is the
+    failure this module was written to avoid: it would report a backup as
+    scheduled on a box whose repository does not exist.
+    """
+    conf = {}
+    try:
+        with open(MAINT_CONF, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                conf[k.strip()] = v.strip().strip("\"'")
+    except OSError:
+        pass
+
+    history = {}
+    try:
+        with open(MAINT_STATE, encoding="utf-8", errors="replace") as fh:
+            history = json.load(fh).get("tasks", {}) or {}
+    except (OSError, ValueError, AttributeError):
+        history = {}
+
+    rc, _ = _run(["systemctl", "is-active", "--quiet", "corex-maintenance.timer"])
+    installed = os.path.exists("/usr/local/bin/corex-maintenance.sh")
+    enabled = conf.get("MAINTENANCE_ENABLED", "true") != "false"
+
+    tasks = []
+    for name, label, desc in MAINT_TASKS:
+        key = name.upper().replace("-", "_")
+        row = history.get(name) or {}
+        try:
+            interval = int(conf.get("MAINTENANCE_%s_INTERVAL_H" % key, 0) or 0)
+        except ValueError:
+            interval = 0
+        try:
+            hour = int(conf.get("MAINTENANCE_%s_HOUR" % key, 0) or 0)
+        except ValueError:
+            hour = 0
+        last = int(row.get("last", 0) or 0)
+        tasks.append({
+            "name": name,
+            "label": label,
+            "description": desc,
+            "enabled": conf.get("MAINTENANCE_%s_ENABLED" % key, "false") == "true",
+            "interval_h": interval,
+            "hour": hour,
+            "last": last,
+            "next": last + interval * 3600 if last and interval else 0,
+            # "" when it has never run, which the page has to say plainly
+            # rather than showing a green tick for a task that has never
+            # happened.
+            "state": str(row.get("state", "") or ""),
+            "elapsed": int(row.get("elapsed", 0) or 0),
+            "detail": str(row.get("detail", "") or ""),
+        })
+
+    return {
+        "installed": installed,
+        "timer_active": rc == 0,
+        "enabled": enabled,
+        "tasks": tasks,
+    }
+
+
+_WOL_CACHE = {"at": 0.0, "value": []}
+_WOL_TTL = 600
+
+
+def wake_on_lan():
+    """Which interface would answer a magic packet, and whether it is armed.
+
+    Read here so the dashboard can be honest about the way back on. Powering
+    the machine off from a web page that runs on that machine is only
+    reasonable if the operator can see what will start it again, and the answer
+    is not something CoreX can provide on its own: the packet has to come from
+    another device, or the power has to be cut and restored at the plug.
+
+    Needs root, which is why it lives on this side rather than in the
+    container. "d" means disabled, "g" means a magic packet wakes it.
+    """
+    # Cached for ten minutes. This only changes when someone runs ethtool or
+    # reboots, and the vitals stream asks for metrics every five seconds: a
+    # subprocess per interface on that path would be pure waste.
+    now = time.time()
+    if now - _WOL_CACHE["at"] < _WOL_TTL:
+        return _WOL_CACHE["value"]
+    try:
+        names = sorted(os.listdir("/sys/class/net"))
+    except OSError:
+        return []
+    out = []
+    for name in names:
+        if name == "lo" or name.startswith(("docker", "br-", "veth", "tun")):
+            continue
+        rc, text = _run(["ethtool", name], timeout=10)
+        if rc != 0:
+            continue
+        supports = current = ""
+        for line in text.splitlines():
+            line = line.strip()
+            if line.startswith("Supports Wake-on:"):
+                supports = line.split(":", 1)[1].strip()
+            elif line.startswith("Wake-on:"):
+                current = line.split(":", 1)[1].strip()
+        if not supports:
+            continue
+        out.append({
+            "interface": name,
+            "supported": "g" in supports,
+            "enabled": "g" in current,
+            "modes": current,
+        })
+    _WOL_CACHE["at"], _WOL_CACHE["value"] = now, out
+    return out
+
+
 # ── Assembly ────────────────────────────────────────────────────────────────
 
 def collect(want_sizes=True):
@@ -457,4 +600,6 @@ def collect(want_sizes=True):
         "monitors": kuma_monitors(),
         "smart": smart(),
         "dpkg": dpkg_clean(),
+        "wol": wake_on_lan(),
+        "maintenance": maintenance(),
     }

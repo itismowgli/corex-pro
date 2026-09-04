@@ -45,6 +45,8 @@ const EVENT: Record<string, { text: string; tone: "ok" | "warn" | "destructive" 
   "passkey-added": { text: "Passkey added", tone: "ok" },
   "passkey-removed": { text: "Passkey removed", tone: "warn" },
   "passkey-login": { text: "Signed in with a passkey", tone: "ok" },
+  stepup: { text: "Confirmed identity for a protected action", tone: "ok" },
+  "stepup-failed": { text: "Confirmation refused", tone: "warn" },
 }
 
 /** A user agent is unreadable. This says what it actually is. */

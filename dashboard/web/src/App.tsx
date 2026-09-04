@@ -6,6 +6,7 @@ import {
   HardDriveIcon,
   HeartPulseIcon,
   LayoutGridIcon,
+  CalendarClockIcon,
   LogOutIcon,
   MonitorIcon,
   MoonIcon,
@@ -27,6 +28,8 @@ import { LogsDialog } from "@/components/logs-dialog"
 import { NetworkTab } from "@/components/network-tab"
 import { ServicesTab } from "@/components/services-tab"
 import { StorageTab } from "@/components/storage-tab"
+import { MaintenanceTab } from "@/components/maintenance-tab"
+import { useStepup } from "@/components/stepup-dialog"
 import { SystemTab } from "@/components/system-tab"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -37,8 +40,10 @@ import {
   auth,
   UNAUTHENTICATED_EVENT,
   type Job,
+  type MaintenanceTaskName,
   type Overview,
   type Me,
+  type PowerMode,
   type RunAction,
   type Service,
   type ServiceAction,
@@ -54,6 +59,7 @@ const TABS = [
   { id: "storage", label: "Storage", icon: HardDriveIcon },
   { id: "network", label: "Network", icon: NetworkIcon },
   { id: "catalogue", label: "Catalogue", icon: LayoutGridIcon },
+  { id: "maintenance", label: "Maintenance", icon: CalendarClockIcon },
   { id: "system", label: "System", icon: MonitorIcon },
 ]
 
@@ -69,6 +75,9 @@ const OUTPUT_HAS_A_HOME = [
   "update-all",
   "cleanup",
   "cleanup-preview",
+  "backup",
+  "timemachine",
+  "os-upgrade",
 ]
 
 // Shown only once the dashboard has accounts of its own. Before that there is
@@ -186,6 +195,11 @@ function Dashboard({
   const [outputs, setOutputs] = React.useState<Record<string, string>>({})
   const [logs, setLogs] = React.useState<{ container: string; label: string } | null>(null)
   const [drill, setDrill] = React.useState<Consumer | null>(null)
+  const [powerBusy, setPowerBusy] = React.useState<PowerMode | null>(null)
+  // A step-up confirmation, shared by anything the server guards. guard()
+  // runs the action, and if the server asks for a factor it collects one and
+  // runs the same action again.
+  const { guard, dialog: stepupDialog } = useStepup(me)
 
   const state = usePoll(api.state, 30_000)
   // 15s while idle. An action refreshes it immediately when the job ends, so a
@@ -247,6 +261,39 @@ function Dashboard({
     } catch (e) {
       fail(`${action} ${svc.name}`, e)
     }
+  }
+
+  // One scheduled task, now. Its output lands in the Maintenance tab, which
+  // is where the schedule and the last outcome already are.
+  const runMaintenance = (task: MaintenanceTaskName) => {
+    setRunningAction(task)
+    setJobOwner(task)
+    setJob({ id: "", state: "running", label: task, output: "" })
+    // os-upgrade is the only one the server guards, so guard() is a no-op for
+    // the other three and prompts for exactly the one that needs it.
+    void guard(`Upgrading the operating system packages`, async () => {
+      setJob(await api.maintenance(task))
+    }).catch((e) => fail(task, e))
+  }
+
+  // Rebooting or shutting the machine down. The job panel carries the reply,
+  // and for a reboot the next poll failing is the machine actually going, so
+  // nothing here tries to hide that.
+  const runPower = (mode: PowerMode) => {
+    setJobOwner(null)
+    void guard(mode === "shutdown" ? "Shutting the machine down" : "Rebooting the machine", async () => {
+      setPowerBusy(mode)
+      setJob({ id: "", state: "running", label: mode, output: "" })
+      try {
+        setJob(await api.power(mode))
+      } catch (e) {
+        setPowerBusy(null)
+        throw e
+      }
+    }).catch((e) => {
+      setPowerBusy(null)
+      fail(mode, e)
+    })
   }
 
   // Box-wide commands: health, watchdog, network-check, route-list, doctor,
@@ -494,14 +541,26 @@ function Dashboard({
           <TabsContent value="account">
             <AccountTab me={me} refresh={refreshMe} />
           </TabsContent>
+          <TabsContent value="maintenance">
+            <MaintenanceTab
+              data={overview.data?.metrics?.maintenance ?? null}
+              outputs={outputs}
+              running={runningAction}
+              locked={locked}
+              onRun={runMaintenance}
+            />
+          </TabsContent>
           <TabsContent value="system">
             <SystemTab
               state={state.data}
               ports={ports.data ?? []}
+              metrics={overview.data?.metrics ?? null}
               outputs={outputs}
               running={runningAction}
               locked={locked}
+              powerBusy={powerBusy}
               onUpdateAll={() => runBox("update-all")}
+              onPower={runPower}
             />
           </TabsContent>
         </Tabs>
@@ -523,6 +582,8 @@ function Dashboard({
         label={logs?.label ?? ""}
         onClose={() => setLogs(null)}
       />
+
+      {stepupDialog}
     </div>
   )
 }

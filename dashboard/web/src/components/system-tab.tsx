@@ -1,9 +1,10 @@
 import { CpuIcon, DownloadIcon, KeyRoundIcon, PlugIcon, TerminalIcon } from "lucide-react"
 
 import { CommandPanel } from "@/components/command-panel"
+import { PowerCard } from "@/components/power-card"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table"
-import type { Port, State } from "@/lib/api"
+import type { Metrics, Port, PowerMode, State } from "@/lib/api"
 
 const COMMANDS: [string, string][] = [
   ["Service health", "corex manage status"],
@@ -14,6 +15,7 @@ const COMMANDS: [string, string][] = [
   ["Update every service", "corex manage update --all"],
   ["LAN fast path", "corex manage lan-setup"],
   ["Update CoreX itself", "corex update --force"],
+  ["Wake-on-LAN state", "corex manage power"],
 ]
 
 function Row({ k, v }: { k: string; v: string }) {
@@ -30,17 +32,23 @@ function Row({ k, v }: { k: string; v: string }) {
 export function SystemTab({
   state,
   ports,
+  metrics,
   outputs,
   running,
   locked,
+  powerBusy,
   onUpdateAll,
+  onPower,
 }: {
   state: State | null
   ports: Port[]
+  metrics: Metrics | null
   outputs: Record<string, string>
   running: string | null
   locked: boolean
+  powerBusy: PowerMode | null
   onUpdateAll: () => void
+  onPower: (mode: PowerMode) => void
 }) {
   const port = state?.ssh_port || "22"
   return (
@@ -95,6 +103,8 @@ export function SystemTab({
           </pre>
         </CardContent>
       </Card>
+
+      <PowerCard metrics={metrics} busy={powerBusy} onPower={onPower} />
 
       {ports.length > 0 && (
         <Card className="gap-0 py-0">

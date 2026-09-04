@@ -369,6 +369,8 @@ AUTH_EVENTS = {
     "password-changed", "password-reset", "reset-requested",
     "totp-enabled", "totp-disabled", "recovery-code-used",
     "passkey-added", "passkey-removed", "passkey-login",
+    "stepup", "stepup-failed",
+    "power-reboot", "power-shutdown",
     "locked-out",
 }
 

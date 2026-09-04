@@ -90,9 +90,30 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (!res.ok) {
     const msg = (body as { error?: string })?.error
+    if (
+      res.status === 403 &&
+      (body as { elevation_required?: boolean })?.elevation_required
+    ) {
+      throw new ElevationRequired(msg || "confirm who you are to continue")
+    }
     throw new Error(msg || `${res.status} ${res.statusText}`)
   }
   return body as T
+}
+
+/**
+ * The server refused because the session has not confirmed itself recently.
+ *
+ * It is a distinct type because a caller has to be able to tell it from a
+ * plain refusal: this one is answered by asking the operator for a factor and
+ * retrying, and any other 403 is not. A flag on the response body carries it,
+ * since the status code alone cannot say which kind of no this is.
+ */
+export class ElevationRequired extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "ElevationRequired"
+  }
 }
 
 function post<T>(path: string, body: unknown): Promise<T> {
@@ -119,6 +140,16 @@ export type Me = {
   totp_enabled: boolean
   recovery_left: number
   passkeys: number
+  // Seconds left on a step-up, and which factor granted it. Zero means the
+  // next protected action will ask.
+  elevated_for: number
+  elevated_by: string
+}
+
+export type Elevation = {
+  ok: boolean
+  elevated_for: number
+  elevated_by: string
 }
 
 export type SessionView = {
@@ -206,6 +237,15 @@ export const auth = {
   revoke: (opts: { id?: string; others?: boolean }) =>
     post<{ ok: boolean; dropped: number }>("/api/auth/sessions/revoke", opts),
   activity: () => req<ActivityRow[]>("/api/auth/activity"),
+  stepup: (body: { password?: string; code?: string }) =>
+    post<Elevation>("/api/auth/stepup", body),
+  stepupPasskeyBegin: () =>
+    post<{ ceremony: string; options: unknown }>(
+      "/api/auth/stepup/passkey/begin",
+      {}
+    ),
+  stepupPasskeyFinish: (ceremony: string, response: unknown) =>
+    post<Elevation>("/api/auth/stepup/passkey/finish", { ceremony, response }),
 }
 
 
@@ -288,6 +328,42 @@ export type Metrics = {
   monitors: Monitor[]
   smart: { device: string; status: string }[]
   dpkg: { clean: boolean; packages: string[] } | null
+  // Read with ethtool on the privileged side. An array, never null, so the
+  // client can map over it without a guard (gotcha #37).
+  wol: WakeOnLan[]
+  maintenance: Maintenance | null
+}
+
+export type MaintenanceTask = {
+  name: MaintenanceTaskName
+  label: string
+  description: string
+  enabled: boolean
+  interval_h: number
+  hour: number
+  // Unix seconds, 0 when it has never run. The page has to say "never" rather
+  // than draw a tick for something that has not happened.
+  last: number
+  next: number
+  state: "ok" | "failed" | "deferred" | ""
+  elapsed: number
+  detail: string
+}
+
+export type MaintenanceTaskName = "backup" | "cleanup" | "timemachine" | "os-upgrade"
+
+export type Maintenance = {
+  installed: boolean
+  timer_active: boolean
+  enabled: boolean
+  tasks: MaintenanceTask[]
+}
+
+export type WakeOnLan = {
+  interface: string
+  supported: boolean
+  enabled: boolean
+  modes: string
 }
 
 export type ContainerRow = {
@@ -330,6 +406,8 @@ export type Overview = {
   collected_at: string
 }
 
+export type PowerMode = "reboot" | "shutdown"
+
 export const api = {
   state: () => req<State>("/api/state"),
   services: () => req<Service[]>("/api/services"),
@@ -345,6 +423,13 @@ export const api = {
   job: (id: string) => req<Job>(`/api/job/${encodeURIComponent(id)}`),
   cleanup: (dryRun: boolean) =>
     req<Job>(`/api/cleanup${dryRun ? "?dry_run=1" : ""}`, { method: "POST" }),
+  // Behind a step-up confirmation on the server, so the first call of a
+  // session throws ElevationRequired and is retried after a factor.
+  power: (mode: PowerMode) => req<Job>(`/api/power/${mode}`, { method: "POST" }),
+  // os-upgrade is the one behind a step-up, so this can throw
+  // ElevationRequired for that task alone.
+  maintenance: (task: MaintenanceTaskName) =>
+    req<Job>(`/api/maintenance/${task}`, { method: "POST" }),
   logsURL: (container: string) => `/api/logs/${encodeURIComponent(container)}`,
   vitalsStreamURL: "/api/stream/vitals",
 }

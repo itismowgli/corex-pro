@@ -6,6 +6,109 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.20.0] - 2026-09-04
+
+### Added
+- **Confirm who you are before something that cannot be undone.**
+  `POST /api/auth/stepup` takes a password, a current TOTP code, or a passkey
+  assertion with user verification required, and marks the session confirmed
+  for five minutes. `requireElevated` sits beside `requireAuth` and guards
+  the routes that need it, answering 403 with an `elevation_required` flag so
+  the page can ask for a factor and retry rather than guess which kind of
+  refusal it got.
+
+  The passkey path is the one worth preferring, and the dialog says so: user
+  verification means the authenticator checked a fingerprint, a face or a PIN
+  just now, which proves someone is present. A password proves only that the
+  browser still remembers one. It is still accepted, including on an account
+  with two-factor enrolled, because a lost phone must not lock the operator
+  out of their own power button.
+
+  Confirmation is per browser, not per account: it is found by cookie, so
+  confirming on a laptop does not arm a phone. A password change closes the
+  window the old password opened. Every confirmation and every refusal lands
+  in the access log.
+
+- **Reboot and shut down, on the System tab.** Two new agent actions with
+  their own branch, absent from `ACTIONS` because they are not corex-manage
+  subcommands and absent from the Telegram bot on purpose: everything the bot
+  can reach is reversible, which is what makes a stolen chat account
+  survivable, and a poweroff is not.
+
+  Both refuse while another job is running, announce to Telegram before acting
+  rather than after (there is no after), and record who asked in the access
+  log. The command is delayed four seconds so the reply and the message get
+  out while there is still a network. Shutting down asks for the word
+  SHUTDOWN to be typed, and says in those words that nobody can turn the
+  machine on again from the network, including whoever is reading it.
+
+  A clean shutdown is worth having on this hardware regardless. The last time
+  this box went down it was a thermal trip at 93.5C with nothing flushed.
+
+- **Wake-on-LAN, and an honest account of the rest.** `corex manage power`
+  reads which interfaces can answer a magic packet and whether they are armed,
+  and `power wol on` arms them now and at every boot through
+  `corex-wol.service`, because ethtool writes to the driver and not to
+  anything persistent.
+
+  The dashboard cannot wake the box and never will: it runs on the machine and
+  the tunnel goes down with it. So the Power card names what does work, in
+  order, with a smart plug plus "restore on AC power loss" first, since it is
+  the only option that also recovers a hung machine. Shipping a shutdown
+  button without that is how someone locks themselves out of their own server.
+
+- **Scheduled maintenance.** `lib/maintenance.sh` installs one hourly timer
+  and a runner that decides what is due: a Restic backup daily, Docker cleanup
+  weekly, a Time Machine check weekly, and a supervised OS upgrade monthly if
+  it is turned on. One timer rather than four, because the tasks share a
+  machine that thermal trips: exactly one may run at a time, each is refused
+  above 85C, and that decision belongs in one place.
+
+  A task overdue by half its interval again runs at the next opportunity
+  instead of waiting for its hour, so a machine that is off overnight still
+  gets its backup.
+
+  The Maintenance tab reads the runner's own history rather than the schedule,
+  which is the whole point: a page showing only the schedule would report a
+  backup as configured on a box whose repository does not exist. A task that
+  has never run says so, a missing prerequisite is recorded as a failure, and
+  a run held back for temperature is neither of those. Failures go to
+  Telegram. Installing the timer also removes the v1 backup entry from root's
+  crontab, so the snapshot is not taken twice.
+
+  os-upgrade is off by default and is the one task behind a confirmation. It
+  is the only one here that can leave the machine unbootable: an unattended
+  kernel upgrade interrupted by a thermal trip is what left this box with
+  systemd unpacked and unconfigured.
+
+### Fixed
+- **The Restic repository now exists.** `/mnt/corex-data/backups/restic-repo`
+  had never been created, so the nightly cron had been logging "Is there a
+  repository at the following location?" and reporting "Backup complete" every
+  night since installation. There were no backups at all. Nothing in the
+  installer was wrong; the repository was simply never initialised on this
+  box, and nothing checked. The maintenance runner now treats a missing
+  repository as a failed run rather than a quiet success.
+
+### Changed
+- Root is 250GB rather than 100GB. It holds Docker's images and build cache on
+  a box where a local image build is routine, it was 60% full with 38GB free,
+  and 374GB of the NVMe was unallocated. `lvextend` plus `resize2fs`, live.
+  223GB is left unallocated for a future fast tier for the databases.
+- `corex manage agent show` lists the two power actions and the maintenance
+  task separately from the rest, and says why the bot cannot reach them.
+- The build checks grew a rule: a tab that mounts is not the same as a tab
+  that rendered its data, so `render-check.mjs` now asserts one substring per
+  tab that only a panel reading its fixture can produce. It also carries a
+  wake-on-LAN entry the hardware supports and nobody armed, and one
+  maintenance task of each outcome including one that has never run.
+- `test/e2e/dashboard-auth.sh` drives the confirmation gate: a power action
+  refused with the elevation flag, a wrong password that confirms nothing, a
+  right one that lets the action through, an unknown power action refused even
+  when confirmed, and a password change closing the window it opened.
+
+---
+
 ## [v3.19.0] - 2026-09-04
 
 ### Added

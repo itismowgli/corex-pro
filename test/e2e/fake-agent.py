@@ -1,7 +1,10 @@
 """A stand-in for corex-agent, so the login can be driven end to end.
 
-It answers only the three actions auth.go uses, holds the document in memory,
-and records what it was asked to mail.
+It answers the actions auth.go uses, holds the document in memory, and records
+what it was asked to mail. It also accepts reboot and shutdown without doing
+anything, which is how the step-up gate can be shown to open: the container
+this runs in has no systemd, and a test that really powered something off
+would be a poor test.
 """
 import json, os, socket, socketserver, sys, threading, time
 sys.path.insert(0, "/work")
@@ -10,6 +13,7 @@ import corex_users as cu
 DOC = {"version": 1, "rev": 0, "users": {}}
 MAILED = {}
 EVENTS = []
+POWERED = []
 TOKEN = open("/work/token").read().strip()
 LOCK = threading.Lock()
 
@@ -18,6 +22,10 @@ def handle(req):
     if req.get("token") != TOKEN:
         return {"ok": False, "error": "unauthorised"}
     action = req.get("action")
+    if action in ("reboot", "shutdown"):
+        POWERED.append(req)
+        return {"ok": True, "state": "done", "mode": action,
+                "output": "%s in 4 seconds" % action}
     if action == "auth-log":
         # The dashboard records every sign-in through the agent now. Answering
         # it keeps those calls from logging a failure on every attempt.

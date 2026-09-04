@@ -23,7 +23,9 @@ if [ "${IN_CONTAINER:-}" != "1" ]; then
     trap 'rm -rf "$work"' EXIT
     cp "$repo"/dashboard/main.go "$repo"/dashboard/auth.go \
        "$repo"/dashboard/overview.go "$repo"/dashboard/passkey.go \
-       "$repo"/dashboard/auth_test.go "$repo"/dashboard/go.mod \
+       "$repo"/dashboard/stepup.go \
+       "$repo"/dashboard/auth_test.go "$repo"/dashboard/stepup_test.go \
+       "$repo"/dashboard/go.mod \
        "$repo"/dashboard/go.sum "$repo"/agent/corex_users.py "$work/"
     cp "$repo"/test/e2e/fake-agent.py "$work/fakeagent.py"
     cp "$repo"/test/e2e/dashboard-auth.sh "$work/run.sh"
@@ -141,10 +143,46 @@ req -X POST -d '{"username":"operator","password":"a-new-long-password"}' http:/
 CODE=$(req -X POST -d "{\"code\":\"$RECOVERY2\"}" http://127.0.0.1:8080/api/auth/totp)
 echo "$CODE $(cat /tmp/body)"; [ "$CODE" = "200" ] || { echo FAIL; exit 1; }
 
+# ── Step-up ───────────────────────────────────────────────────────────────────
+#
+# The gate that decides whether a web page can switch the machine off. A gate
+# that never refuses looks exactly like one that works from the outside, which
+# is the whole reason these four checks exist rather than a unit test alone.
+
+say "a signed-in session cannot reach a power action without confirming"
+CODE=$(req -X POST http://127.0.0.1:8080/api/power/reboot)
+echo "$CODE $(cat /tmp/body)"; [ "$CODE" = "403" ] || { echo FAIL; exit 1; }
+grep -q '"elevation_required":true' /tmp/body || \
+  { echo "FAIL: the refusal did not say elevation was the reason"; exit 1; }
+
+say "a wrong password does not confirm anything"
+CODE=$(req -X POST -d '{"password":"nope"}' http://127.0.0.1:8080/api/auth/stepup)
+echo "$CODE $(cat /tmp/body)"; [ "$CODE" = "401" ] || { echo FAIL; exit 1; }
+CODE=$(req -X POST http://127.0.0.1:8080/api/power/reboot)
+echo "still refused: $CODE"; [ "$CODE" = "403" ] || { echo FAIL; exit 1; }
+
+say "the right password confirms, and the power action goes through"
+CODE=$(req -X POST -d '{"password":"a-new-long-password"}' http://127.0.0.1:8080/api/auth/stepup)
+echo "$CODE $(cat /tmp/body)"; [ "$CODE" = "200" ] || { echo FAIL; exit 1; }
+grep -q '"elevated_by":"password"' /tmp/body || { echo FAIL; exit 1; }
+CODE=$(req -X POST http://127.0.0.1:8080/api/power/reboot)
+echo "$CODE $(cat /tmp/body)"; [ "$CODE" = "200" ] || { echo FAIL; exit 1; }
+
+say "an unknown power action is not reachable even when confirmed"
+CODE=$(req -X POST http://127.0.0.1:8080/api/power/nuke)
+echo "$CODE $(cat /tmp/body)"; [ "$CODE" = "404" ] || { echo FAIL; exit 1; }
+
+say "changing the password closes the window it opened"
+CODE=$(req -X POST -d '{"current":"a-new-long-password","new":"third-long-password"}' \
+  http://127.0.0.1:8080/api/auth/password)
+echo "$CODE $(cat /tmp/body)"; [ "$CODE" = "200" ] || { echo FAIL; exit 1; }
+CODE=$(req -X POST http://127.0.0.1:8080/api/power/shutdown)
+echo "$CODE $(cat /tmp/body)"; [ "$CODE" = "403" ] || { echo FAIL; exit 1; }
+
 say "no new session can be created without the store, even inside the cache window"
 pkill -f fakeagent.py; sleep 1
 CODE=$(curl -s -o /tmp/body -w '%{http_code}' -H 'Content-Type: application/json' \
-  -X POST -d '{"username":"operator","password":"a-new-long-password"}' http://127.0.0.1:8080/api/auth/login)
+  -X POST -d '{"username":"operator","password":"third-long-password"}' http://127.0.0.1:8080/api/auth/login)
 echo "$CODE $(cat /tmp/body)"; [ "$CODE" = "503" ] || { echo FAIL; exit 1; }
 
 say "and once the cached answer expires, an existing session is refused too"

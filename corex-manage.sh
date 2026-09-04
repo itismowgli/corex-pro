@@ -2212,6 +2212,14 @@ cmd_agent() {
             echo "    watchdog network-check route-list doctor"
             echo "    users-get users-put auth-reset  (the dashboard's login)"
             echo "    metrics  (temp, disks, series, monitors, SMART, as data)"
+            echo ""
+            echo "    maintenance  (run one scheduled task now: backup, cleanup,"
+            echo "                  timemachine, os-upgrade)"
+            echo ""
+            echo "  Dashboard only, after confirming a password, code or passkey:"
+            echo "    reboot shutdown"
+            echo "  The Telegram bot cannot reach those two on purpose: everything"
+            echo "  it can do is reversible, and a poweroff is not."
             echo "  Deliberately not reachable: remove, replace, add, migrate, nuke."
             echo ""
             if [[ -r /var/log/corex-agent.log ]]; then
@@ -2224,6 +2232,64 @@ cmd_agent() {
 
         *)
             log_error "Usage: corex manage agent [show|setup|test]"
+            ;;
+    esac
+}
+
+# ── maintenance ───────────────────────────────────────────────────────────────
+cmd_maintenance() {
+    source "${SCRIPT_DIR}/lib/maintenance.sh"
+    local sub="${1:-show}"
+    shift || true
+
+    case "$sub" in
+        show|"")  maintenance_show ;;
+        setup)    maintenance_install; maintenance_show ;;
+        run)
+            [[ -x /usr/local/bin/corex-maintenance.sh ]] \
+                || log_error "Not installed. Run: corex manage maintenance setup"
+            if [[ -n "${1:-}" ]]; then
+                case "$1" in
+                    backup|cleanup|timemachine|os-upgrade) ;;
+                    *) log_error "Unknown task: $1 (backup, cleanup, timemachine, os-upgrade)" ;;
+                esac
+                log_info "Running ${1} now, whether or not it is due"
+                /usr/local/bin/corex-maintenance.sh "$1"
+            else
+                log_info "Running whatever is due"
+                /usr/local/bin/corex-maintenance.sh
+            fi
+            maintenance_show
+            ;;
+        *)
+            log_error "Usage: corex manage maintenance [show|setup|run [task]]"
+            ;;
+    esac
+}
+
+# ── power ─────────────────────────────────────────────────────────────────────
+#
+# Reads and arms wake-on-LAN. Switching the machine off lives in the dashboard
+# behind a step-up confirmation, not here: the shell already has systemctl.
+cmd_power() {
+    source "${SCRIPT_DIR}/lib/power.sh"
+    local sub="${1:-show}"
+    shift || true
+
+    case "$sub" in
+        show|"")
+            power_show
+            ;;
+        wol)
+            case "${1:-show}" in
+                on|enable)  power_wol_enable ;;
+                off|disable) power_wol_disable ;;
+                show|"")    power_show ;;
+                *) log_error "Usage: corex manage power wol [on|off]" ;;
+            esac
+            ;;
+        *)
+            log_error "Usage: corex manage power [show|wol on|wol off]"
             ;;
     esac
 }
@@ -2362,6 +2428,14 @@ Commands:
                         agent setup    install the agent and the Telegram bot
                         agent test     prove the socket works, including from
                                        inside the dashboard container
+  maintenance [sub]   Scheduled backup, cleanup and checks, and what each one did
+                        maintenance          show the schedule and the last outcome
+                        maintenance setup    install the hourly timer
+                        maintenance run [t]  run one task now, or whatever is due
+  power [sub]         Wake-on-LAN, and how this machine gets switched back on
+                        power          show what is armed and what is not
+                        power wol on   arm the NIC, now and at every boot
+                        power wol off  stop it waking on a magic packet
   kuma-seed           Create the Uptime Kuma HTTP checks each installed module
                       declares, adopting any monitor of the same name
   watchdog [sub]      Resource alerting: temp, load, RAM, disk, container health
@@ -2450,6 +2524,8 @@ main() {
         watchdog)     cmd_watchdog "$@" ;;
         kuma-seed)    kuma_seed_http_monitors ;;
         agent)        cmd_agent "$@" ;;
+        power)        cmd_power "$@" ;;
+        maintenance)  cmd_maintenance "$@" ;;
         dashboard-user) cmd_dashboard_user "$@" ;;
         route)        cmd_route "$@" ;;
         help|--help|-h) cmd_help ;;
