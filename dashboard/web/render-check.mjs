@@ -120,15 +120,29 @@ const METRICS = {
   // One of each outcome on purpose: a task that has never run must not draw a
   // tick, a failure has to be legible, and a task held back for temperature
   // is neither of those.
+  // Two of the three states the check can be in, including the one it must
+  // never hide the Update button for.
+  updates: {
+    checked_at: 1788410000,
+    checking: false,
+    services: {
+      nextcloud: { service: "nextcloud", state: "update", note: "34 now points at sha256:9f1c2a", images: [{ image: "nextcloud:34", state: "update", note: "34 now points at sha256:9f1c2a" }] },
+      traefik: { service: "traefik", state: "current", note: "v3.6 is current", images: [{ image: "traefik:v3.6", state: "current", note: "v3.6 is current" }] },
+      immich: { service: "immich", state: "unknown", note: "could not ask ghcr.io about release", images: [] },
+      coolify: { service: "coolify", state: "stale-tag", note: "latest is current but has not been rebuilt in 310 days", images: [], },
+    },
+  },
   maintenance: {
     installed: true,
     timer_active: true,
     enabled: true,
     tasks: [
-      { name: "backup", label: "Backup", description: "Restic snapshot.", enabled: true, interval_h: 24, hour: 3, last: 1788400000, next: 1788486400, state: "ok", elapsed: 412, detail: "latest snapshot 2026-09-04T03:07:11+05:30" },
-      { name: "cleanup", label: "Docker cleanup", description: "Prune unused images.", enabled: true, interval_h: 168, hour: 4, last: 1788300000, next: 1788904800, state: "failed", elapsed: 9, detail: "cannot find corex-manage.sh" },
-      { name: "timemachine", label: "Time Machine check", description: "Share and restart count.", enabled: true, interval_h: 168, hour: 5, last: 1788350000, next: 1788954800, state: "deferred", elapsed: 0, detail: "deferred, CPU at 91C" },
-      { name: "os-upgrade", label: "OS packages", description: "Supervised apt upgrade.", enabled: false, interval_h: 720, hour: 4, last: 0, next: 0, state: "", elapsed: 0, detail: "" },
+      { name: "backup", label: "Backup", description: "Restic snapshot.", enabled: true, interval_h: 24, hour: 3, last: 1788400000, next: 1788486400, state: "ok", elapsed: 412, detail: "latest snapshot 2026-09-04T03:07:11+05:30", deferred_at: 0, deferred_detail: "" },
+      { name: "cleanup", label: "Docker cleanup", description: "Prune unused images.", enabled: true, interval_h: 168, hour: 4, last: 1788300000, next: 1788904800, state: "failed", elapsed: 9, detail: "cannot find corex-manage.sh", deferred_at: 0, deferred_detail: "" },
+      // Ran a week ago and was declined this morning: the row has to show
+      // both, and the deferral must not read as the last run.
+      { name: "timemachine", label: "Time Machine check", description: "Share and restart count.", enabled: true, interval_h: 168, hour: 5, last: 1788350000, next: 1788954800, state: "ok", elapsed: 3, detail: "running=true restarts=0", deferred_at: 1788420000, deferred_detail: "deferred, CPU at 91C" },
+      { name: "os-upgrade", label: "OS packages", description: "Supervised apt upgrade.", enabled: false, interval_h: 720, hour: 4, last: 0, next: 0, state: "", elapsed: 0, detail: "", deferred_at: 0, deferred_detail: "" },
     ],
   },
 }
@@ -221,7 +235,9 @@ function mount(url, me, withData = true, width = 1280) {
 const EXPECT = {
   system: "enp2s0",
   maintenance: "Never run",
-  services: "Nextcloud",
+  // Not just the card: the sentence the check writes above the grid, which
+  // only appears when an update payload arrived.
+  services: "Update available",
   catalogue: "Gitea",
 }
 

@@ -43,8 +43,6 @@ function outcome(t: MaintenanceTask): { text: string; tone: "ok" | "warn" | "des
       return { text: "Last run worked", tone: "ok" }
     case "failed":
       return { text: "Last run failed", tone: "destructive" }
-    case "deferred":
-      return { text: "Held back, too hot", tone: "warn" }
     default:
       return { text: "Outcome not recorded", tone: "secondary" }
   }
@@ -205,6 +203,15 @@ export function MaintenanceTab({
                   }
                 >
                   {t.detail}
+                </p>
+              )}
+
+              {/* A refusal to start is its own thing, shown only when it is
+                  the most recent event. It does not reset the clock, so the
+                  row above still describes the last time this really ran. */}
+              {t.deferred_at > t.last && (
+                <p className="text-warn text-xs break-words">
+                  Held back {when(t.deferred_at)}: {t.deferred_detail || "the machine was too hot"}
                 </p>
               )}
 

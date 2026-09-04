@@ -33,6 +33,8 @@ import subprocess
 import threading
 import time
 
+import corex_updates as cu_updates
+
 BLACKBOX = "/mnt/corex-data/blackbox.log"
 WATCHDOG_LOG = "/var/log/corex-watchdog.log"
 THERMAL_CONF = "/etc/corex/thermal.conf"
@@ -504,6 +506,11 @@ def maintenance():
             "state": str(row.get("state", "") or ""),
             "elapsed": int(row.get("elapsed", 0) or 0),
             "detail": str(row.get("detail", "") or ""),
+            # A refusal to start is not a run and does not reset the clock, so
+            # it is reported on its own. Newer than "last" means the last
+            # thing that happened to this task was being declined.
+            "deferred_at": int(row.get("deferred_at", 0) or 0),
+            "deferred_detail": str(row.get("deferred_detail", "") or ""),
         })
 
     return {
@@ -602,4 +609,9 @@ def collect(want_sizes=True):
         "dpkg": dpkg_clean(),
         "wol": wake_on_lan(),
         "maintenance": maintenance(),
+        # Behind want_sizes for the same reason the `du` is: the vitals stream
+        # asks for metrics every five seconds and neither of these changes on
+        # that timescale. The cache is a file read; what is being avoided is
+        # arming a background registry sweep from the fast path.
+        "updates": cu_updates.updates() if want_sizes else None,
     }

@@ -498,6 +498,7 @@ function Dashboard({
           <TabsContent value="services">
             <ServicesTab
               services={svcList}
+              updates={overview.data?.metrics?.updates ?? null}
               loading={services.loading}
               busy={busy}
               locked={locked}

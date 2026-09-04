@@ -193,6 +193,14 @@ except Exception:
 PYEOF
 }
 
+# A run and a deferral are recorded separately, and that is not tidiness.
+#
+# Writing "last" on a deferral was measured doing real harm on the first hot
+# hour after this shipped: the timer found the backup due, the CPU was at 86C,
+# it declined, and stamping the attempt as the last run meant due() would not
+# ask again for a day. A refusal to start is not a run, so it must not reset
+# the clock, and the page has to be able to say which of the two it is
+# looking at.
 state_record() {
     python3 - "$STATE" "$1" "$2" "$3" "$4" "$5" << 'PYEOF'
 import json, os, sys, time
@@ -202,15 +210,22 @@ try:
         doc = json.load(fh)
 except Exception:
     doc = {}
-doc.setdefault("tasks", {})[task] = {
-    "last": int(time.time()),
-    "state": state,
-    "rc": int(rc),
-    "elapsed": int(elapsed),
-    # Enough to say what happened, not a transcript. The full output is in the
-    # log next door, and this document is served to a web page.
-    "detail": detail[:400],
-}
+row = doc.setdefault("tasks", {}).setdefault(task, {})
+now = int(time.time())
+if state == "deferred":
+    row["deferred_at"] = now
+    # Enough to say why, not a transcript.
+    row["deferred_detail"] = detail[:200]
+else:
+    row.update({
+        "last": now,
+        "state": state,
+        "rc": int(rc),
+        "elapsed": int(elapsed),
+        # The full output is in the log next door, and this document is
+        # served to a web page.
+        "detail": detail[:400],
+    })
 tmp = path + ".tmp"
 with open(tmp, "w") as fh:
     json.dump(doc, fh, sort_keys=True, indent=1)
@@ -475,10 +490,18 @@ except Exception:
 if not row:
     print("    Never run.")
     raise SystemExit(0)
-when = datetime.datetime.fromtimestamp(row.get("last", 0)).strftime("%Y-%m-%d %H:%M")
-state = row.get("state", "?")
-mark = {"ok": "[  OK]", "failed": "[FAIL]", "deferred": "[WARN]"}.get(state, "[    ]")
-print("    %s last run %s in %ss: %s" % (mark, when, row.get("elapsed", 0),
-                                         row.get("detail", "")))
+last = int(row.get("last", 0) or 0)
+if not last:
+    print("    Never run.")
+else:
+    when = datetime.datetime.fromtimestamp(last).strftime("%Y-%m-%d %H:%M")
+    state = row.get("state", "?")
+    mark = {"ok": "[  OK]", "failed": "[FAIL]"}.get(state, "[    ]")
+    print("    %s last run %s in %ss: %s" % (mark, when, row.get("elapsed", 0),
+                                             row.get("detail", "")))
+held = int(row.get("deferred_at", 0) or 0)
+if held > last:
+    when = datetime.datetime.fromtimestamp(held).strftime("%Y-%m-%d %H:%M")
+    print("    [WARN] held back at %s: %s" % (when, row.get("deferred_detail", "")))
 PYEOF
 }

@@ -943,6 +943,29 @@ recognising elsewhere in the codebase:
   was logged either way, so a rate limit or an expired tag looked exactly like
   an update.
 
+`agent/corex_updates.py` answers the question properly now, per service and
+cached for a day, and three details in it were wrong on the first pass and are
+worth keeping right:
+
+- **Only ask when a tag was ever meant to move.** The freshness check reported
+  Cal.com's deliberately pinned `v6.2.0` as a problem after 186 quiet days,
+  which is exactly backwards: never being rebuilt is what pinning is for. A
+  tag is treated as moving when it is a word (`latest`, `stable`, `release`,
+  `main`) or a version with a part left off (`34`, `v3.6`), and as fixed when
+  it is a full three-part version.
+- **Docker Hub answers 401, not 404, for a repository that is not there.** So
+  an absent repository and a private one look identical, and both look like a
+  locally built image, which is what `corex-dashboard:local` is. Reporting
+  that as "could not ask the registry" sends the reader to check their
+  network. It is reported as built here.
+- **Naming one image out of five reads as though the other four were skipped.**
+  A stack that is entirely current says "all 5 images are current".
+
+"unknown" is a real answer and is shown as one. The Update button is hidden
+only when the check is confident nothing has moved: a registry that could not
+be reached leaves the button where it was, because removing a working control
+over a network blip is worse than an extra button.
+
 ### 20. Nextcloud gets stuck in maintenance mode, serving HTTP 503
 
 `occ upgrade` finishes by printing **"Maintenance mode is kept active"** and

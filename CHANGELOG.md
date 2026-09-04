@@ -81,7 +81,39 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
   kernel upgrade interrupted by a thermal trip is what left this box with
   systemd unpacked and unconfigured.
 
+- **Update is only offered when there is one.** `agent/corex_updates.py`
+  compares every image in a service against its registry, once a day, on a
+  background thread, and the Services tab shows "Update available" with what
+  moved. A card the check is confident about loses the button and says the tag
+  is current.
+
+  The previous attempt at this had two bugs and both were easy to repeat. It
+  read `config --images | head -1`, which is one image out of a stack that may
+  ship five, and the one at the top was usually node-exporter. And it compared
+  a local `RepoDigest` against a per-platform entry from `docker manifest
+  inspect`, which are different digests by construction, so nothing ever
+  matched. Every image is checked, and the registry is asked for the index
+  digest with the index media types in the Accept header, which is the same
+  thing the local image records.
+
+  A third failure mode no digest comparison can see is a tag that has stopped
+  moving. Where the registry will say when a tag was last built, that is read
+  too, and a moving tag nobody has rebuilt in six months is its own state
+  rather than being reported as current. Only tags that were meant to move are
+  asked: a pinned `v6.2.0` is supposed to sit still, and calling that stale is
+  the kind of noise that teaches people to ignore a badge.
+
+  "unknown" is shown as itself. A registry that could not be reached leaves
+  the Update button exactly where it was.
+
 ### Fixed
+- **A deferred maintenance run no longer counts as a run.** Measured on the
+  first hot hour after the timer shipped: the backup came due during a
+  dashboard rebuild, the CPU was at 86C, the runner correctly declined, and
+  stamping the attempt as the last run meant it would not ask again for a day.
+  A refusal to start is recorded separately, does not reset the clock, and the
+  Maintenance tab shows it as its own line under the last real outcome.
+
 - **The Restic repository now exists.** `/mnt/corex-data/backups/restic-repo`
   had never been created, so the nightly cron had been logging "Is there a
   repository at the following location?" and reporting "Backup complete" every

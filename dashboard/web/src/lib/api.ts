@@ -332,6 +332,38 @@ export type Metrics = {
   // client can map over it without a guard (gotcha #37).
   wol: WakeOnLan[]
   maintenance: Maintenance | null
+  // null on the fast vitals stream, which does not carry it.
+  updates: Updates | null
+}
+
+/**
+ * Whether an update is actually waiting, per service.
+ *
+ * "unknown" is a real answer and is shown as one. A registry that could not be
+ * reached must not read as either good or bad news, and hiding the Update
+ * button on a failed lookup would take a working button away over a network
+ * blip.
+ */
+export type UpdateState = "update" | "stale-tag" | "unknown" | "current" | "pinned"
+
+export type ImageUpdate = {
+  image: string
+  state: UpdateState
+  note: string
+  age_days?: number
+}
+
+export type ServiceUpdate = {
+  service: string
+  state: UpdateState
+  note: string
+  images: ImageUpdate[]
+}
+
+export type Updates = {
+  checked_at: number
+  checking: boolean
+  services: Record<string, ServiceUpdate>
 }
 
 export type MaintenanceTask = {
@@ -345,9 +377,14 @@ export type MaintenanceTask = {
   // than draw a tick for something that has not happened.
   last: number
   next: number
-  state: "ok" | "failed" | "deferred" | ""
+  state: "ok" | "failed" | ""
   elapsed: number
   detail: string
+  // A refusal to start is not a run, so it is recorded separately and does not
+  // reset the clock. Newer than `last` means the last thing that happened was
+  // being declined, usually for temperature.
+  deferred_at: number
+  deferred_detail: string
 }
 
 export type MaintenanceTaskName = "backup" | "cleanup" | "timemachine" | "os-upgrade"
