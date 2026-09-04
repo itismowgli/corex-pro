@@ -512,6 +512,23 @@ AdGuard changes its internal port after the setup wizard: before wizard = 3000,
 after wizard = 80. The install script detects this by reading
 `adguard-conf/AdGuardHome.yaml`. Always read the config file, never hardcode.
 
+Reading it is fussier than it looks, and the naive version fails silently in
+the worst possible direction. `grep -A5 "http:"` used to reach the `address:`
+line and does not any more: current AdGuard writes a `pprof` block and a `doh`
+routes list inside `http:` first, so `address:` is eleven lines down. The
+window missed it, the fallback was 3000, and the generated mapping was
+`3000:3000` against a container listening on 80. The admin panel simply
+stopped answering, on a service that is also the DNS.
+
+`corex manage lan-setup` was fixed for exactly this in v2.1.1 and the module's
+own copy was not, which is the real lesson: the same parse existed twice. It
+now matches the line at its own indentation, so it cannot be confused with a
+`bind_hosts` or bootstrap entry elsewhere in the file:
+
+```bash
+sed -n '/^http:/,/^[a-z_]/p' "$yaml" | grep -m1 '^  address:' | grep -oE '[0-9]+$'
+```
+
 ### 2. Portainer over HTTPS to Traefik
 
 Portainer listens on 9443 with HTTPS internally. Traefik must be told to use
@@ -1774,6 +1791,27 @@ never be the only way to reach the thing that serves it.
 emails the registration link. With no relay configured, a `two_factor` policy
 locks the operator out of the portal with no way to enrol a device, so the
 policy drops to `one_factor` and notifications go to a file the deploy names.
+
+**The thing that actually broke it: Traefik ignores a container that is not
+healthy.** Every self-hosting guide gives Authelia the healthcheck
+`authelia healthcheck`. Version 4.39 has no such subcommand, so it answered
+`unknown command "healthcheck"` and exited 1 forever, which is gotcha #19's
+corollary again: never assume a binary or a subcommand exists in an upstream
+image. The container stayed in `health: starting` and Traefik's Docker
+provider filters on health, so Authelia was absent from `/api/rawdata`
+entirely, the middleware its labels define did not exist, and the error
+Traefik reported named the wrong services:
+
+```
+middleware "authelia@docker" does not exist   routerName=n8n@docker
+```
+
+Four hostnames answered 404 and nothing anywhere pointed at the healthcheck.
+The endpoint that does work is `GET /api/health`, which returns
+`{"status":"OK"}`, and `wget` is in the image. Two rules follow: probe a
+healthcheck by hand in the running container before trusting it, and read
+"middleware does not exist" as a question about the container that defines it
+rather than the ones that reference it.
 
 ### 45. There were no backups, and the log said there were
 

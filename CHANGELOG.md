@@ -140,6 +140,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
   factor would lock the operator out with no way to enrol a device, so it
   drops to one and notifications are written to a file the deploy names.
 
+  The healthcheck is `GET /api/health` and not `authelia healthcheck`, which
+  every self-hosting guide suggests and 4.39 does not have. That was not a
+  cosmetic detail: Traefik's Docker provider ignores a container that is not
+  healthy, so a check that could never pass made Authelia invisible to
+  Traefik, the middleware its labels define did not exist, and three hostnames
+  answered 404 while the error named them rather than the container that was
+  missing.
+
 ### Fixed
 - **There were no backups, and there could not have been.** Two faults, either
   of which was enough on its own, and both silent.
@@ -159,6 +167,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
   `corex manage maintenance setup` rewrites the generated scripts rather than
   trusting whatever is installed, because a box from before v2.5.0 also has
   the Restic password written into a world-readable file.
+
+- **AdGuard's admin port was read with a window too small to reach it.**
+  `grep -A5 "http:"` no longer finds `address:` in `AdGuardHome.yaml`, because
+  current AdGuard writes a `pprof` block and a `doh` routes list in there
+  first and the line is eleven down. The fallback was 3000, so the generated
+  mapping was `3000:3000` against a container listening on 80 and the admin
+  panel stopped answering. `lan-setup` was fixed for this in v2.1.1; the
+  module had its own copy of the parse, which was not.
 
 - **`repair adguard` never rewrote resolv.conf after the first install.** The
   installer sets the immutable bit on `/etc/resolv.conf` (gotcha #7) and the

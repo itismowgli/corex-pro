@@ -321,11 +321,28 @@ UDEOF
 
 authelia_dirs() {
     mkdir -p "${DOCKER_ROOT}/authelia"
-    # The image runs as 1000:1000, and it writes its database and, on a
-    # password reset, the users file. A directory it cannot write leaves the
-    # container up and the portal answering 500 on sign-in.
-    chown -R 1000:1000 "${DOCKER_ROOT}/authelia"
+    # The image runs as 1000:1000 and writes its database there, and the users
+    # file too on a password reset. Only the directory, not everything in it:
+    # .secrets and .admin-password stay root-only, and the two files the
+    # container has to read get their ownership set as they are written.
+    chown 1000:1000 "${DOCKER_ROOT}/authelia"
     chmod 750 "${DOCKER_ROOT}/authelia"
+}
+
+# Ownership for the two files the container reads.
+#
+# Both are written by root, and root writing into a directory owned by 1000
+# leaves a file the container cannot open. Authelia reports that as
+# "permission denied" on the config path and then lists every option it
+# therefore thinks is missing, so the real fault is one line above a screen of
+# consequences. 640 rather than 644 because the config carries three secrets.
+_authelia_own() {
+    local f
+    for f in configuration.yml users_database.yml; do
+        [[ -f "${DOCKER_ROOT}/authelia/${f}" ]] || continue
+        chown 1000:1000 "${DOCKER_ROOT}/authelia/${f}"
+        chmod 640 "${DOCKER_ROOT}/authelia/${f}"
+    done
 }
 
 authelia_firewall() {
@@ -352,10 +369,24 @@ services:
     networks: [proxy-net]
     security_opt: ["no-new-privileges:true"]
     healthcheck:
-      test: ["CMD", "authelia", "healthcheck"]
+      # The HTTP endpoint, not \`authelia healthcheck\`, which every
+      # self-hosting guide suggests and which 4.39 does not have: it answers
+      # \`unknown command "healthcheck"\` and exits 1 forever.
+      #
+      # That mattered far more than a red dot. Traefik's Docker provider
+      # ignores a container whose health is anything other than healthy, so a
+      # check that can never pass makes the container invisible to Traefik.
+      # The middleware defined by its labels then does not exist, and the
+      # error Traefik reports names the four services that reference it rather
+      # than the one that is missing:
+      #
+      #   middleware "authelia@docker" does not exist   routerName=n8n@docker
+      #
+      # Four hostnames answered 404 and nothing pointed at this line.
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9091/api/health"]
       interval: 30s
       timeout: 5s
-      retries: 5
+      retries: 3
       start_period: 20s
     deploy:
       resources:
@@ -398,6 +429,7 @@ authelia_deploy() {
     _authelia_conf_file
     _authelia_write_config
     _authelia_write_users || true
+    _authelia_own
     _authelia_write_compose
 
     docker compose -f "${dir}/docker-compose.yml" up -d \
@@ -466,11 +498,16 @@ authelia_status() {
     if ! container_exists "authelia"; then echo "MISSING"; return 0; fi
     if ! container_running "authelia"; then echo "UNHEALTHY"; return 0; fi
     # A running Authelia proves nothing on its own, the same way a running
-    # Stalwart did not (gotcha #23). If the portal cannot answer, four
-    # hostnames are refusing every request.
-    local code
-    code="$(docker exec authelia authelia healthcheck >/dev/null 2>&1 && echo ok || echo fail)"
-    if [[ "$code" != "ok" ]]; then echo "UNHEALTHY"; return 0; fi
+    # Stalwart did not (gotcha #23). If the portal cannot answer, every
+    # hostname behind it is refusing every request.
+    docker exec authelia wget -q --spider http://localhost:9091/api/health >/dev/null 2>&1 \
+        || { echo "UNHEALTHY"; return 0; }
+    # And Traefik drops a container that is not healthy, so an unhealthy
+    # Authelia is not merely a portal that is down: it takes the middleware
+    # with it and the protected routers start answering 404.
+    if ! docker inspect -f '{{.State.Health.Status}}' authelia 2>/dev/null | grep -q '^healthy$'; then
+        echo "UNHEALTHY"; return 0
+    fi
     echo "HEALTHY"
 }
 

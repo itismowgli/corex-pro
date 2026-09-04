@@ -62,18 +62,34 @@ adguard_deploy() {
     # Lock again so systemd-resolved cannot overwrite it on reboot.
     chattr +i /etc/resolv.conf 2>/dev/null || true
 
-    # Detect if AdGuard has already been configured (setup wizard completed)
+    # AdGuard moves its own admin port from 3000 to 80 once the setup wizard
+    # has run, so the port has to be read from its config and never assumed.
+    #
+    # Reading it is fussier than it looks. `grep -A5 "http:"` used to be
+    # enough and is not any more: current AdGuard writes pprof and a doh
+    # routes list inside the http block first, so `address:` is eleven lines
+    # down and the window missed it. The fallback was 3000, which produced a
+    # `3000:3000` mapping against a container listening on 80, and the admin
+    # panel simply stopped answering on the LAN. `corex manage lan-setup` was
+    # fixed for this in v2.1.1; this copy was not.
+    #
+    # The address line is matched at its own indentation, two spaces, so it is
+    # a direct child of http: and cannot be confused with bind_hosts or a
+    # bootstrap entry elsewhere in the file.
     local ADGUARD_INTERNAL_PORT="3000"
-    if [[ -f "${DATA_ROOT}/adguard-conf/AdGuardHome.yaml" ]]; then
+    local yaml="${DATA_ROOT}/adguard-conf/AdGuardHome.yaml"
+    if [[ -f "$yaml" ]]; then
         local CONFIGURED_PORT
-        CONFIGURED_PORT=$(grep -A5 "http:" "${DATA_ROOT}/adguard-conf/AdGuardHome.yaml" \
-            | grep "address:" | grep -oP ':\K[0-9]+' | head -1)
+        CONFIGURED_PORT=$(sed -n '/^http:/,/^[a-z_]/p' "$yaml" \
+            | grep -m1 '^  address:' | grep -oE '[0-9]+$')
         if [[ -n "$CONFIGURED_PORT" ]]; then
             ADGUARD_INTERNAL_PORT="$CONFIGURED_PORT"
-            log_info "AdGuard already configured — internal port is $ADGUARD_INTERNAL_PORT"
+            log_info "AdGuard already configured, internal port is $ADGUARD_INTERNAL_PORT"
+        else
+            log_warning "Could not read the admin port from ${yaml}, assuming 3000"
         fi
     else
-        log_info "AdGuard first run — wizard will listen on port 3000"
+        log_info "AdGuard first run, the wizard will listen on port 3000"
     fi
 
     # AdGuard gets a Traefik router so the shared login can be put in front
