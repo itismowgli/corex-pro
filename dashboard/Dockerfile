@@ -62,7 +62,11 @@ WORKDIR /build
 # that is the single place a library beats standard library here.
 COPY go.mod go.sum ./
 RUN go mod download
-COPY main.go auth.go overview.go passkey.go auth_test.go ./
+# A glob, not a list. Naming each file meant adding stepup.go to the tree and
+# building an image without it, which failed on `undefined: elevationLeft`
+# rather than on anything to do with the missing copy. Nothing in the build
+# context matches *.go except this package and its tests.
+COPY *.go ./
 COPY --from=web /web/dist ./web/dist
 
 # The tests run here, not somewhere else, for the same reason the frontend's

@@ -351,7 +351,9 @@ cmd_add() {
     log_step "Adding service: ${svc}"
     _run_service_fn "$svc" "dirs"
     _run_service_fn "$svc" "firewall"
-    _run_service_fn "$svc" "deploy"
+    if ! _run_service_fn "$svc" "deploy"; then
+        log_error "${svc} was not deployed. Look above for why."
+    fi
     log_success "${svc} added successfully."
 }
 
@@ -755,7 +757,7 @@ cmd_repair() {
     local svc="${1:-}"
     if [[ -z "$svc" ]]; then
         # Repair all unhealthy installed services
-        local repaired=0
+        local repaired=0 failed=0
         local sv
         while IFS= read -r sv; do
             [[ -z "$sv" ]] && continue
@@ -776,16 +778,32 @@ cmd_repair() {
             status=$("$status_fn")
             if [[ "$status" != "HEALTHY" ]]; then
                 log_step "Repairing ${sv} (status: ${status})..."
-                _run_service_fn "$sv" "repair"
-                ((repaired++))
+                if _run_service_fn "$sv" "repair"; then
+                    ((repaired++))
+                else
+                    ((failed++))
+                    log_warning "${sv} repair failed, leaving it as it was"
+                fi
             fi
         done < <(state_list_installed)
-        [[ $repaired -eq 0 ]] && log_success "All services are healthy." \
-            || log_success "Repaired ${repaired} service(s)."
+        if (( failed > 0 )); then
+            log_warning "Repaired ${repaired}, could not repair ${failed}. Look above for why."
+        elif (( repaired == 0 )); then
+            log_success "All services are healthy."
+        else
+            log_success "Repaired ${repaired} service(s)."
+        fi
     else
         log_step "Repairing ${svc}..."
-        _run_service_fn "$svc" "repair"
-        log_success "${svc} repaired."
+        # The module's exit status decides what is printed. Announcing success
+        # unconditionally is how a dashboard rebuild that failed its own tests
+        # reported "dashboard repaired" while the previous image carried on
+        # running: exactly the fault the module takes care to return 1 for.
+        if _run_service_fn "$svc" "repair"; then
+            log_success "${svc} repaired."
+        else
+            log_error "${svc} repair failed. It is still running whatever it was running before."
+        fi
     fi
 }
 
