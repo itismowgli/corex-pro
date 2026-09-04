@@ -2306,8 +2306,18 @@ cmd_power() {
                 *) log_error "Usage: corex manage power wol [on|off]" ;;
             esac
             ;;
+        cpu)
+            # A clock ceiling, which on a chassis that cannot sustain boost
+            # costs a peak it never held. Measured 10C on this class of
+            # hardware; see lib/power.sh for the numbers.
+            case "${1:-show}" in
+                show|"") power_show ;;
+                off|reset|uncap) power_cpu_reset ;;
+                *) power_cpu_set "$1" "${2:-balance_power}" ;;
+            esac
+            ;;
         *)
-            log_error "Usage: corex manage power [show|wol on|wol off]"
+            log_error "Usage: corex manage power [show|wol on|wol off|cpu <MHz>|cpu off]"
             ;;
     esac
 }
@@ -2450,10 +2460,15 @@ Commands:
                         maintenance          show the schedule and the last outcome
                         maintenance setup    install the hourly timer
                         maintenance run [t]  run one task now, or whatever is due
-  power [sub]         Wake-on-LAN, and how this machine gets switched back on
-                        power          show what is armed and what is not
-                        power wol on   arm the NIC, now and at every boot
-                        power wol off  stop it waking on a magic packet
+  power [sub]         Wake-on-LAN, the CPU clock ceiling, and how this
+                      machine gets switched back on
+                        power           show what is set and what is not
+                        power wol on    arm the NIC, now and at every boot
+                        power wol off   stop it waking on a magic packet
+                        power cpu 3000  cap the clock at 3000 MHz, now and at
+                                        every boot. Worth 10C on hardware that
+                                        cannot sustain its own boost clock
+                        power cpu off   remove the ceiling
   kuma-seed           Create the Uptime Kuma HTTP checks each installed module
                       declares, adopting any monitor of the same name
   watchdog [sub]      Resource alerting: temp, load, RAM, disk, container health

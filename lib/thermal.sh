@@ -326,12 +326,29 @@ elif (( temp >= THERMAL_WARN_C ));      then band="warn"
 elif (( temp <= THERMAL_RECOVER_C ));   then band="recover"
 else band="normal"; fi
 
-if [[ "$band" == "$prev_band" ]]; then
+# The hysteresis counter is keyed on what the band will DO, not on its name.
+#
+# recover and normal both restore, and they differ only in how big a batch
+# they take, but counting them as separate bands meant a box drifting across
+# THERMAL_RECOVER_C reset the counter on every crossing and never reached
+# THERMAL_CONFIRM_SAMPLES in either. Measured: three containers stayed shed
+# for six minutes while the temperature moved 70.2, 70.6, 75.8, 73.6, 75.2,
+# 78.9, so the state file sat at "recover 2" and never advanced. That band
+# edge is exactly where a cooling machine sits, so this was not an edge case.
+#
+# This is gotcha #25 in a third costume: the first was a recover threshold
+# below the machine's idle floor, the second was restoring the whole list at
+# once, and this is a counter that cannot count.
+case "$band" in
+    recover|normal) group="cooling" ;;
+    *)              group="$band" ;;
+esac
+if [[ "$group" == "$prev_band" ]]; then
     count=$((prev_count + 1))
 else
     count=1
 fi
-echo "$band $count" > "$STATE"
+echo "$group $count" > "$STATE"
 
 # Emergency acts immediately: there is no time to confirm at TjMax.
 if [[ "$band" == "emergency" ]]; then

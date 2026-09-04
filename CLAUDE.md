@@ -199,6 +199,7 @@ corex-pro/
 | `/etc/corex/watchdog.conf` | Watchdog thresholds and Kuma push tokens (0640) |
 | `/etc/corex/maintenance.conf` | Maintenance schedule and temperature limit (0640) |
 | `/etc/corex/authelia.conf` | Which routers sit behind the shared login (0644) |
+| `/etc/corex/power.conf` | CPU clock ceiling and energy preference (0644) |
 | `${DOCKER_ROOT}/authelia/.secrets` | Authelia JWT, session and storage keys (0600) |
 | `${DOCKER_ROOT}/authelia/.admin-password` | Portal password, stable across re-runs (0600) |
 | `/var/lib/corex/maintenance.json` | What each scheduled task last did (0644) |
@@ -1920,6 +1921,35 @@ governor loop along with the task and nothing ever resumes anything.
 `_signal_tree` walks children with `pgrep -P`, stopping the parent first so it
 cannot spawn more and resuming it last. Confirmed by stopping a
 `sleep 30 | cat` and checking that all three processes reach state `T`.
+
+### 49. An idle box at 86C was a boost clock, not a cooling problem alone
+
+Every previous session concluded the thermal risk on this hardware was purely
+physical. Most of it is. Some of it was `amd-pstate-epp` with an energy
+performance preference of `performance`, which Ubuntu leaves set and which
+boosts to the top of the range even under the `powersave` governor. Measured on
+a Ryzen 9 5900HX with 21 mostly idle containers, eight samples over a minute
+each:
+
+| Setting | Mean | Cores |
+|---|---|---|
+| `performance`, no cap | 86.3C | 4.1 to 4.2 GHz |
+| `balance_power`, no cap | 83.0C | 3.2 to 4.0 GHz |
+| `balance_power`, 3.0 GHz cap | 76.8C | 2.4 to 2.9 GHz |
+
+Ten degrees for a ceiling below a base clock the chassis cannot sustain, so the
+peak given up is one the machine never held: it was boosting and then thermally
+shedding. `corex manage power cpu 3000` applies it, and `corex-cpu.service`
+reapplies it at boot because nothing in sysfs persists.
+
+**Why it matters more than comfort.** `THERMAL_WARN_C` is 80. At 86C the
+guardian lived permanently in its warn band, which restores nothing, so the
+shed list could never drain; and the maintenance governor set to 80C would have
+paused a backup forever. Both features are correct and both are inert above the
+warn threshold. Getting the idle number below it is what makes them work.
+
+It is off by default. This is hardware-specific and CoreX should not guess:
+`POWER_CPU_MAX_MHZ` empty means the kernel's settings are left alone.
 
 ### 48. Rewriting a generated script in place breaks the copy that is running
 

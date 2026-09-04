@@ -6,6 +6,55 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.21.0] - 2026-09-04
+
+### Added
+- **A CPU clock ceiling, which is the first software answer to this project's
+  oldest problem.** `corex manage power cpu <MHz>` caps `scaling_max_freq` and
+  sets the energy performance preference, now and at every boot through
+  `corex-cpu.service`. It is off by default, because it is hardware-specific
+  tuning and CoreX does not guess at it.
+
+  It was found by asking why an idle box was at 86C. `amd-pstate-epp` under the
+  powersave governor still boosts to the top of the range when the energy
+  performance preference is `performance`, which is what Ubuntu leaves it at.
+  Measured on a Ryzen 9 5900HX mini server with 21 mostly idle containers,
+  eight samples over a minute for each setting:
+
+  | Setting | Mean | Cores |
+  |---|---|---|
+  | `performance`, no cap | 86.3C | 4.1 to 4.2 GHz |
+  | `balance_power`, no cap | 83.0C | 3.2 to 4.0 GHz |
+  | `balance_power`, 3.0 GHz cap | 76.8C | 2.4 to 2.9 GHz |
+
+  Ten degrees, for a ceiling below a base clock the chassis cannot sustain
+  anyway, so the peak given up is one the machine never actually held: it was
+  boosting and then thermally shedding.
+
+  It matters beyond comfort. `THERMAL_WARN_C` is 80, so at 86C the guardian sat
+  permanently in its warn band, the shed list could never drain, and the
+  maintenance governor would have paused forever. A number below the warn
+  threshold is what makes either of them work.
+
+### Fixed
+- **The thermal guardian could leave containers shed indefinitely, and this is
+  the third form of the same bug.** `recover` and `normal` both restore
+  containers and differ only in batch size, but they counted as separate bands,
+  so a box drifting across `THERMAL_RECOVER_C` reset the hysteresis counter on
+  every crossing and never reached `THERMAL_CONFIRM_SAMPLES` in either.
+
+  Measured: three containers stayed shed for six minutes while the temperature
+  moved 70.2, 70.6, 75.8, 73.6, 75.2, 78.9, with the state file stuck at
+  "recover 2". That band edge is exactly where a cooling machine sits, so it
+  was not an edge case. The counter is now keyed on what the band will do
+  rather than on its name.
+
+  The first form of this was a recover threshold below the machine's idle
+  floor, the second was restoring the whole list at once, and this is a counter
+  that cannot count.
+
+---
+
 ## [v3.20.1] - 2026-09-04
 
 ### Fixed
