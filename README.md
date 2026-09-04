@@ -81,6 +81,25 @@ sudo bash corex.sh install
 The installer asks for your domain, your email, a timezone, and which services
 you want, then generates every password itself. Nothing is left at a default.
 
+For the service question there are five presets and a manual checklist:
+
+| Preset | What it installs |
+|---|---|
+| `minimal` | The core, the dashboard, the vault and monitoring |
+| `full` | Every module CoreX has |
+| `privacy` | Nextcloud, Immich, the vault, mail and the shared login |
+| `dev` | n8n, Coolify, monitoring and the local AI stack |
+| `nodomain` | Only the modules that work without a domain |
+| `custom` | Pick from the list |
+
+The menu shows how much RAM each one adds up to, summed from the modules
+themselves rather than written down, and `full` is read from `lib/services/`,
+so a module added tomorrow is in it without anyone editing a list.
+
+On a LAN-only install, anything that needs a hostname is neither offered nor
+installed, and the installer names what it left out. Add those later with
+`corex manage add <service>` once a domain is configured.
+
 When it finishes, read `/root/CoreX_Dashboard_Credentials.md`. It lists every
 URL and login. Passwords are also in `/root/corex-credentials.txt`, mode 600.
 
@@ -569,9 +588,10 @@ teaches you to ignore the alerts.
 
 ### dashboard
 
-A web page for daily operations, so routine work does not need SSH. Four tabs:
-services with start, stop, restart, repair and update buttons, storage, network
-and system. Log streaming is built in.
+A web page for daily operations, so routine work does not need SSH. Nine
+sections behind a collapsible sidebar, from an overview of the whole box to
+per service start, stop, restart, repair and update. Cmd+K searches all of it.
+Log streaming is built in.
 
 | | |
 |---|---|
@@ -580,8 +600,10 @@ and system. Log streaming is built in.
 | Data | none of its own, it reads `state.json` and the Docker socket |
 | Needs | a domain |
 
-The username is `admin` and the password is in `/root/corex-credentials.txt`.
-Authentication happens at Traefik, not in the app.
+Out of the box the username is `admin` and the password is in
+`/root/corex-credentials.txt`, checked by Traefik rather than by the app. Give
+the dashboard accounts of its own and the app takes over the login; see
+[Signing in](#signing-in).
 
 The buttons work through the CoreX action agent rather than directly, because
 the container runs as `nobody` and the management script needs root. Rather
@@ -969,9 +991,28 @@ accounts are left untouched:
 sudo bash corex-manage.sh dashboard-user disable-auth
 ```
 
-### What the tabs do
+### Getting around
 
-Nine tabs, covering what you would otherwise SSH for.
+The sections are a sidebar on the left, grouped as Dashboard, Services,
+Monitoring and Machine. It collapses to a rail of icons when you want the room
+back, and remembers that per browser. On a phone it is a drawer behind the menu
+button in the header, which means the navigation cannot be pushed off the
+screen by a banner or a running job, because it is not on the page at all.
+
+Cmd+K, or Ctrl+K, opens a search over everything: the sections, the box-wide
+commands, and every service by name with restart, logs and its own address.
+Words match in any order, so typing "restart next" finds Nextcloud. It is the
+fastest way through once there are more services than fit on a screen.
+
+Every section opens with its own heading, and headline numbers read as a value
+against the capacity they are measured in: 71.6C of the 85C shed threshold,
+4.6 of 30.8 GB, 22 of 39 containers. A bare number needs you to know the
+machine before it means anything, and a load of 4.0 is idle on sixteen cores
+and a queue on two.
+
+### What each section does
+
+Nine sections, covering what you would otherwise SSH for.
 
 Overview is the one it opens on, because the question you have when you open a
 control panel is whether anything is wrong. Temperature, load, memory and
@@ -990,7 +1031,12 @@ problem, not whose it is.
 The graphs cost nothing to collect. `blackbox.log` already records temperature,
 load, memory and throttling every twenty seconds, because it is the only
 evidence that survives a power cut, so the charts read that rather than
-sampling again.
+sampling again. They can be narrowed to the last 30 minutes or hour. The
+alarms deliberately do not follow that choice: one that did would answer "did
+this box throttle" with whichever window happened to be selected.
+
+Storage opens with the same tiles: both disks, what Docker occupies and what is
+purgeable, each against its capacity.
 
 Services shows a card per module with its status and its addresses, and offers
 Update only where there is one. That check compares every image in a module
@@ -1008,12 +1054,8 @@ what it did, and can run one now. It reads the runner's own history rather than
 the schedule, for the reason in that section.
 
 It works on a phone. Tables scroll in their own box rather than dragging the
-page sideways, dialogs stay inside the screen, and the tabs are one scrolling
-row.
-
-Services is a card per installed service: its health, the addresses it answers
-on, and buttons for start, stop, restart, repair and update, plus a live log
-stream.
+page sideways, dialogs stay inside the screen, and the sidebar becomes a
+drawer.
 
 Health is the half of monitoring a reachability check cannot see. Heat with its
 own trend and how close it is to the shed threshold, SMART per disk, the
@@ -1040,12 +1082,9 @@ appears with no other change.
 System shows host details, the SSH command with the right port, the direct
 ports for the services you actually have, a command reference, and update-all.
 
-Account appears once the dashboard has accounts of its own: change your
-password, your display name and the address a reset code goes to, and turn
-two-factor on or off.
-
-Account is where you change your password and display name, add a passkey, turn
-two-factor on, and see where you are signed in.
+Account appears once the dashboard has accounts of its own. Change your
+password, your display name and the address a reset code goes to, add a
+passkey, turn two-factor on or off, and see where you are signed in.
 
 A command you ran is shown as its own output, colour and alignment intact,
 rather than summarised. Those commands are the source of truth for the CLI too,
@@ -1059,8 +1098,8 @@ image writes its own format, and left as one block the line you went looking
 for reads exactly like the ones you did not.
 
 Statuses refresh by themselves every fifteen seconds, and immediately after an
-action finishes. An earlier version left every badge stale until you clicked a
-tab again, so a service that had come back up kept being reported as down.
+action finishes. Badges left stale until you changed section meant a service
+that had come back up kept being reported as down.
 
 A running action reports into one panel at the top of the page, which polls
 until the job ends and then says what changed. Actions are asynchronous

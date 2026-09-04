@@ -58,10 +58,53 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
   its capacity. The tile itself is now `stat-tile.tsx` and both pages draw it,
   rather than each inventing a presentation for the same kind of number.
 
+### Fixed
+- **Three service modules were offered by no install preset at all.** The
+  dashboard, the shared login and the UPS monitor could only be reached by
+  choosing "custom", because the presets were hand written lists and adding a
+  module never touched them. The "all services" preset is now read from
+  `lib/services/` itself, so a new module is in it by definition, and a unit
+  test fails when any module is offered by no preset. The test that should
+  have caught this was called "apply_profile full includes all services" and
+  checked three of them.
+
+- **`SERVICE_NEEDS_DOMAIN` was declared by all eighteen modules and read by
+  nothing.** A LAN-only install therefore selected services that answer on a
+  hostname it does not have: the "no domain" preset offered the monitoring
+  stack, and the custom checklist offered Cal.com and Stalwart. The wizard
+  reads the field now. The LAN-only preset is derived from it, services that
+  need a domain are not listed on a LAN-only install and are named as such,
+  and anything a preset selects that cannot work is dropped with a line saying
+  which and how to add it later.
+
+- **Services were deployed in whatever order they were listed.** Traefik
+  creates `proxy-net` and owns the routing every other web service registers
+  with, and the installer deploys in array order, so a custom selection built
+  from the checklist deployed AdGuard first. Selection is sorted into deploy
+  order now: Traefik, AdGuard and Portainer, then by category, which also puts
+  Authelia ahead of the services whose routers name its middleware. A router
+  naming a middleware that does not exist yet answers 404 rather than falling
+  back, which is gotcha #44.
+
+- **`apply_profile` could abort the installer.** Its LAN-only branch ended in
+  `cond && array+=(...)`, so it returned non-zero whenever the last module
+  tested needed a domain, and `install-corex-master.sh` runs with `set -e`.
+  Found by running the new tests under bats, which checks a return status that
+  an interactive shell throws away.
+
+- **The preset menu quoted RAM figures written when the presets were.**
+  "~8GB RAM" for minimal and "~32GB RAM" for full were both wrong. The menu
+  sums `SERVICE_RAM_MB` from the modules at the moment it is drawn.
+
 ### Removed
 - `ui/tabs.tsx` and `@radix-ui/react-tabs`, which nothing imports now.
 
 ### Testing
+- Ten new wizard tests: that every module is in the full preset and in at
+  least one preset, that the LAN-only preset and filter honour
+  `SERVICE_NEEDS_DOMAIN`, that Traefik is deployed first from every preset,
+  that Authelia precedes what it protects, and that the field is read by
+  something outside `lib/services/`.
 - `responsive-check.mjs` rules 5 and 6 are rewritten for the sidebar. They
   check that the fixed column is hidden on a phone, that a drawer and the
   control that opens it both exist, and that no banner or running job renders

@@ -140,13 +140,112 @@ setup() {
     [[ " ${SELECTED_SERVICES[*]} " == *" vaultwarden "* ]]
 }
 
-@test "apply_profile full includes all services" {
-    if ! declare -f apply_profile &>/dev/null; then
-        skip "apply_profile not implemented yet"
-    fi
+# This test used to be named "includes all services" and checked three of
+# them. The name promised coverage the body did not deliver, which is why the
+# dashboard, the shared login and the UPS monitor sat in no preset at all
+# while it passed.
+@test "apply_profile full includes every service module" {
     declare -a SELECTED_SERVICES=()
     apply_profile "full"
+    local name
+    while read -r name; do
+        [[ -z "$name" ]] && continue
+        [[ " ${SELECTED_SERVICES[*]} " == *" $name "* ]] \
+            || { echo "the full preset omits $name"; return 1; }
+    done < <(all_service_names)
+}
+
+@test "every service module appears in at least one preset" {
+    local name p found
+    while read -r name; do
+        [[ -z "$name" ]] && continue
+        found=false
+        for p in minimal full privacy dev nodomain; do
+            declare -a SELECTED_SERVICES=()
+            apply_profile "$p"
+            if [[ " ${SELECTED_SERVICES[*]} " == *" $name "* ]]; then
+                found=true
+                break
+            fi
+        done
+        [[ "$found" == "true" ]] \
+            || { echo "$name is offered by no preset, so only a custom install can reach it"; return 1; }
+    done < <(all_service_names)
+}
+
+@test "the LAN-only preset holds nothing that needs a domain" {
+    declare -a SELECTED_SERVICES=()
+    apply_profile "nodomain"
+    local s
+    for s in "${SELECTED_SERVICES[@]}"; do
+        service_works_without_domain "$s" \
+            || { echo "$s needs a domain and is in the LAN-only preset"; return 1; }
+    done
+    # And it is not empty, which would pass the loop above trivially.
+    [ "${#SELECTED_SERVICES[@]}" -gt 3 ]
+}
+
+@test "a LAN-only install drops services that need a domain" {
+    declare -a SELECTED_SERVICES=(traefik adguard nextcloud calcom timemachine)
+    filter_services_for_mode "local-only"
+    [[ " ${SELECTED_SERVICES[*]} " == *" traefik "* ]]
+    [[ " ${SELECTED_SERVICES[*]} " == *" timemachine "* ]]
+    [[ " ${SELECTED_SERVICES[*]} " != *" nextcloud "* ]]
+    [[ " ${SELECTED_SERVICES[*]} " != *" calcom "* ]]
+}
+
+@test "a with-domain install drops nothing" {
+    declare -a SELECTED_SERVICES=(traefik nextcloud calcom)
+    filter_services_for_mode "with-domain"
     [[ " ${SELECTED_SERVICES[*]} " == *" nextcloud "* ]]
-    [[ " ${SELECTED_SERVICES[*]} " == *" immich "* ]]
-    [[ " ${SELECTED_SERVICES[*]} " == *" ai "* ]]
+    [[ " ${SELECTED_SERVICES[*]} " == *" calcom "* ]]
+}
+
+# Traefik creates proxy-net and owns the routing every other web service
+# registers with, and the installer deploys in array order, so this is the one
+# ordering fact that cannot be got wrong.
+@test "traefik is deployed first whatever the preset" {
+    local p
+    for p in minimal full privacy dev nodomain; do
+        declare -a SELECTED_SERVICES=()
+        apply_profile "$p"
+        order_services_for_deploy
+        [[ "${SELECTED_SERVICES[0]}" == "traefik" ]] \
+            || { echo "$p starts with ${SELECTED_SERVICES[0]}, not traefik"; return 1; }
+    done
+}
+
+# A router naming a middleware that is not defined yet answers 404 rather than
+# falling back, so the module that defines one deploys before the modules that
+# reference it.
+@test "authelia is deployed before the services it protects" {
+    declare -a SELECTED_SERVICES=(n8n monitoring authelia portainer traefik)
+    order_services_for_deploy
+    local i auth=-1 n8n=-1 mon=-1
+    for i in "${!SELECTED_SERVICES[@]}"; do
+        [[ "${SELECTED_SERVICES[$i]}" == "authelia" ]] && auth=$i
+        [[ "${SELECTED_SERVICES[$i]}" == "n8n" ]] && n8n=$i
+        [[ "${SELECTED_SERVICES[$i]}" == "monitoring" ]] && mon=$i
+    done
+    [ "$auth" -ge 0 ]
+    [ "$auth" -lt "$n8n" ]
+    [ "$auth" -lt "$mon" ]
+}
+
+@test "ordering keeps every selected service" {
+    declare -a SELECTED_SERVICES=()
+    apply_profile "full"
+    local before="${#SELECTED_SERVICES[@]}"
+    order_services_for_deploy
+    [ "${#SELECTED_SERVICES[@]}" -eq "$before" ]
+}
+
+# SERVICE_NEEDS_DOMAIN was declared by all eighteen modules and read by
+# nothing for the life of the project, so a LAN-only install cheerfully
+# selected services that answer on a hostname it does not have.
+@test "SERVICE_NEEDS_DOMAIN is read by something" {
+    # maxdepth 1 is what excludes lib/services, where every module declares
+    # it. find rather than grep --include, because the test image is BusyBox.
+    find "${REPO_DIR}/lib" -maxdepth 1 -name "*.sh" -exec grep -l "SERVICE_NEEDS_DOMAIN" {} + \
+        | grep -q .
 }

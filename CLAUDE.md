@@ -2147,7 +2147,12 @@ SERVICE_LABEL="Gitea — Self-hosted Git (replaces GitHub)"
 SERVICE_CATEGORY="productivity"    # core|storage|security|productivity|ai|monitoring|communication|backup
                                    # NOTE: also drives thermal shed order — see gotcha #17
 SERVICE_REQUIRED=false             # true = always installed, not user-selectable
-SERVICE_NEEDS_DOMAIN=true          # false = works in local-only mode too
+SERVICE_NEEDS_DOMAIN=true          # false = works in local-only mode too.
+                                   # Read by the wizard: true keeps the module
+                                   # off a LAN-only install and out of the
+                                   # LAN-only preset. Get it wrong and the
+                                   # module either deploys where it cannot
+                                   # answer, or is unreachable where it could
 SERVICE_NEEDS_EMAIL=false
 SERVICE_RAM_MB=512
 SERVICE_DISK_GB=5
@@ -2182,7 +2187,19 @@ for svc_file in "${SCRIPT_DIR}/lib/services/"*.sh; do
 done
 ```
 
-No hardcoded service lists anywhere in core scripts.
+No hardcoded service lists anywhere in core scripts. The wizard's install
+presets are the one place that names services by hand, because a preset is an
+opinion and "minimal" should not acquire a 4GB language model because a module
+was added. Two of them are still derived: `full` is every module in the
+directory and `nodomain` is every module with `SERVICE_NEEDS_DOMAIN=false`, so
+neither can go stale. A unit test fails when a module is offered by no preset
+at all, which is how the dashboard, Authelia and the UPS monitor went missing
+from every one of them.
+
+Selection order is not deploy order. `order_services_for_deploy` sorts what
+was chosen into Traefik, AdGuard, Portainer, then by `SERVICE_CATEGORY`, since
+the installer deploys in array order: Traefik creates `proxy-net`, and
+Authelia has to exist before a router names its middleware (gotcha #44).
 
 ---
 

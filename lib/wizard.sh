@@ -165,32 +165,197 @@ get_services_in_category() {
     done
 }
 
+# Where the service modules live, resolved once from this file's own location.
+_services_dir() {
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    echo "${script_dir}/services"
+}
+
+# Every module name, in directory order. The AppleDouble skip matters: a macOS
+# tar or SMB share leaves ._name.sh beside the real file, it matches the glob,
+# and it is binary.
+all_service_names() {
+    local dir f
+    dir="$(_services_dir)"
+    [[ -d "$dir" ]] || return 0
+    for f in "${dir}"/*.sh; do
+        [[ -f "$f" ]] || continue
+        [[ "$(basename "$f")" == ._* ]] && continue
+        bash -c "source '$f' 2>/dev/null; echo \"\${SERVICE_NAME:-}\"" | grep . || true
+    done
+}
+
+# One metadata field for one module, by module name.
+service_meta() {
+    local want="$1" field="$2" dir f name
+    dir="$(_services_dir)"
+    for f in "${dir}"/*.sh; do
+        [[ -f "$f" ]] || continue
+        [[ "$(basename "$f")" == ._* ]] && continue
+        name=$(bash -c "source '$f' 2>/dev/null; echo \"\${SERVICE_NAME:-}\"")
+        if [[ "$name" == "$want" ]]; then
+            bash -c "source '$f' 2>/dev/null; echo \"\${${field}:-}\""
+            return 0
+        fi
+    done
+    return 1
+}
+
+# True when the module works with no domain configured. SERVICE_NEEDS_DOMAIN
+# was declared by every module and read by nothing, so a LAN-only install
+# happily selected services that cannot answer on a hostname it does not have.
+service_works_without_domain() {
+    [[ "$(service_meta "$1" SERVICE_NEEDS_DOMAIN 2>/dev/null)" != "true" ]]
+}
+
 # ── Profile Presets ────────────────────────────────────────────────────────────
 
-# SELECTED_SERVICES must be declared as an array in the calling scope
+# SELECTED_SERVICES must be declared as an array in the calling scope.
+#
+# The lists are curated because a preset is an opinion: "minimal" should not
+# acquire a 4GB language model because a module was added. The exceptions are
+# "full", which is every module by definition and so is read from the
+# directory, and "nodomain", which is every module that works without one.
+# Both used to be hand written and both had gone stale: the dashboard, the
+# shared login and the UPS monitor appeared in no preset at all, and the
+# LAN-only preset offered a monitoring stack that needs a hostname.
 apply_profile() {
     local profile="$1"
     SELECTED_SERVICES=()
+    local name
     case "$profile" in
         minimal)
-            SELECTED_SERVICES=(traefik adguard portainer vaultwarden monitoring)
+            SELECTED_SERVICES=(traefik adguard portainer dashboard vaultwarden monitoring)
             ;;
         full)
-            SELECTED_SERVICES=(traefik adguard portainer nextcloud immich vaultwarden stalwart n8n calcom coolify timemachine monitoring crowdsec cloudflared ai)
+            while read -r name; do
+                [[ -n "$name" ]] && SELECTED_SERVICES+=("$name")
+            done < <(all_service_names)
             ;;
         privacy)
-            SELECTED_SERVICES=(traefik adguard portainer nextcloud immich vaultwarden stalwart crowdsec cloudflared monitoring)
+            SELECTED_SERVICES=(traefik adguard portainer dashboard nextcloud immich
+                               vaultwarden authelia stalwart crowdsec cloudflared monitoring)
             ;;
         dev)
-            SELECTED_SERVICES=(traefik adguard portainer n8n coolify monitoring ai cloudflared)
+            SELECTED_SERVICES=(traefik adguard portainer dashboard n8n coolify
+                               monitoring ai cloudflared)
             ;;
         nodomain)
-            SELECTED_SERVICES=(adguard portainer timemachine monitoring)
+            while read -r name; do
+                [[ -z "$name" ]] && continue
+                if service_works_without_domain "$name"; then
+                    SELECTED_SERVICES+=("$name")
+                fi
+            done < <(all_service_names)
             ;;
         *)
             SELECTED_SERVICES=()
             ;;
     esac
+}
+
+# Deploy order.
+#
+# The installer deploys in array order, so the order this function produces is
+# the order the box is built in, and two parts of it are load bearing. Traefik
+# first, because it creates proxy-net and owns the routing every other web
+# service registers with. Authelia and the rest of "security" before the
+# services they sit in front of, because a router naming a middleware that is
+# not defined yet answers 404 rather than falling back (gotcha #44).
+#
+# Everything else follows its category, then its name, so the same selection
+# always builds in the same order and a preset cannot change the order simply
+# by listing its services differently.
+_CATEGORY_ORDER=(core security storage productivity communication monitoring ai backup)
+
+order_services_for_deploy() {
+    local first=(traefik adguard portainer)
+    local ordered=() s name cat
+
+    # The fixed head, in that order, only for what is actually selected.
+    for name in "${first[@]}"; do
+        for s in "${SELECTED_SERVICES[@]}"; do
+            if [[ "$s" == "$name" ]]; then
+                ordered+=("$name")
+                break
+            fi
+        done
+    done
+
+    # Then by category, alphabetically inside one.
+    for cat in "${_CATEGORY_ORDER[@]}"; do
+        while read -r name; do
+            [[ -z "$name" ]] && continue
+            # Already placed in the head?
+            case " ${ordered[*]} " in *" $name "*) continue ;; esac
+            for s in "${SELECTED_SERVICES[@]}"; do
+                if [[ "$s" == "$name" ]]; then
+                    ordered+=("$name")
+                    break
+                fi
+            done
+        done < <(get_services_in_category "$cat" | sort)
+    done
+
+    # Anything whose category is not in the list above still has to be
+    # deployed. Dropping it silently would be a module that installs on some
+    # boxes and not others depending on a string nobody validates.
+    for s in "${SELECTED_SERVICES[@]}"; do
+        case " ${ordered[*]} " in *" $s "*) continue ;; esac
+        ordered+=("$s")
+    done
+
+    SELECTED_SERVICES=("${ordered[@]}")
+}
+
+# The RAM a preset asks for, summed from the modules themselves.
+#
+# The menu used to carry these as text, "~8GB RAM" and "~32GB RAM", and both
+# were wrong: they were written when the preset was and never revisited, which
+# is the same drift that left three modules out of every preset. A number
+# nobody has to remember to update cannot go stale.
+profile_ram_mb() {
+    local profile="$1"
+    local saved=("${SELECTED_SERVICES[@]:-}")
+    local total=0 s ram
+    apply_profile "$profile"
+    for s in "${SELECTED_SERVICES[@]}"; do
+        ram=$(service_meta "$s" SERVICE_RAM_MB 2>/dev/null || true)
+        [[ "$ram" =~ ^[0-9]+$ ]] && total=$(( total + ram ))
+    done
+    SELECTED_SERVICES=("${saved[@]}")
+    echo "$total"
+}
+
+# "1.5GB" from 1536, because a menu reading 15584MB is arithmetic the reader
+# should not have to do.
+_gb() {
+    local mb="$1"
+    awk -v mb="$mb" 'BEGIN { printf "%.1fGB", mb / 1024 }'
+}
+
+# Drops anything that needs a hostname, and names what it dropped. Called only
+# for a LAN-only install, where those services would deploy, start, and answer
+# on nothing.
+filter_services_for_mode() {
+    local mode="$1"
+    [[ "$mode" == "local-only" ]] || return 0
+
+    local kept=() dropped=() s
+    for s in "${SELECTED_SERVICES[@]}"; do
+        if service_works_without_domain "$s"; then
+            kept+=("$s")
+        else
+            dropped+=("$s")
+        fi
+    done
+    SELECTED_SERVICES=("${kept[@]}")
+
+    if [[ ${#dropped[@]} -gt 0 ]]; then
+        log_warning "Not installing ${dropped[*]}: each needs a domain, and this is a LAN-only install."
+        log_info "Add them later with 'corex manage add <service>' once a domain is configured."
+    fi
 }
 
 # ── Main Wizard ────────────────────────────────────────────────────────────────
@@ -392,16 +557,25 @@ NO  — Docker stays on OS disk (simpler, fine if OS disk is large enough)" \
     export DOCKER_ON_SSD
 
     # ── Profile or custom selection ───────────────────────────────────────────
+    declare -a SELECTED_SERVICES=()
+
+    # Sized from the modules rather than from memory, so a preset cannot claim
+    # a figure that stopped being true when a service was added to it.
+    local ram_minimal ram_full ram_privacy ram_dev ram_nodomain
+    ram_minimal=$(_gb "$(profile_ram_mb minimal)")
+    ram_full=$(_gb "$(profile_ram_mb full)")
+    ram_privacy=$(_gb "$(profile_ram_mb privacy)")
+    ram_dev=$(_gb "$(profile_ram_mb dev)")
+    ram_nodomain=$(_gb "$(profile_ram_mb nodomain)")
+
     local profile_choice
     profile_choice=$(_menu "Service Selection" "Choose a preset or customize:" \
-        "minimal"  "Core only + Vaultwarden (~8GB RAM)" \
-        "full"     "All services (~32GB RAM)" \
-        "privacy"  "Privacy-focused: Nextcloud + Immich + Vault + Mail" \
-        "dev"      "Dev stack: n8n + Coolify + Monitoring + AI" \
-        "nodomain" "LAN-only: no domain required" \
+        "minimal"  "Core, dashboard, vault and monitoring (${ram_minimal})" \
+        "full"     "Every service CoreX has (${ram_full})" \
+        "privacy"  "Nextcloud, Immich, vault, mail, shared login (${ram_privacy})" \
+        "dev"      "n8n, Coolify, monitoring and local AI (${ram_dev})" \
+        "nodomain" "LAN-only: only what works without a domain (${ram_nodomain})" \
         "custom"   "Choose services manually")
-
-    declare -a SELECTED_SERVICES=()
 
     if [[ "$profile_choice" == "custom" ]]; then
         # Build checklist from all service modules
@@ -410,21 +584,42 @@ NO  — Docker stays on OS disk (simpler, fine if OS disk is large enough)" \
         local services_dir="${script_dir}/services"
 
         local checklist_items=()
-        local f svc_info svc label required ram default_state
+        local hidden=()
+        local f svc_info svc label required ram needs_domain default_state
         for f in "${services_dir}"/*.sh; do
             [[ -f "$f" ]] || continue
-            # Read metadata safely — no eval; use printf+IFS to avoid injection
+            # A macOS tar or SMB share leaves ._name.sh beside the real file.
+            # It matches this glob and it is binary.
+            [[ "$(basename "$f")" == ._* ]] && continue
+            # Read metadata safely, no eval; use printf+IFS to avoid injection
             svc_info=$(bash -c "
                 source '$f' 2>/dev/null
-                printf '%s\t%s\t%s\t%s\n' \
+                printf '%s\t%s\t%s\t%s\t%s\n' \
                     \"\${SERVICE_NAME:-}\" \"\${SERVICE_LABEL:-}\" \
-                    \"\${SERVICE_REQUIRED:-false}\" \"\${SERVICE_RAM_MB:-0}\"
+                    \"\${SERVICE_REQUIRED:-false}\" \"\${SERVICE_RAM_MB:-0}\" \
+                    \"\${SERVICE_NEEDS_DOMAIN:-false}\"
             " 2>/dev/null)
-            IFS=$'\t' read -r svc label required ram <<< "$svc_info"
+            IFS=$'\t' read -r svc label required ram needs_domain <<< "$svc_info"
             [[ -z "$svc" ]] && continue
+            # Offering a service that cannot answer on a hostname this install
+            # does not have is offering a choice with one wrong answer.
+            if [[ "$MODE" == "local-only" && "$needs_domain" == "true" ]]; then
+                hidden+=("$svc")
+                continue
+            fi
             [[ "$required" == "true" ]] && default_state="ON" || default_state="OFF"
             checklist_items+=("$svc" "$label (RAM: ${ram}MB)" "$default_state")
         done
+
+        if [[ ${#hidden[@]} -gt 0 ]]; then
+            _msgbox "Not listed on a LAN-only install" \
+"These need a domain, so they are not offered here:
+
+  ${hidden[*]}
+
+Add any of them later with 'corex manage add <service>' once a
+domain is configured."
+        fi
 
         local selected_raw
         selected_raw=$(_checklist "Service Selection" \
@@ -440,6 +635,10 @@ NO  — Docker stays on OS disk (simpler, fine if OS disk is large enough)" \
         apply_profile "$profile_choice"
     fi
 
+    # A preset can name a service that needs a hostname this install will not
+    # have. Dropping it here beats deploying something that answers on nothing.
+    filter_services_for_mode "$MODE"
+
     # Always ensure core services are included
     local core_svc
     for core_svc in traefik adguard portainer; do
@@ -450,6 +649,10 @@ NO  — Docker stays on OS disk (simpler, fine if OS disk is large enough)" \
         done
         [[ "$found" == "false" ]] && SELECTED_SERVICES+=("$core_svc")
     done
+
+    # Sort into deploy order last, so it does not matter whether a name
+    # arrived from a preset, from the checklist, or from the line above.
+    order_services_for_deploy
 
     export SELECTED_SERVICES
 
