@@ -97,6 +97,77 @@ if [[ "$UNCLEAN" == "true" ]]; then
             && say "WARNING: ${dev} filesystem state is '${state}' — schedule fsck"
     done
 fi
+
+# ── 5. Bring the services back after a thermal shutdown ─────────────────────
+#
+# The thermal guardian stops every container and powers the machine off when
+# the CPU reaches TjMax, which is the right call and used to be a one-way trip.
+# `docker stop` on a container whose restart policy is unless-stopped means
+# exactly that, so Docker does not bring it back at the next boot: the machine
+# came up with 23 containers stopped, 0 running, and nothing recording why.
+#
+# The guardian now writes what was running before it stops anything. This is
+# where that is read, because at boot there is no load and starting the
+# services is the right default. Three at a time with a temperature hold
+# between, because restoring a whole list at once is what re-triggers the
+# shed (gotcha #25).
+EMERG_LIST=/var/lib/corex/thermal-emergency.list
+if [[ -s "$EMERG_LIST" ]]; then
+    n=$(grep -c . "$EMERG_LIST" 2>/dev/null || echo 0)
+    say "a thermal shutdown left ${n} container(s) stopped, bringing them back"
+
+    boot_temp() {
+        local t=""
+        if command -v sensors >/dev/null 2>&1; then
+            t=$(sensors -u 2>/dev/null | awk '/^(Tctl|Tdie|Package id 0):/{getline; print $2; exit}')
+        fi
+        if [[ -z "$t" ]]; then
+            local hottest=0 z v
+            for z in /sys/class/thermal/thermal_zone*/temp; do
+                [[ -r "$z" ]] || continue
+                v=$(( $(cat "$z" 2>/dev/null || echo 0) / 1000 ))
+                (( v > hottest )) && hottest=$v
+            done
+            t=$hottest
+        fi
+        echo "${t%%.*}"
+    }
+
+    # An operator's deliberate disable outranks this. Same source the
+    # guardian's own restore uses.
+    disabled=""
+    if command -v jq >/dev/null 2>&1; then
+        disabled=$(jq -r '[ .services | to_entries[]
+                 | (if (.value.enabled == false) then .key else empty end),
+                   ((.value.disabled_components // [])[]) ] | unique[]' \
+            /etc/corex/state.json 2>/dev/null || true)
+    fi
+
+    started=0; held=0
+    while read -r c; do
+        [[ -z "$c" ]] && continue
+        if [[ -n "$disabled" ]] && printf '%s\n' "$disabled" | grep -qxF "$c"; then
+            say "skipping ${c}: disabled by the operator"
+            continue
+        fi
+        t=$(boot_temp)
+        # Give up holding rather than never finishing. Ten minutes of waiting
+        # means the machine cannot host the workload at all, which is a
+        # cooling verdict and not something to solve by waiting longer.
+        waited=0
+        while [[ -n "$t" && "$t" -ge 88 && $waited -lt 600 ]]; do
+            sleep 20; waited=$((waited+20)); held=1
+            t=$(boot_temp)
+        done
+        timeout 90 docker start "$c" >/dev/null 2>&1 && started=$((started+1)) \
+            || say "could not start ${c}"
+        (( started % 3 == 0 )) && sleep 10
+    done < "$EMERG_LIST"
+
+    rm -f "$EMERG_LIST"
+    say "restarted ${started} of ${n} container(s) after the thermal shutdown"
+    (( held == 1 )) && say "had to wait for the CPU to come down while doing it"
+fi
 BREOF
     chmod 750 /usr/local/bin/corex-boot-repair.sh
 

@@ -168,6 +168,38 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
   trusting whatever is installed, because a box from before v2.5.0 also has
   the Restic password written into a world-readable file.
 
+- **A thermal shutdown no longer takes the services with it permanently.**
+  The guardian stops every container and powers the machine off at TjMax,
+  which is right and worked as designed during the first full backup. Coming
+  back did not: `docker stop` on a container whose policy is `unless-stopped`
+  means Docker will not start it at the next boot, so the box came up with 23
+  containers stopped, 0 running, and nothing recording why.
+
+  The emergency path now writes what was running before it stops anything, and
+  the boot-time self-repair restores it three at a time with a temperature hold
+  between. Not the shed list, which is only drained in the recover and normal
+  bands and would never be drained on a box whose idle floor is above the warn
+  threshold. It also announces itself to Telegram before acting, because there
+  is no after.
+
+- **Maintenance tasks are held to a thermal budget while they run, not only
+  before they start.** The first full backup began at 66C and was at 96.8C six
+  minutes later, and the guardian shut the machine down at 97C. The pre-flight
+  check had passed correctly thirty degrees earlier, which is what gotcha #31
+  says in as many words.
+
+  restic now runs with `GOMAXPROCS=2`, because it is Go and compresses on every
+  core otherwise, and with a cache directory, because under systemd there is no
+  HOME and it was re-reading every file on every run. And the task is paused
+  with SIGSTOP when it crosses the limit and resumed eight degrees lower.
+  SIGSTOP rather than a kill: restic, apt and a Docker prune all resume with
+  nothing lost.
+
+  The signal walks the process tree rather than the process group. Inside a
+  command substitution bash does not reliably make a background job its own
+  group leader, so `kill -- -$pid` either fails or names the group the script
+  is in, which stops the governor along with the task.
+
 - **AdGuard's admin port was read with a window too small to reach it.**
   `grep -A5 "http:"` no longer finds `address:` in `AdGuardHome.yaml`, because
   current AdGuard writes a `pprof` block and a `doh` routes list in there

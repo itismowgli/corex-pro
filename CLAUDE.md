@@ -1853,6 +1853,71 @@ this script with the Restic password written into it in plain text.
 `restic snapshots --latest 1` after a run is the cheapest possible check that
 something exists, and the maintenance task fails when it comes back empty.
 
+### 46. A thermal shutdown was a one-way trip for every service
+
+The guardian does the right thing at TjMax: it stops every container, syncs,
+and powers the machine off, so the shutdown is clean and nothing is left
+half-written. Measured on 2026-09-04 during the first full Restic backup, and
+it worked exactly as designed.
+
+What did not work was coming back. `docker stop` on a container whose restart
+policy is `unless-stopped` means precisely that: Docker treats it as stopped
+on purpose and does not start it at the next boot. So the box came up with 23
+containers stopped, 0 running, an empty shed list and nothing anywhere
+recording why. Every service was down until someone noticed.
+
+The shed list is the wrong place to record it. That list is drained by
+`restore`, which only runs in the recover and normal bands, so a box whose
+idle floor sits above `THERMAL_WARN_C` never drains it (gotcha #25). The
+emergency path writes `/var/lib/corex/thermal-emergency.list` instead, and
+`corex-boot-repair` reads it once at the next boot and removes it. Boot is the
+right moment: there is no load, so starting the services is the correct
+default rather than a judgement call.
+
+It restores three at a time with a temperature hold between, because
+restoring a whole list at once is what re-triggers the shed, and it gives up
+holding after ten minutes rather than waiting forever, because a machine that
+cannot get below 88C with nothing running is a cooling verdict.
+
+The emergency also announces itself to Telegram before it acts, in those
+words: "Shutting down to save the hardware". There is no after.
+
+### 47. A pre-flight temperature check is not a thermal budget
+
+Gotcha #31 says this in one line and it is worth the second telling, because
+`lib/maintenance.sh` shipped with exactly the mistake it warns about.
+`MAINTENANCE_MAX_TEMP_C` refused to start a task above 85C, which is correct
+and was never the problem: the first full backup started at 66C, and six
+minutes later the CPU was at 96.8C and the guardian shut the machine down.
+The check had passed, thirty degrees earlier.
+
+Three things fix it, and only the third is interesting.
+
+`GOMAXPROCS=2` on restic. It is Go and will compress on every core otherwise,
+which is what produced the 96.8C. `nice -n 19` was already there and is not
+enough on its own, because nice does not help when nothing else wants the CPU.
+
+`HOME=/var/lib/corex` and `RESTIC_CACHE_DIR`. Under systemd there is no HOME,
+so restic reports "unable to locate cache directory" and reads every file on
+every run, which is both slow and hot. With a cache, later runs are
+incremental.
+
+And the task is paused while it runs. `run_governed` samples every fifteen
+seconds, sends SIGSTOP at the limit and SIGCONT eight degrees lower. SIGSTOP
+is the right instrument: restic, apt and a Docker prune all resume from a stop
+with nothing lost, and killing any of them is a choice between a wasted run
+and a dirty transaction.
+
+**The signal has to walk the process tree, not the process group.**
+`kill -- -$pid` looks like the obvious way to reach a pipeline, and this
+function runs inside a command substitution, where bash does not reliably make
+a background job its own process group leader. The negative form then either
+fails or, far worse, names the group the script is itself in: that stops the
+governor loop along with the task and nothing ever resumes anything.
+`_signal_tree` walks children with `pgrep -P`, stopping the parent first so it
+cannot spawn more and resuming it last. Confirmed by stopping a
+`sleep 30 | cat` and checking that all three processes reach state `T`.
+
 ---
 
 ## What NOT to Do

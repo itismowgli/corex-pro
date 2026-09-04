@@ -69,9 +69,15 @@ _maintenance_write_conf() {
 # machine that is off overnight still gets its backup.
 MAINTENANCE_ENABLED=true
 
-# Nothing starts above this. Every task here is CPU or disk heavy, and this
-# hardware trips at TjMax with no warning in any log (gotcha #17).
+# Nothing starts above this, and a task already running is paused when it
+# crosses it and resumed eight degrees lower. A check before starting is not
+# enough on its own: the first full backup began at 66C and reached 96.8C six
+# minutes later, and the thermal guardian shut the machine down at 97C.
 MAINTENANCE_MAX_TEMP_C=85
+
+# Cores restic may compress on. It is Go and will use every one of them
+# otherwise, which is what produced the 96.8C above.
+MAINTENANCE_BACKUP_CORES=2
 
 MCEOF
         local row task label enabled interval hour
@@ -97,6 +103,8 @@ _maintenance_sync_conf() {
         echo "MAINTENANCE_ENABLED=true" >> "$MAINT_CONF"
     grep -q '^MAINTENANCE_MAX_TEMP_C=' "$MAINT_CONF" 2>/dev/null || \
         echo "MAINTENANCE_MAX_TEMP_C=85" >> "$MAINT_CONF"
+    grep -q '^MAINTENANCE_BACKUP_CORES=' "$MAINT_CONF" 2>/dev/null || \
+        echo "MAINTENANCE_BACKUP_CORES=2" >> "$MAINT_CONF"
     for row in "${MAINT_TASKS[@]}"; do
         IFS='|' read -r task _ _ enabled interval hour <<< "$row"
         key="${task^^}"; key="${key//-/_}"
@@ -161,6 +169,7 @@ TM_DATA=/mnt/corex-data/timemachine-data
 [[ -r "$CONF" ]] && source "$CONF"
 : "${MAINTENANCE_ENABLED:=true}"
 : "${MAINTENANCE_MAX_TEMP_C:=85}"
+: "${MAINTENANCE_BACKUP_CORES:=2}"
 
 log() { echo "$(date '+%Y-%m-%dT%H:%M:%S%z') maintenance: $*" >> "$LOG"; }
 
@@ -299,7 +308,20 @@ task_backup() {
         echo "there is no Restic repository at ${RESTIC_REPO}, so nothing was backed up"
         return 1
     fi
-    nice -n 10 ionice -c 3 "$BACKUP" 2>&1 | tail -20
+    # restic is Go, and left alone it uses every core to compress. Measured on
+    # this hardware: the first full snapshot took the CPU from 66C to 96.8C in
+    # six minutes and the thermal guardian shut the machine down at 97C to
+    # avoid a hardware trip. GOMAXPROCS is the lever that stops that
+    # happening, the same one the dashboard build uses.
+    #
+    # HOME matters too. Under systemd there is none, so restic reports
+    # "unable to locate cache directory" and reads every file on every run,
+    # which is both slow and hot. With a cache, later runs are incremental.
+    export GOMAXPROCS="${MAINTENANCE_BACKUP_CORES:-2}"
+    export HOME=/var/lib/corex
+    export RESTIC_CACHE_DIR=/var/lib/corex/restic-cache
+    mkdir -p "$RESTIC_CACHE_DIR"
+    nice -n 19 ionice -c 3 "$BACKUP" 2>&1 | tail -20
     # The script writes its own log and swallows restic's status, so the
     # snapshot list is what says whether this run produced anything.
     # Trimmed on both sides. The credentials file is column aligned, so a
@@ -324,7 +346,7 @@ except Exception:
 
 task_cleanup() {
     [[ -x "$MANAGE" ]] || { echo "cannot find corex-manage.sh"; return 1; }
-    nice -n 10 bash "$MANAGE" cleanup 2>&1 | tail -20
+    nice -n 19 bash "$MANAGE" cleanup 2>&1 | tail -20
 }
 
 # Time Machine has no HTTP endpoint and no Kuma monitor, and it once
@@ -364,6 +386,88 @@ task_os_upgrade() {
     nice -n 10 bash "$MANAGE" os-upgrade --yes 2>&1 | tail -25
 }
 
+# ── Keeping a running task inside the thermal budget ────────────────────────
+#
+# MAINTENANCE_MAX_TEMP_C started as a check before a task begins, and gotcha
+# #31 already says in as many words that a pre-flight temperature check is not
+# enough on its own. It was right. The first full backup started at 66C, six
+# minutes later the CPU was at 96.8C, and the thermal guardian stopped every
+# container and powered the machine off at 97C to avoid a hardware trip. The
+# pre-flight check had passed, correctly, thirty degrees earlier.
+#
+# So the task runs in the background and is paused when it gets too hot.
+# SIGSTOP is the right instrument: restic, apt and a Docker prune all resume
+# from a stop with no state to lose, whereas killing any of them mid-way is a
+# choice between a wasted run and a dirty transaction. The task is paused
+# rather than throttled because there is nothing to throttle it with that the
+# scheduler has not already been told about through nice.
+#
+# The hysteresis is deliberate. Resuming the moment it drops below the limit
+# produces a task that spends its life oscillating around the shed threshold,
+# so it stays paused until there is real headroom.
+# Signal the task and everything it started, walking the tree explicitly.
+#
+# Not `kill -- -$pid`. This function is called inside a command substitution,
+# where bash does not reliably make a background job its own process group
+# leader, so the negative form either fails or, worse, names the group this
+# script is itself in: stopping that stops the governor loop as well and
+# nothing ever resumes anything. Walking children is a few more lines and has
+# no such failure mode.
+#
+# The parent is stopped before its children so it cannot spawn more while the
+# walk is in progress, and resumed after them so it does not immediately
+# reap a child that is still stopped.
+_signal_tree() {
+    local root="$1" sig="$2" child
+    if [[ "$sig" == "STOP" ]]; then
+        kill -STOP "$root" 2>/dev/null || true
+        for child in $(pgrep -P "$root" 2>/dev/null); do
+            _signal_tree "$child" STOP
+        done
+    else
+        for child in $(pgrep -P "$root" 2>/dev/null); do
+            _signal_tree "$child" CONT
+        done
+        kill -CONT "$root" 2>/dev/null || true
+    fi
+}
+
+run_governed() {
+    local fn="$1"
+    local resume_at=$(( MAINTENANCE_MAX_TEMP_C - 8 ))
+    local out; out="$(mktemp)"
+
+    "$fn" > "$out" 2>&1 &
+    local pid=$!
+    local paused=false pauses=0 t
+
+    while kill -0 "$pid" 2>/dev/null; do
+        sleep 15
+        kill -0 "$pid" 2>/dev/null || break
+        t="$(cpu_temp)"
+        [[ -n "$t" ]] || continue
+        if [[ "$paused" == "false" ]] && (( t >= MAINTENANCE_MAX_TEMP_C )); then
+            _signal_tree "$pid" STOP
+            paused=true; pauses=$((pauses+1))
+            log "paused at ${t}C, over the ${MAINTENANCE_MAX_TEMP_C}C limit"
+        elif [[ "$paused" == "true" ]] && (( t <= resume_at )); then
+            _signal_tree "$pid" CONT
+            paused=false
+            log "resumed at ${t}C"
+        fi
+    done
+
+    # A task left stopped never exits, so wait would hang for as long as the
+    # unit timeout allows.
+    [[ "$paused" == "true" ]] && _signal_tree "$pid" CONT
+    wait "$pid"
+    local rc=$?
+    cat "$out"
+    (( pauses > 0 )) && echo "(paused ${pauses} time(s) to stay under ${MAINTENANCE_MAX_TEMP_C}C)"
+    rm -f "$out"
+    return "$rc"
+}
+
 # ── Run whatever is due ─────────────────────────────────────────────────────
 
 TASKS="backup cleanup timemachine os-upgrade"
@@ -390,7 +494,7 @@ for task in $TASKS; do
 
     log "$task starting (CPU ${temp}C)"
     started=$(date +%s)
-    output="$("task_${task//-/_}" 2>&1)"
+    output="$(run_governed "task_${task//-/_}" 2>&1)"
     rc=$?
     elapsed=$(( $(date +%s) - started ))
     summary="$(echo "$output" | tr -d '\r' | grep -v '^[[:space:]]*$' | tail -3 | tr '\n' ' ')"

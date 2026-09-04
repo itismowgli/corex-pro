@@ -124,6 +124,9 @@ set -uo pipefail
 CONF=/etc/corex/thermal.conf
 STATE=/var/lib/corex/thermal.state
 SHED_LIST=/var/lib/corex/thermal-shed.list
+# What was running when an emergency shutdown was ordered, read once at the
+# next boot by corex-boot-repair and then removed.
+EMERG_LIST=/var/lib/corex/thermal-emergency.list
 LOG=/mnt/corex-data/blackbox.log
 
 [[ -r "$CONF" ]] || exit 0
@@ -323,9 +326,49 @@ else
 fi
 echo "$band $count" > "$STATE"
 
-# Emergency acts immediately — there is no time to confirm at TjMax.
+# Emergency acts immediately: there is no time to confirm at TjMax.
 if [[ "$band" == "emergency" ]]; then
-    say "EMERGENCY ${temp}C >= ${THERMAL_EMERGENCY_C}C — graceful shutdown to avoid THERMTRIP"
+    say "EMERGENCY ${temp}C >= ${THERMAL_EMERGENCY_C}C, graceful shutdown to avoid THERMTRIP"
+
+    # What was running, written before anything is stopped.
+    #
+    # This is the difference between a thermal shutdown and a thermal outage.
+    # `docker stop` on a container whose policy is unless-stopped means
+    # exactly that: Docker will not bring it back at the next boot, because
+    # it was stopped deliberately. So the box came back up with every service
+    # down, permanently, and nothing anywhere recorded why. Measured: 23
+    # containers stopped, 0 running after the reboot, shed list empty.
+    #
+    # Not the shed list, which is for load shedding while the machine keeps
+    # running and is only drained in the recover and normal bands. A box whose
+    # idle floor is above THERMAL_WARN_C would never drain it (gotcha #25).
+    # corex-boot-repair reads this one at the next boot, where there is no
+    # load and bringing the services back is the right default.
+    docker ps --format '{{.Names}}' > "$EMERG_LIST" 2>/dev/null || true
+    say "recorded $(grep -c . "$EMERG_LIST" 2>/dev/null || echo 0) running container(s) for the next boot"
+
+    # Said before acting, not after: there is no after. The message is what
+    # tells the operator this was a decision rather than a hardware trip.
+    if [[ -x /usr/bin/python3 ]]; then
+        python3 - "$temp" "$THERMAL_EMERGENCY_C" << 'PYEOF' 2>/dev/null || true
+import sys
+sys.path.insert(0, "/usr/local/lib/corex")
+try:
+    import corex_common as cc
+except Exception:
+    raise SystemExit(0)
+temp, limit = sys.argv[1], sys.argv[2]
+token, chat = cc.telegram_creds()
+if token and chat:
+    cc.telegram_send(token, chat, cc.message(
+        "fail", "Shutting down to save the hardware",
+        "The processor reached %sC, at or above the %sC limit, so every service "
+        "was stopped and the machine is powering off. This is deliberate: the "
+        "alternative is the hardware cutting power with nothing flushed." % (temp, limit),
+        footer="It restarts the services itself at the next boot."))
+PYEOF
+    fi
+
     timeout 90 docker stop --time 20 $(docker ps -q 2>/dev/null) >/dev/null 2>&1 || true
     sync
     /sbin/shutdown -h now "CoreX thermal emergency: ${temp}C"
