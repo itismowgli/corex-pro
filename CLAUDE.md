@@ -1902,8 +1902,11 @@ so restic reports "unable to locate cache directory" and reads every file on
 every run, which is both slow and hot. With a cache, later runs are
 incremental.
 
-And the task is paused while it runs. `run_governed` samples every fifteen
-seconds, sends SIGSTOP at the limit and SIGCONT eight degrees lower. SIGSTOP
+And the task is paused while it runs. `run_governed` samples every five
+seconds, sends SIGSTOP at the limit and SIGCONT eight degrees lower. Five and
+not fifteen because that was measured: with a fifteen second interval the 85C
+limit was first sampled at 95C, since this hardware climbs ten degrees in
+fifteen seconds under a compressing backup. SIGSTOP
 is the right instrument: restic, apt and a Docker prune all resume from a stop
 with nothing lost, and killing any of them is a choice between a wasted run
 and a dirty transaction.

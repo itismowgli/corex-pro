@@ -200,6 +200,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
   group leader, so `kill -- -$pid` either fails or names the group the script
   is in, which stops the governor along with the task.
 
+  Sampling is every five seconds, which was measured rather than chosen: with
+  a fifteen second interval the 85C limit was first seen at 95C, because this
+  hardware climbs ten degrees in fifteen seconds under a compressing backup.
+
+- **`maintenance setup` no longer rewrites a script that is running.** It
+  truncated `/usr/local/bin/corex-maintenance.sh` in place, and that script
+  can be running for hours: bash reads a script incrementally, so a rewrite
+  underneath a running copy makes it resume in the middle of whatever now
+  occupies that offset. It is written to a temporary file and moved into
+  place, with the mode set afterwards rather than inherited, which is the same
+  trap gotcha #24 records for state.json.
+
 - **AdGuard's admin port was read with a window too small to reach it.**
   `grep -A5 "http:"` no longer finds `address:` in `AdGuardHome.yaml`, because
   current AdGuard writes a `pprof` block and a `doh` routes list in there

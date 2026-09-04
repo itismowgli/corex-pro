@@ -149,8 +149,19 @@ _maintenance_refresh_backup_scripts() {
 # ── The runner ───────────────────────────────────────────────────────────────
 # Self-contained, like the watchdog and the thermal guardian: it runs from
 # systemd with no CoreX libraries sourced.
+# Written to a temporary file and moved into place, not truncated where it is.
+#
+# This script can be running for hours: a first Restic snapshot of a full data
+# SSD takes that long. Bash reads a script incrementally as it executes, so
+# rewriting the file underneath a running copy makes it resume in the middle
+# of whatever now occupies that offset. `mv` is atomic and leaves the running
+# process on the old inode.
+#
+# The mode is set after the move rather than relying on it: mv from mktemp
+# carries 0600 across, which is the trap gotcha #24 records for state.json.
 _maintenance_write_script() {
-    cat > /usr/local/bin/corex-maintenance.sh << 'MREOF'
+    local tmp; tmp="$(mktemp /usr/local/bin/.corex-maintenance.XXXXXX)"
+    cat > "$tmp" << 'MREOF'
 #!/bin/bash
 # CoreX scheduled maintenance. Installed by lib/maintenance.sh; do not edit
 # here, the settings are in /etc/corex/maintenance.conf.
@@ -441,8 +452,12 @@ run_governed() {
     local pid=$!
     local paused=false pauses=0 t
 
+    # Five seconds, not fifteen. Measured on the first governed run: the
+    # limit is 85C and it was sampled at 95C, because this hardware climbs ten
+    # degrees in fifteen seconds under a compressing backup. Reading a sensor
+    # is a millisecond against a task that runs for an hour.
     while kill -0 "$pid" 2>/dev/null; do
-        sleep 15
+        sleep 5
         kill -0 "$pid" 2>/dev/null || break
         t="$(cpu_temp)"
         [[ -n "$t" ]] || continue
@@ -519,6 +534,7 @@ done
 
 (( ran > 0 )) || exit 0
 MREOF
+    mv -f "$tmp" /usr/local/bin/corex-maintenance.sh
     chmod 750 /usr/local/bin/corex-maintenance.sh
 }
 
