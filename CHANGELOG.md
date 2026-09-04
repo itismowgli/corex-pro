@@ -6,6 +6,48 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.21.1] - 2026-09-04
+
+### Fixed
+- **Authelia was intercepting every n8n webhook.** n8n is published so that
+  other systems can call it, and a forwardAuth middleware on its router
+  answered a POST to `/webhook/<id>` with a 302 to the login portal. Every
+  incoming call from every external service failed, and silently as far as n8n
+  was concerned, because nothing reached it to be logged. Measured after
+  putting Authelia in front: all of `/webhook`, `/webhook-test`, `/form`, the
+  OAuth callback and `/healthz` returned 302.
+
+  Those paths are bypassed in the Authelia access control rules now, which is
+  one list in one file rather than a second Traefik router whose priority has
+  to be reasoned about. The n8n interface itself is still behind the portal.
+  The endpoints are not unprotected by being open: they are protected by the
+  unguessable id in the path, which is n8n's own design.
+
+- **The dashboard fired a 26 second request on every page load.** `/api/storage`
+  shells out to `corex manage storage`, which walks `/var/lib/docker` and every
+  service directory with `du`: 26.7 seconds measured, most of it waiting on a
+  USB-attached SSD. It ran on mount for every visitor whether or not they ever
+  opened the Storage tab, pinning a core on a box that is thermally limited and
+  dragging the whole page behind it.
+
+  `usePoll` takes an `enabled` flag now, so Storage, Ports and Catalogue wait
+  until their tab is opened, and the Go side caches the report for five minutes
+  behind a single flight, so a reload during those 26 seconds joins the run in
+  progress instead of starting a second one.
+
+- **The vitals stream sampled once per viewer instead of once per box.**
+  `collectVitals` runs `docker stats --no-stream`, which costs a full sampling
+  interval: 1.16 seconds here. At a five second tick that is a quarter of a
+  core for one open tab, half for two, and most of a core for three, for as
+  long as a tab is left open. The dashboard was one of the hottest things on
+  the box purely to draw itself.
+
+  Subscribers share one loop now. It starts when the first arrives, stops when
+  the last leaves, and a new subscriber is handed the most recent sample
+  straight away rather than triggering one of its own.
+
+---
+
 ## [v3.21.0] - 2026-09-04
 
 ### Added

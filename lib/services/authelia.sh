@@ -141,6 +141,30 @@ _authelia_smtp() {
     return 0
 }
 
+# ── Paths that stay open ──────────────────────────────────────────────────────
+#
+# One list, keyed by router. Anything not named here is behind the portal.
+#
+# n8n is the case that matters: it is published so that other systems can call
+# it, and a login in front of /webhook breaks exactly the thing the hostname
+# exists for. The endpoints are not unprotected by being open, they are
+# protected by the unguessable id in the path, which is n8n's own design.
+_authelia_bypass_for() {
+    case "$1" in
+        n8n)
+            printf '%s\n' \
+                '^/webhook(/.*)?$' \
+                '^/webhook-test(/.*)?$' \
+                '^/webhook-waiting(/.*)?$' \
+                '^/form(/.*)?$' \
+                '^/form-test(/.*)?$' \
+                '^/rest/oauth2-credential/callback$' \
+                '^/healthz$'
+            ;;
+        *) return 0 ;;
+    esac
+}
+
 # ── Config ────────────────────────────────────────────────────────────────────
 
 _authelia_conf_file() {
@@ -178,6 +202,33 @@ _authelia_write_config() {
     local protect_hosts="" r
     for r in ${AUTHELIA_PROTECT:-$AUTHELIA_DEFAULT_PROTECT}; do
         protect_hosts+="      - '${r}.${DOMAIN}'"$'\n'
+    done
+
+    # Paths that have to stay reachable without a sign-in, and the reason this
+    # is not optional.
+    #
+    # n8n exists to receive webhooks. A forwardAuth middleware on its router
+    # answers a POST to /webhook/<id> with a 302 to the portal, so every
+    # incoming call from every external service fails, silently as far as n8n
+    # is concerned: nothing reaches it to be logged. Measured after putting
+    # Authelia in front, all five of these returned 302.
+    #
+    # Bypassed here rather than with a second Traefik router, because Authelia
+    # sees the original path in X-Forwarded-Uri and one list in one file is
+    # easier to keep right than a router whose priority has to be reasoned
+    # about. The UI itself is still behind the portal: only these prefixes are
+    # open, and they carry their own secret in the URL.
+    local bypass_block="" path
+    for r in ${AUTHELIA_PROTECT:-$AUTHELIA_DEFAULT_PROTECT}; do
+        local paths; paths="$(_authelia_bypass_for "$r")"
+        [[ -n "$paths" ]] || continue
+        bypass_block+="    - domain: '${r}.${DOMAIN}'"$'\n'
+        bypass_block+="      policy: bypass"$'\n'
+        bypass_block+="      resources:"$'\n'
+        while read -r path; do
+            [[ -n "$path" ]] || continue
+            bypass_block+="        - '${path}'"$'\n'
+        done <<< "$paths"
     done
 
     cat > "${dir}/configuration.yml" << CFEOF
@@ -222,7 +273,7 @@ access_control:
   rules:
     - domain: 'auth.${DOMAIN}'
       policy: bypass
-    - domain:
+${bypass_block}    - domain:
 ${protect_hosts}      policy: ${policy}
 
 session:

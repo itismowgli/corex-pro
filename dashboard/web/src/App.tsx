@@ -205,7 +205,11 @@ function Dashboard({
   // 15s while idle. An action refreshes it immediately when the job ends, so a
   // badge is never more than a moment behind what the box is doing.
   const services = usePoll(api.services, 15_000)
-  const storage = usePoll(api.storage, 0)
+  // Held back until the Storage tab is opened. This one shells out to
+  // `corex manage storage`, which walks /var/lib/docker and every service
+  // directory: 26.7 seconds measured on this box, fired on every page load by
+  // every visitor whether or not they ever looked at Storage.
+  const storage = usePoll(api.storage, 0, tab === "storage")
   // 20s, matching the blackbox sampler: polling faster shows the same numbers
   // twice, and this call walks both disks and Kuma's database.
   // The heavy half: both disks, Kuma's database and a cached `du`. Every 45
@@ -213,8 +217,8 @@ function Dashboard({
   const overview = usePoll(api.overview, 45_000)
   // The light half, pushed every five seconds so the tiles move on their own.
   const vitals = useStream<Vitals>(api.vitalsStreamURL)
-  const ports = usePoll(api.ports, 0)
-  const catalogue = usePoll(api.catalogue, 0)
+  const ports = usePoll(api.ports, 0, tab === "system" || tab === "network")
+  const catalogue = usePoll(api.catalogue, 0, tab === "catalogue")
 
   React.useEffect(() => {
     location.hash = tab

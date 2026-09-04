@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -760,8 +761,59 @@ func servicesHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, svcs)
 }
 
+// The storage report is cached, because producing it is expensive.
+//
+// `corex manage storage` walks /var/lib/docker and every service directory
+// with `du`: 26.7 seconds measured on this box, most of it waiting on a
+// USB-attached SSD. Two people opening the Storage tab, or one person
+// reloading, used to mean that work twice. Five minutes is far fresher than
+// anything a disk-usage figure needs, and the client no longer asks for it
+// until the tab is actually opened.
+var storageCache = struct {
+	sync.Mutex
+	out string
+	at  time.Time
+	// A single flight, so a reload during the 26 seconds joins the run in
+	// progress rather than starting a second one.
+	running bool
+	done    chan struct{}
+}{}
+
+const storageCacheTTL = 5 * time.Minute
+
+func cachedStorage() (string, error) {
+	for {
+		storageCache.Lock()
+		if time.Since(storageCache.at) < storageCacheTTL && storageCache.out != "" {
+			out := storageCache.out
+			storageCache.Unlock()
+			return out, nil
+		}
+		if storageCache.running {
+			wait := storageCache.done
+			storageCache.Unlock()
+			<-wait
+			continue
+		}
+		storageCache.running = true
+		storageCache.done = make(chan struct{})
+		done := storageCache.done
+		storageCache.Unlock()
+
+		out, err := runManage("storage")
+		storageCache.Lock()
+		if err == nil || strings.TrimSpace(out) != "" {
+			storageCache.out, storageCache.at = out, time.Now()
+		}
+		storageCache.running = false
+		storageCache.Unlock()
+		close(done)
+		return out, err
+	}
+}
+
 func storageHandler(w http.ResponseWriter, r *http.Request) {
-	out, err := runManage("storage")
+	out, err := cachedStorage()
 	if err != nil {
 		// Reported, not swallowed. Discarding it is why the Storage tab
 		// silently showed nothing for so long: corex-manage refused to run as

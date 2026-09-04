@@ -21,6 +21,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -403,6 +404,85 @@ func collectVitals() vitals {
 //
 // `docker stats --no-stream` costs a full sampling interval, so five seconds
 // is about the floor before this spends more time measuring than waiting.
+// One sampler for every viewer, and none when there are no viewers.
+//
+// The stream used to sample per connection. collectVitals runs
+// `docker stats --no-stream`, which costs a full sampling interval: measured
+// at 1.16 seconds on this box. At a five second tick that is a quarter of a
+// core for one open tab, half for two, and most of a core for three, running
+// for as long as a tab is left open, on hardware that thermal-trips. The
+// dashboard was one of the hottest things on the box purely to draw itself.
+//
+// So subscribers share one loop. It starts when the first one arrives, stops
+// when the last one leaves, and a new subscriber is handed the most recent
+// sample straight away rather than waiting up to five seconds for the next
+// tick or triggering a sample of its own.
+var vitalsHub = struct {
+	sync.Mutex
+	subs    map[chan []byte]struct{}
+	running bool
+	last    []byte
+	lastAt  time.Time
+}{subs: map[chan []byte]struct{}{}}
+
+const vitalsInterval = 5 * time.Second
+
+// vitalsSubscribe returns a channel of encoded samples, the freshest sample
+// already taken if there is one, and a function to unsubscribe.
+func vitalsSubscribe() (<-chan []byte, []byte, func()) {
+	ch := make(chan []byte, 1)
+	vitalsHub.Lock()
+	vitalsHub.subs[ch] = struct{}{}
+	var seed []byte
+	// A sample older than one interval is not worth showing as current; the
+	// loop is about to produce a new one anyway.
+	if time.Since(vitalsHub.lastAt) < vitalsInterval {
+		seed = vitalsHub.last
+	}
+	start := !vitalsHub.running
+	if start {
+		vitalsHub.running = true
+	}
+	vitalsHub.Unlock()
+
+	if start {
+		go vitalsLoop()
+	}
+	return ch, seed, func() {
+		vitalsHub.Lock()
+		delete(vitalsHub.subs, ch)
+		vitalsHub.Unlock()
+	}
+}
+
+func vitalsLoop() {
+	for {
+		body, err := json.Marshal(collectVitals())
+		vitalsHub.Lock()
+		if err == nil {
+			vitalsHub.last, vitalsHub.lastAt = body, time.Now()
+		}
+		if len(vitalsHub.subs) == 0 {
+			vitalsHub.running = false
+			vitalsHub.Unlock()
+			return
+		}
+		if err == nil {
+			for ch := range vitalsHub.subs {
+				// Never block on a subscriber. A client that has stopped
+				// reading must not hold up the sampler for everyone else, and
+				// a dropped sample is replaced five seconds later.
+				select {
+				case ch <- body:
+				default:
+				}
+			}
+		}
+		vitalsHub.Unlock()
+		time.Sleep(vitalsInterval)
+	}
+}
+
 func vitalsStreamHandler(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -416,30 +496,27 @@ func vitalsStreamHandler(w http.ResponseWriter, r *http.Request) {
 	// arrives until it closes, which looks exactly like a hung page.
 	w.Header().Set("X-Accel-Buffering", "no")
 
-	ctx := r.Context()
-	send := func() bool {
-		body, err := json.Marshal(collectVitals())
-		if err != nil {
-			return true
-		}
+	ch, seed, unsubscribe := vitalsSubscribe()
+	defer unsubscribe()
+
+	send := func(body []byte) bool {
 		if _, err := fmt.Fprintf(w, "data: %s\n\n", body); err != nil {
 			return false
 		}
 		flusher.Flush()
 		return true
 	}
-	if !send() {
+	if seed != nil && !send(seed) {
 		return
 	}
 
-	tick := time.NewTicker(5 * time.Second)
-	defer tick.Stop()
+	ctx := r.Context()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-tick.C:
-			if !send() {
+		case body := <-ch:
+			if !send(body) {
 				return
 			}
 		}
