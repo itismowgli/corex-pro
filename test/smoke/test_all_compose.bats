@@ -571,3 +571,29 @@ sso_off() {
     [ "$status" -ne 0 ]
     assert_valid_compose "adguard"
 }
+
+@test "lan-only puts the allowlist before the auth portal in the chain" {
+    # Order matters: a request from the internet should be refused by the
+    # allowlist rather than costing a round trip to the portal first.
+    _sso_load
+    sso_lan_only() { [[ "$1" == "portainer" ]]; }
+    sso_protects() { [[ " portainer grafana n8n " == *" $1 "* ]]; }
+    export -f sso_lan_only sso_protects
+    source_service "portainer"
+    portainer_deploy
+    assert_compose_contains "portainer" "routers.portainer.middlewares=corex-lan@file,authelia@docker"
+    assert_valid_compose "portainer"
+}
+
+@test "a lan-only router with no shared login carries only the allowlist" {
+    _sso_load
+    sso_lan_only() { [[ "$1" == "adguard" ]]; }
+    sso_protects() { return 1; }
+    export -f sso_lan_only sso_protects
+    source_service "adguard"
+    adguard_deploy
+    assert_compose_contains "adguard" "routers.adguard.middlewares=corex-lan@file"
+    run grep "authelia@docker" "${DOCKER_ROOT}/adguard/docker-compose.yml"
+    [ "$status" -ne 0 ]
+    assert_valid_compose "adguard"
+}

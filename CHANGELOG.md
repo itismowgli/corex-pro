@@ -6,6 +6,33 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.22.0] - 2026-09-04
+
+### Added
+- **`corex manage lan-only`, so a panel you only use from home stops being
+  published.** A hostname nothing outside the house can reach cannot be
+  scanned, probed or decided to look like a phishing page, which is a stronger
+  answer than a login for Portainer, Grafana or AdGuard.
+
+  It works because of how the tunnel is shaped: external traffic reaches
+  Traefik from cloudflared's container address, which is not in the LAN range,
+  so a Traefik `ipAllowList` refuses it with no `X-Forwarded-For` to reason
+  about, while a browser at home reaches Traefik directly on 443. The
+  middleware lives in the file provider, so it exists whether or not Authelia
+  does, and `sso_label_for` builds the chain with the allowlist first: a
+  request from the internet is refused before it costs a round trip to the
+  portal.
+
+  `n8n` is refused a place on the list by name. Its webhook endpoints are the
+  reason it is published at all.
+
+  This is also the practical answer to Chrome's "Dangerous site" interstitial
+  on the admin hostnames. That warning is a false positive and putting a bare
+  login form in front of them made it likelier, not less; not publishing them
+  removes the question. An existing flag still has to be appealed by hand.
+
+---
+
 ## [v3.21.1] - 2026-09-04
 
 ### Fixed

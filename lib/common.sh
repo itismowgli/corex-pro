@@ -234,6 +234,30 @@ sso_protects() {
     [[ " ${AUTHELIA_PROTECT} " == *" ${router} "* ]]
 }
 
+# Whether this router is restricted to the local network.
+#
+# A separate question from the shared login, and a stronger answer: a hostname
+# nothing outside the house can reach is not one Google can scan, cannot be
+# probed by anything on the internet, and needs no login to keep it that way.
+#
+# It works because of how the tunnel is shaped. External traffic arrives at
+# Traefik from cloudflared's container address, which is not in the LAN range,
+# so the allowlist rejects it without any X-Forwarded-For to reason about,
+# while a browser at home reaches Traefik directly on 443 from 192.168.x.x.
+#
+# The middleware file is checked, not just the config, for the reason in
+# gotcha #44: a router naming a middleware Traefik cannot find answers 404
+# rather than falling back to serving the site.
+sso_lan_only() {
+    local router="$1"
+    [[ -r /etc/corex/authelia.conf ]] || return 1
+    local AUTHELIA_LAN_ONLY=""
+    # shellcheck source=/dev/null
+    . /etc/corex/authelia.conf 2>/dev/null || return 1
+    [[ " ${AUTHELIA_LAN_ONLY} " == *" ${router} "* ]] || return 1
+    [[ -f "${DOCKER_ROOT:-/mnt/corex-data/docker-configs}/traefik/dynamic/corex-lan.yml" ]]
+}
+
 # The full compose label line for one router, or nothing. Printed at the
 # indentation a service label needs, so a module can drop the result straight
 # into its heredoc on a line of its own: an empty value leaves a blank line,
@@ -242,7 +266,11 @@ sso_protects() {
 #
 # Usage:  local sso_label; sso_label="$(sso_label_for portainer)"
 sso_label_for() {
-    local router="$1"
-    sso_protects "$router" || return 0
-    printf '      - "traefik.http.routers.%s.middlewares=authelia@docker"' "$router"
+    local router="$1" chain=""
+    # The allowlist goes first, so a request from the internet is refused
+    # before it costs a round trip to the auth portal.
+    sso_lan_only "$router" && chain="corex-lan@file"
+    sso_protects "$router" && chain="${chain:+${chain},}authelia@docker"
+    [[ -n "$chain" ]] || return 0
+    printf '      - "traefik.http.routers.%s.middlewares=%s"' "$router" "$chain"
 }

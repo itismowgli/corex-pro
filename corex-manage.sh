@@ -2254,6 +2254,96 @@ cmd_agent() {
     esac
 }
 
+# ── lan-only ──────────────────────────────────────────────────────────────────
+#
+# Restrict a hostname to the local network, or lift the restriction. Stronger
+# than a login for a panel you only use from home: nothing on the internet can
+# reach it, so nothing on the internet can scan it, probe it or decide it looks
+# like a phishing page.
+cmd_lan_only() {
+    source "${SCRIPT_DIR}/lib/services/authelia.sh"
+    local conf=/etc/corex/authelia.conf
+    local sub="${1:-show}"
+    shift || true
+
+    [[ -f "$conf" ]] || log_error "Not configured. Install the shared login first: corex manage add authelia"
+    local AUTHELIA_LAN_ONLY=""
+    # shellcheck source=/dev/null
+    . "$conf"
+
+    _lan_apply() {
+        local list="$1" r svc
+        # The middleware has to exist before a router names it, or Traefik
+        # puts that router into an error state and the hostname answers 404.
+        _authelia_write_lan_middleware || log_error "Could not write the allowlist middleware"
+        local tmp; tmp="$(mktemp)"
+        grep -v '^AUTHELIA_LAN_ONLY=' "$conf" > "$tmp"
+        echo "AUTHELIA_LAN_ONLY=\"${list}\"" >> "$tmp"
+        cat "$tmp" > "$conf"; rm -f "$tmp"
+        chmod 644 "$conf"
+        # Every router that is or was on the list, so removing one takes its
+        # label off as well as adding one puts it on.
+        for r in $(printf '%s\n%s\n' "$list" "$AUTHELIA_LAN_ONLY" | tr ' ' '\n' | sort -u); do
+            [[ -n "$r" ]] || continue
+            svc="$r"; [[ "$r" == "grafana" ]] && svc="monitoring"
+            state_service_is_installed "$svc" 2>/dev/null || continue
+            state_service_is_enabled "$svc" 2>/dev/null || { log_info "  ${r}: ${svc} is disabled, it will pick this up when enabled"; continue; }
+            if _run_service_fn "$svc" "deploy" >/dev/null 2>&1; then
+                log_success "  ${r}: updated"
+            else
+                log_warning "  ${r}: could not regenerate, run: corex manage repair ${svc}"
+            fi
+        done
+    }
+
+    case "$sub" in
+        show|"")
+            echo ""
+            echo -e "${BOLD}LAN-only hostnames${NC}"
+            echo ""
+            if [[ -z "${AUTHELIA_LAN_ONLY// /}" ]]; then
+                echo "  None. Every routed hostname is reachable from the internet."
+            else
+                local r
+                for r in $AUTHELIA_LAN_ONLY; do
+                    echo -e "  ${r}.${DOMAIN}: ${GREEN}local network only${NC}"
+                done
+            fi
+            echo ""
+            echo "  Add one with:    corex manage lan-only add portainer"
+            echo "  Remove one with: corex manage lan-only remove portainer"
+            echo ""
+            echo "  n8n cannot go on this list: its webhook endpoints are the"
+            echo "  reason it is published at all."
+            echo ""
+            ;;
+        add)
+            [[ -n "${1:-}" ]] || log_error "Usage: corex manage lan-only add <router> [router...]"
+            local want="$AUTHELIA_LAN_ONLY" r
+            for r in "$@"; do
+                [[ "$r" == "n8n" ]] && log_error "n8n is published so other systems can call its webhooks. Restricting it breaks them."
+                [[ " $want " == *" $r "* ]] || want="${want:+${want} }${r}"
+            done
+            log_info "Restricting to the local network: ${want}"
+            _lan_apply "$want"
+            ;;
+        remove|rm)
+            [[ -n "${1:-}" ]] || log_error "Usage: corex manage lan-only remove <router> [router...]"
+            local keep="" r drop=false cur
+            for cur in $AUTHELIA_LAN_ONLY; do
+                drop=false
+                for r in "$@"; do [[ "$cur" == "$r" ]] && drop=true; done
+                $drop || keep="${keep:+${keep} }${cur}"
+            done
+            log_info "Publishing again: $*"
+            _lan_apply "$keep"
+            ;;
+        *)
+            log_error "Usage: corex manage lan-only [show|add <router>|remove <router>]"
+            ;;
+    esac
+}
+
 # ── maintenance ───────────────────────────────────────────────────────────────
 cmd_maintenance() {
     source "${SCRIPT_DIR}/lib/maintenance.sh"
@@ -2456,6 +2546,10 @@ Commands:
                         agent setup    install the agent and the Telegram bot
                         agent test     prove the socket works, including from
                                        inside the dashboard container
+  lan-only [sub]      Restrict a hostname to the local network, or lift it
+                        lan-only                 show what is restricted
+                        lan-only add <router>    stop publishing it
+                        lan-only remove <router> publish it again
   maintenance [sub]   Scheduled backup, cleanup and checks, and what each one did
                         maintenance          show the schedule and the last outcome
                         maintenance setup    install the hourly timer
@@ -2559,6 +2653,7 @@ main() {
         agent)        cmd_agent "$@" ;;
         power)        cmd_power "$@" ;;
         maintenance)  cmd_maintenance "$@" ;;
+        lan-only)     cmd_lan_only "$@" ;;
         dashboard-user) cmd_dashboard_user "$@" ;;
         route)        cmd_route "$@" ;;
         help|--help|-h) cmd_help ;;
