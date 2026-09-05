@@ -259,6 +259,59 @@ disks_relabel() {
     disks_guard_docker
 }
 
+# Read-only assessment for replacing the legacy TIMEMACHINE + COREX_DATA
+# layout with one shared filesystem. It deliberately does not emit a sequence
+# of destructive commands: the safe mechanism is backup, recreate and restore,
+# and the exact target disk must be inspected on the server first.
+disks_shared_plan() {
+    local data tm data_parent tm_parent data_part tm_part backup_src backup_parent
+    data=$(blkid -L "$DISK_DATA_LABEL" 2>/dev/null || true)
+    tm=$(blkid -L "$DISK_TM_LABEL" 2>/dev/null || true)
+
+    echo ""
+    echo -e "${CYAN}${BOLD}Shared data-pool migration assessment${NC}"
+    echo "──────────────────────────────────────────────────────────────"
+    if [[ -z "$data" ]]; then
+        echo -e "  ${RED}fail${NC}  no filesystem labelled ${DISK_DATA_LABEL} was found"
+        return 1
+    fi
+
+    data_parent=$(lsblk -no PKNAME "$data" 2>/dev/null | head -1)
+    data_part=$(lsblk -no PARTN "$data" 2>/dev/null | head -1)
+    echo "  Data filesystem: $data (parent /dev/${data_parent:-unknown}, partition ${data_part:-unknown})"
+    df -h "$DISK_DATA_MOUNT" 2>/dev/null | tail -1 | sed 's/^/  Usage:           /'
+
+    if [[ -z "$tm" ]]; then
+        echo -e "  ${GREEN}ok${NC}    no dedicated ${DISK_TM_LABEL} filesystem exists"
+    else
+        tm_parent=$(lsblk -no PKNAME "$tm" 2>/dev/null | head -1)
+        tm_part=$(lsblk -no PARTN "$tm" 2>/dev/null | head -1)
+        echo "  Time Machine:    $tm (parent /dev/${tm_parent:-unknown}, partition ${tm_part:-unknown})"
+        df -h "$DISK_TM_MOUNT" 2>/dev/null | tail -1 | sed 's/^/  Usage:           /'
+        if [[ -n "$data_parent" && "$data_parent" == "$tm_parent" &&
+              "$tm_part" =~ ^[0-9]+$ && "$data_part" =~ ^[0-9]+$ &&
+              "$tm_part" -lt "$data_part" ]]; then
+            echo -e "  ${YELLOW}warn${NC}  Time Machine is before the data filesystem. Deleting it"
+            echo "        would leave free space before COREX_DATA; ext4 cannot grow backward."
+        fi
+    fi
+
+    backup_src=$(findmnt -nro SOURCE --target "${BACKUP_ROOT:-/mnt/corex-data/backups}" 2>/dev/null || true)
+    backup_src="${backup_src%%\[*}"
+    backup_parent=$(lsblk -sno NAME "$backup_src" 2>/dev/null | tail -1)
+    if [[ -n "$backup_parent" && "$backup_parent" == "$data_parent" ]]; then
+        echo -e "  ${RED}fail${NC}  the configured backup repository is on the disk being replaced"
+        echo "        and cannot protect this migration. Use another physical disk or remote repository."
+    else
+        echo -e "  ${YELLOW}check${NC} verify a current backup on another physical device and test a restore"
+    fi
+
+    echo ""
+    echo "  This migration requires downtime: stop writers, take a final backup,"
+    echo "  recreate the exact external data disk, restore, then verify mount guards"
+    echo "  and databases before starting services. See docs/performance-and-storage.md."
+}
+
 # ── Fast tier ─────────────────────────────────────────────────────────────────
 #
 # The databases are the one thing on this box doing constant small random
@@ -280,7 +333,7 @@ DISK_FAST_SIZE="${DISK_FAST_SIZE:-50G}"
 # What belongs on it. Directory names under service-data, nothing else: these
 # are the small, latency-sensitive stores. Bulk data (photos, files, metrics)
 # stays on the big disk, where sequential throughput is all that matters.
-DISK_FAST_DIRS=(nextcloud-db immich-db calcom-db crowdsec-db)
+DISK_FAST_DIRS=(nextcloud-db immich-db calcom-db keeper-db crowdsec-db)
 
 _fast_src()  { echo "${DATA_ROOT:-/mnt/corex-data/service-data}/$1"; }
 _fast_dest() { echo "${DISK_FAST_MOUNT}/$1"; }

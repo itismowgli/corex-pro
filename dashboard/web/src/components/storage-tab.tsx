@@ -97,10 +97,8 @@ export function StorageTab({
         />
         <StatTile
           icon={BoxIcon}
-          label="Docker on the OS disk"
+          label="Docker storage"
           value={bytes(dockerTotal)}
-          of={root ? bytes(root.total_b) : undefined}
-          ratio={root && root.total_b ? dockerTotal / root.total_b : undefined}
           tone="ok"
           sub="images, containers, volumes and build cache"
         />

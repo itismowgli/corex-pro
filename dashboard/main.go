@@ -65,7 +65,7 @@ type ServiceEntry struct {
 type ServiceInfo struct {
 	Name      string   `json:"name"`
 	Label     string   `json:"label"`
-	Status    string   `json:"status"` // HEALTHY | UNHEALTHY | MISSING | DISABLED
+	Status    string   `json:"status"` // HEALTHY | UNHEALTHY | MISSING | DISABLED | SLEEPING
 	URLs      []string `json:"urls"`
 	Container string   `json:"container"`
 	Enabled   bool     `json:"enabled"`
@@ -136,11 +136,13 @@ var serviceLabels = map[string]string{
 	"crowdsec":    "CrowdSec — Intrusion Prevention",
 	"dashboard":   "CoreX Dashboard",
 	"immich":      "Immich — Photo Library",
+	"keeper":      "Keeper — Calendar Sync",
 	"monitoring":  "Monitoring — Uptime Kuma + Grafana + Prometheus",
 	"n8n":         "n8n — Workflow Automation",
 	"nextcloud":   "Nextcloud — File Storage",
 	"portainer":   "Portainer — Container Manager",
 	"stalwart":    "Stalwart — Mail Server",
+	"sablier":     "Sablier — On-demand Services",
 	"timemachine": "Time Machine — Mac Backup",
 	"traefik":     "Traefik — Reverse Proxy",
 	"ups":         "UPS — Power Monitoring",
@@ -177,6 +179,7 @@ var serviceURLs = map[string][]string{
 	"coolify":     {"https://coolify.{DOMAIN}", "http://{IP}:8000"},
 	"dashboard":   {"https://dashboard.{DOMAIN}"},
 	"immich":      {"https://photos.{DOMAIN}"},
+	"keeper":      {"https://keeper.{DOMAIN}"},
 	"monitoring":  {"https://grafana.{DOMAIN}", "https://status.{DOMAIN}"},
 	"n8n":         {"https://n8n.{DOMAIN}"},
 	"nextcloud":   {"https://nextcloud.{DOMAIN}"},
@@ -204,11 +207,13 @@ var serviceContainers = map[string]string{
 	"crowdsec":    "crowdsec",
 	"dashboard":   "corex-dashboard",
 	"immich":      "immich-server",
+	"keeper":      "keeper",
 	"monitoring":  "grafana",
 	"n8n":         "n8n",
 	"nextcloud":   "nextcloud",
 	"portainer":   "portainer",
 	"stalwart":    "stalwart",
+	"sablier":     "corex-sablier",
 	"timemachine": "timemachine",
 	"traefik":     "traefik",
 	"vaultwarden": "vaultwarden",

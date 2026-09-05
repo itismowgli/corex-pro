@@ -9,6 +9,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 ## [Unreleased]
 
 ### Added
+- `keeper` installs the standalone Keeper.sh calendar sync service behind
+  Traefik. It keeps its PostgreSQL data on the CoreX data pool, stores generated
+  keys in a private environment file, backs up the database with `pg_dump`, and
+  accepts optional Google and Microsoft OAuth credentials from a separate
+  private file. Nextcloud connects through CalDAV.
+
+- `corex manage cold enable portainer` installs an internal Sablier controller.
+  Portainer can stop after 15 minutes without web activity and wake through its
+  HTTPS route. Background services such as Keeper, Nextcloud, mail, n8n and
+  backups stay running because they work without an open browser.
+
 - **`corex manage disk`, and a fast tier for the databases.** The internal NVMe
   had 240GB never handed out while the four databases sat on a USB SSD doing
   the one workload that disk is worst at. They are under a gigabyte together,
@@ -31,6 +42,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 
 ### Fixed
+- The dashboard now shares one live host sampler, pauses browser requests while
+  the page is hidden, and limits container statistics to one sample every 30
+  seconds. The fast metrics path no longer scans disks, logs, SQLite, SMART or
+  update state. A cold Portainer appears as sleeping instead of failed or
+  stopped.
+
+- The setup wizard now retries invalid menu input, handles cancellation and
+  end-of-file input, preserves its selected services after returning, validates
+  addresses and ports, and removes domain-dependent services from LAN-only
+  installs. The installer stops when the wizard, preflight or drive phase fails.
+
 - **The Update button worked, and then reported that it had not.** The check
   answers from a cache held for a day, and nothing invalidated it when an
   update ran, so a service that had just been updated kept its "Update
@@ -96,6 +118,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
   report the still-running container either.
 
 ### Changed
+- New installations create one `COREX_DATA` ext4 partition and leave 2 percent
+  unallocated by default. Time Machine uses a directory in that shared pool.
+  Existing two-partition disks require a verified backup, recreation and restore;
+  `corex manage disk shared-plan` reports the live layout without changing it.
+
+- Ollama unloads models after two idle minutes and allows one loaded model and
+  one inference at a time. Browserless allows two concurrent sessions. Time
+  Machine now has a CPU and memory limit.
+
 - **The login offers the passkey first, and offers it from the username field
   itself.** A passkey already proves possession of the device and verifies the
   person holding it, so it is both factors in one gesture; putting a password

@@ -91,12 +91,14 @@ _migrate_v1_if_needed() {
         [immich-ml]=immich
         [vaultwarden]=vaultwarden
         [n8n]=n8n
+        [keeper]=keeper
         [stalwart]=stalwart
         [timemachine]=timemachine
         [coolify]=coolify
         [crowdsec]=crowdsec
         [cloudflared]=cloudflared
         [ollama]=ai              [open-webui]=ai          [browserless]=ai
+        [corex-sablier]=sablier
         [uptime-kuma]=monitoring [grafana]=monitoring     [prometheus]=monitoring
         [node-exporter]=monitoring [cadvisor]=monitoring
     )
@@ -299,6 +301,7 @@ cmd_status() {
         local color action
         case "$status" in
             HEALTHY)   color="${GREEN}"; action="" ;;
+            SLEEPING)  color="${CYAN}";  action="wakes on HTTPS access" ;;
             UNHEALTHY) color="${RED}";   action="→ corex-manage repair ${svc}" ;;
             MISSING)   color="${YELLOW}"; action="→ corex-manage add ${svc}" ;;
             DISABLED)  color="${CYAN}";  action="→ corex-manage enable ${svc}" ;;
@@ -504,6 +507,12 @@ cmd_enable() {
 
 cmd_disable() {
     local arg="${1:-}"
+    if [[ "$arg" == portainer || "$arg" == portainer:portainer ]] && [[ "$(state_get cold_portainer 2>/dev/null)" == true ]]; then
+        # A deliberate Stop must also remove wake-on-request labels, or the
+        # next request would undo the operator's action.
+        source "${SCRIPT_DIR}/lib/cold.sh"
+        cold_manage disable portainer || return 1
+    fi
     [[ -z "$arg" ]] && { echo "Usage: corex-manage disable <service>[:<component>]"; exit 1; }
 
     # svc:component turns off one container inside a module and leaves the
@@ -741,10 +750,11 @@ cmd_disk() {
         relabel) check_root; disks_relabel ;;
         guard)   check_root; disks_guard_docker ;;
         fast|fast-status) disks_fast_status ;;
+        shared-plan) disks_shared_plan ;;
         fast-tier)   disks_fast_tier ;;
         fast-commit) disks_fast_commit ;;
         *)
-            echo "Usage: corex manage disk <list|check|adopt|relabel|guard|fast-tier>"
+            echo "Usage: corex manage disk <list|check|adopt|relabel|guard|shared-plan|fast-tier>"
             echo ""
             echo "  list     every disk, what it holds, and what CoreX uses it for"
             echo "  check    whether a disk swap would come back on its own"
@@ -752,6 +762,8 @@ cmd_disk() {
             echo "  relabel  put the labels on the disks already in use, and"
             echo "           switch fstab from UUID to label so a swap works"
             echo "  guard    stop Docker starting when the data disk is absent"
+            echo "  shared-plan  inspect the legacy Time Machine/data layout and"
+            echo "               print the checks required before recreating it"
             echo ""
             echo "  fast         where the databases are reading from"
             echo "  fast-tier    move the databases onto the internal NVMe"
@@ -790,8 +802,19 @@ _reclaimed_from() {
 }
 
 cmd_cleanup() {
-    local dry_run=false
-    [[ "${1:-}" == "--dry-run" ]] && dry_run=true
+    local dry_run=false docker_only=false arg
+    for arg in "$@"; do
+        case "$arg" in
+            --dry-run) dry_run=true ;;
+            --docker-only) docker_only=true ;;
+            --help|-h)
+                echo "Usage: corex manage cleanup [--dry-run] [--docker-only]"
+                echo "  --dry-run      Preview without deleting anything"
+                echo "  --docker-only Clean Docker images, build cache and unused networks only"
+                return 0 ;;
+            *) echo "Unknown cleanup option: $arg" >&2; return 2 ;;
+        esac
+    done
 
     echo ""
     if [[ "$dry_run" == "true" ]]; then
@@ -823,11 +846,13 @@ cmd_cleanup() {
     fi
     echo ""
 
-    echo -e "  ${BOLD}systemd journal:${NC} $(journalctl --disk-usage 2>/dev/null \
-        | grep -oE '[0-9.]+[GMK]' | head -1 || echo 'n/a')"
-    echo -e "  ${BOLD}apt cache:${NC} $(du -sh /var/cache/apt/archives 2>/dev/null \
-        | cut -f1 || echo 'n/a')"
-    echo ""
+    if [[ "$docker_only" != "true" ]]; then
+        echo -e "  ${BOLD}systemd journal:${NC} $(journalctl --disk-usage 2>/dev/null \
+            | grep -oE '[0-9.]+[GMK]' | head -1 || echo 'n/a')"
+        echo -e "  ${BOLD}apt cache:${NC} $(du -sh /var/cache/apt/archives 2>/dev/null \
+            | cut -f1 || echo 'n/a')"
+        echo ""
+    fi
 
     if [[ "$dry_run" == "true" ]]; then
         echo "  Nothing was changed. Run without --dry-run to apply."
@@ -887,19 +912,21 @@ cmd_cleanup() {
     echo -e "  ${BOLD}Removing unused Docker networks...${NC}"
     out=$(docker network prune --force 2>&1) || { failures=$((failures + 1)); log_warning "    network prune failed"; }
 
-    echo -e "  ${BOLD}Vacuuming systemd journal (keep 30d, cap 500M)...${NC}"
-    journalctl --vacuum-time=30d &>/dev/null || { failures=$((failures + 1)); log_warning "    journal vacuum failed"; }
-    journalctl --vacuum-size=500M &>/dev/null || { failures=$((failures + 1)); log_warning "    journal cap failed"; }
+    if [[ "$docker_only" != "true" ]]; then
+        echo -e "  ${BOLD}Vacuuming systemd journal (keep 30d, cap 500M)...${NC}"
+        journalctl --vacuum-time=30d &>/dev/null || { failures=$((failures + 1)); log_warning "    journal vacuum failed"; }
+        journalctl --vacuum-size=500M &>/dev/null || { failures=$((failures + 1)); log_warning "    journal cap failed"; }
 
-    echo -e "  ${BOLD}Clearing apt cache...${NC}"
-    apt-get clean 2>/dev/null || { failures=$((failures + 1)); log_warning "    apt-get clean failed"; }
+        echo -e "  ${BOLD}Clearing apt cache...${NC}"
+        apt-get clean 2>/dev/null || { failures=$((failures + 1)); log_warning "    apt-get clean failed"; }
 
-    echo -e "  ${BOLD}Removing rotated logs older than 30 days...${NC}"
-    find /var/log -type f -name '*.gz' -mtime +30 -delete 2>/dev/null || true
-    find /var/log -type f -regex '.*\.[0-9]+$' -mtime +30 -delete 2>/dev/null || true
+        echo -e "  ${BOLD}Removing rotated logs older than 30 days...${NC}"
+        find /var/log -type f -name '*.gz' -mtime +30 -delete 2>/dev/null || true
+        find /var/log -type f -regex '.*\.[0-9]+$' -mtime +30 -delete 2>/dev/null || true
 
-    echo -e "  ${BOLD}Cleaning old CoreX temp files...${NC}"
-    find /tmp -name "corex-*" -mtime +1 -delete 2>/dev/null || true
+        echo -e "  ${BOLD}Cleaning old CoreX temp files...${NC}"
+        find /tmp -name "corex-*" -mtime +1 -delete 2>/dev/null || true
+    fi
 
     # What is left over, measured the same way as before the run, so the two
     # numbers are comparable.
@@ -1957,6 +1984,7 @@ cmd_network_check() {
         ["vaultwarden"]="vault"
         ["n8n"]="n8n"
         ["calcom"]="cal"
+        ["keeper"]="keeper"
         ["stalwart"]="mail"
         ["ai"]="ai"
         ["uptime-kuma"]="status"
@@ -2710,7 +2738,9 @@ Commands:
   os-upgrade          Supervised OS package upgrade (refuses if too hot/unstable)
   mail-setup          Configure Nextcloud outbound SMTP (relay; e.g. Gmail app password)
   storage             Show disk usage breakdown (OS disk, SSD, per-service)
-  cleanup [--dry-run] Remove stale Docker images and build cache safely
+  cold [status|enable|disable] [portainer]  Opt-in wake-on-access
+  cleanup [--dry-run] [--docker-only]
+                      Remove unused images and old build cache; optionally skip host cleanup
   lan-setup           Configure LAN fast-path for direct local network access
   network-tune        Diagnose and optimize network for high-speed file transfers
   network-check       Test HTTPS reachability, SSL expiry, and DNS for all services
@@ -2817,6 +2847,7 @@ main() {
         mail-setup)   cmd_mail_setup ;;
         storage)      cmd_storage ;;
         disk)         cmd_disk "$@" ;;
+        cold)         source "${SCRIPT_DIR}/lib/cold.sh"; cold_manage "$@" ;;
         cleanup)      cmd_cleanup "$@" ;;
         lan-setup)    cmd_lan_setup ;;
         network-tune)  cmd_network_tune ;;

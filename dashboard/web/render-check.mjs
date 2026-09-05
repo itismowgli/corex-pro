@@ -208,7 +208,7 @@ const METRICS = {
 const DATA = {
   "/api/overview": {
     metrics: METRICS,
-    services: { healthy: 13, unhealthy: 0, stopped: 1, missing: 0 },
+    services: { healthy: 13, unhealthy: 0, sleeping: 1, stopped: 1, missing: 0 },
     containers: { running: 22, total: 39, restarting: 0, unhealthy: 0 },
     top: [
       { name: "immich-ml", service: "immich", status: "running", health: "healthy", cpu_percent: 12.4, mem_bytes: 900000000, mem_limit: 3000000000, mem_percent: 30, restarts: 0, oom_killed: false, since: "Up 2 days" },

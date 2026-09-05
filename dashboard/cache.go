@@ -69,6 +69,9 @@ var (
 // older than the poll that asked for it.
 const moduleStatusTTL = 5 * time.Second
 
-// Shorter than the 5s vitals interval, so the streaming sampler always takes
-// a fresh reading and only a same-moment overview request reuses it.
-const dockerStatsTTL = 4 * time.Second
+// Container CPU/memory sampling is much more expensive than host vitals:
+// `docker stats --no-stream` waits for a sampling interval and used to consume
+// about a quarter of one core when run every five seconds. Temperature, load
+// and host memory remain live at five seconds; container rankings refresh at
+// this slower cadence, which is enough to spot sustained consumers.
+const dockerStatsTTL = 30 * time.Second

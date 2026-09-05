@@ -160,6 +160,19 @@ for c in immich-db calcom-db; do
 done
 docker ps --format '{{.Names}}' | grep -qx nextcloud-db && _dump_mysql nextcloud-db nextcloud-db
 
+# Keeper bundles PostgreSQL inside the app container. Back up through its
+# engine as well as retaining the volume and the credential env files.
+if docker ps --format '{{.Names}}' | grep -qx keeper; then
+    docker exec keeper sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" exec pg_dump -h 127.0.0.1 -U keeper -d keeper' \
+        2>>"$LOG" | gzip > "${DUMP_DIR}/keeper.sql.gz"
+    keeper_dump_status=("${PIPESTATUS[@]}")
+    if (( keeper_dump_status[0] != 0 || keeper_dump_status[1] != 0 )); then
+        echo "$(date '+%Y-%m-%d %H:%M:%S'): WARNING: Keeper database dump failed" >> "$LOG"
+        rm -f "${DUMP_DIR}/keeper.sql.gz"
+        dump_rc=1
+    fi
+fi
+
 # SQLite is a single file and its own tool takes a consistent copy of it while
 # the application is still writing. cp does not.
 for pair in "vaultwarden:/data/db.sqlite3" "uptime-kuma:/app/data/kuma.db"; do

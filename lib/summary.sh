@@ -58,6 +58,7 @@ CREDEOF
 | **n8n** | \`https://n8n.${DOMAIN}\` | *(create on first visit)* | *(you choose)* |
 | **n8n Encryption Key** | *(internal)* | — | \`${N8N_ENCRYPTION_KEY}\` |
 | **Cal.com** | \`https://cal.${DOMAIN}\` | *(create on first visit)* | *(you choose)* |
+| **Keeper** | \`https://keeper.${DOMAIN}\` | *(create on first visit)* | *(you choose)* |
 | **Grafana** | \`https://grafana.${DOMAIN}\` | \`admin\` | \`${GRAFANA_ADMIN_PASS}\` |
 | **Portainer** | \`https://${SERVER_IP}:9443\` | *(create on first visit)* | *(you choose)* |
 | **Stalwart Mail** | \`https://mail.${DOMAIN}\` | \`admin\` | \`${STALWART_ADMIN_PASS}\` |
@@ -69,7 +70,7 @@ CREDEOF
 | **Traefik Dashboard** | *(localhost only — SSH tunnel required)* | — | — |
 
 > ⚠️ **"Create on first visit"** means the first person to open the URL becomes admin.
-> Complete setup for Portainer, Nextcloud, Immich, n8n, Cal.com, and Uptime Kuma **immediately** after install.
+> Complete setup for Portainer, Nextcloud, Immich, n8n, Cal.com, Keeper, and Uptime Kuma **immediately** after install.
 > Cal.com closes public signup on the next \`corex manage repair calcom\` once one account exists.
 
 ---
@@ -105,6 +106,7 @@ ssh YOUR_USERNAME@${SERVER_IP} -p ${SSH_PORT}
 | Passwords (Vault) | \`https://vault.${DOMAIN}\` |
 | n8n Automation | \`https://n8n.${DOMAIN}\` |
 | Cal.com Booking | \`https://cal.${DOMAIN}\` |
+| Calendar Sync (Keeper) | \`https://keeper.${DOMAIN}\` |
 | Mail Server | \`https://mail.${DOMAIN}\` |
 | Status Page | \`https://status.${DOMAIN}\` |
 | Grafana | \`https://grafana.${DOMAIN}\` |
@@ -122,6 +124,7 @@ In CF Dashboard → Networks → Tunnels → your tunnel → Public Hostnames:
 |----------|-------------|-----|
 | \`n8n.${DOMAIN}\` | HTTP | \`n8n:5678\` |
 | \`cal.${DOMAIN}\` | HTTP | \`calcom:3000\` |
+| \`keeper.${DOMAIN}\` | HTTP | \`keeper:80\` |
 | \`photos.${DOMAIN}\` | HTTP | \`immich-server:2283\` |
 | \`nextcloud.${DOMAIN}\` | HTTP | \`nextcloud:80\` |
 | \`vault.${DOMAIN}\` | HTTP | \`vaultwarden:80\` |
@@ -212,7 +215,7 @@ DOCSEOF
     echo "    2. LAN fast-path: sudo bash corex.sh manage lan-setup"
     echo "       (makes Nextcloud/Immich uploads use LAN speed, not Cloudflare)"
     echo "    3. Cloudflare Tunnel: set public hostnames (see docs above)"
-    echo "    4. Create admin accounts: Portainer, Nextcloud, Immich, Vaultwarden"
+    echo "    4. Create admin accounts: Portainer, Nextcloud, Immich, Vaultwarden, Keeper"
     echo ""
     echo -e "  ${GREEN}Your data. Your stack. Sovereign homelab. 🏴${NC}"
     echo ""

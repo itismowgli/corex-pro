@@ -351,6 +351,15 @@ ${acme_challenge}
       email: "${acme_email}"
       storage: /acme.json
 TEOF
+    if declare -f state_get >/dev/null && [[ "$(state_get cold_portainer 2>/dev/null)" == true ]]; then
+        cat >> "${dir}/traefik.yml" <<'PLUGIN'
+experimental:
+  plugins:
+    sablier:
+      moduleName: github.com/sablierapp/sablier-traefik-plugin
+      version: v1.3.0
+PLUGIN
+    fi
 
     # ── Default certificate: ONLY when ACME cannot work ────────────────
     # A defaultCertificate for *.DOMAIN matches every route, so Traefik TLS

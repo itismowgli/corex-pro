@@ -110,7 +110,8 @@ get locked out of your own databases.
 
 ## Services
 
-Eighteen service modules, all optional except Traefik. A module can deploy
+Nineteen service modules are offered in the wizard. Traefik, AdGuard and
+Portainer form the required core; the rest are optional. A module can deploy
 more than one container: `monitoring`, `ai` and `calcom` each start three.
 
 | Module | What it gives you | Replaces |
@@ -123,6 +124,7 @@ more than one container: `monitoring`, `ai` and `calcom` each start three.
 | `stalwart` | Mail server with SMTP, IMAP, and JMAP | see the email section first |
 | `n8n` | Workflow automation with several hundred integrations | Zapier |
 | `calcom` | Booking links with availability rules and calendar sync | Calendly |
+| `keeper` | Sync personal, work, Nextcloud and other CalDAV calendars | manual calendar copying |
 | `coolify` | Deploy apps from Git, installed manually, routed by address | Heroku, Vercel |
 | `timemachine` | Time Machine target over SMB for Macs | Time Capsule |
 | `monitoring` | Uptime Kuma, Grafana, and Prometheus | Datadog |
@@ -156,6 +158,7 @@ only works if a Traefik Host rule declares it. The rules live in
 | `stalwart` | `https://mail.DOMAIN` | Let's Encrypt |
 | `n8n` | `https://n8n.DOMAIN` | Let's Encrypt |
 | `calcom` | `https://cal.DOMAIN` | Let's Encrypt |
+| `keeper` | `https://keeper.DOMAIN` | Let's Encrypt |
 | `ai` | `https://ai.DOMAIN` | Let's Encrypt |
 | `monitoring` | `https://grafana.DOMAIN` and `https://status.DOMAIN` | Let's Encrypt |
 | `portainer` | `https://portainer.DOMAIN` | Let's Encrypt |
@@ -2040,3 +2043,32 @@ See [CHANGELOG.md](CHANGELOG.md) for the detail.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+### Targeted storage cleanup
+
+Use `corex manage cleanup --dry-run --docker-only` to preview Docker cleanup.
+Run `corex manage cleanup --docker-only` to remove unreferenced images, eligible
+build cache, and unused networks while leaving host journals, package caches,
+and temporary files alone. Docker volumes and containers are not removed.
+Omit `--docker-only` to include the existing host cleanup steps. Unknown cleanup
+arguments now fail before cleanup starts; `--help` lists supported options.
+
+### Local regression checks
+
+Run `bash test/run-tests.sh all` for shell syntax and Python regression checks,
+plus Bats and ShellCheck when installed. Run `npm run build` in `dashboard/web`
+for TypeScript, production bundling, polling regressions, and browser smoke checks.
+The Python tests mock host commands and do not clean the local machine.
+
+### Efficient dashboard, service sleep and calendar sync
+
+The dashboard pauses background polling and live streams while hidden. AI models
+unload after idle time, and Portainer can optionally wake on web access with
+`corex manage cold enable portainer`. Sync and scheduled services stay running.
+See [performance and storage](docs/performance-and-storage.md) for behavior,
+limits, and the migration plan from legacy Time Machine partitions.
+
+Keeper is available with `corex manage add keeper` or in the setup wizard.
+See [Keeper setup](docs/keeper.md) for Nextcloud CalDAV, Google/Microsoft OAuth,
+and backup requirements. Deploying the module does not connect calendar accounts
+automatically.

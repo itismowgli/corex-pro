@@ -28,11 +28,12 @@ learning nginx, SSL, Docker networking, or Linux hardening.
 - Re-run on existing server = health-check + repair broken services only
 - No live server required for testing (Docker-in-Docker + bats)
 
-**Current version:** v3.20.0
-**Current service modules:** 18 (Traefik, AdGuard, Portainer, Nextcloud,
+**Current version:** v3.24.0
+**Current service modules:** 20 (Traefik, AdGuard, Portainer, Nextcloud,
 Immich, Vaultwarden, Stalwart Mail, Coolify, n8n, Cal.com, Time Machine,
 Uptime Kuma + Grafana + Prometheus (monitoring), Ollama + OpenWebUI +
-Browserless (ai), CrowdSec, Cloudflared, Dashboard, UPS, Authelia)
+Browserless (ai), CrowdSec, Cloudflared, Dashboard, UPS, Authelia, Keeper,
+and the internal Sablier wake controller)
 
 Note the count is service *modules* in `lib/services/`, not containers, a
 single module can deploy several containers (`monitoring` and `ai` each deploy
@@ -305,6 +306,8 @@ Cal.com         <- depends on calcom-db (PostgreSQL 16) + calcom-helper, which
                    supplies the cron Vercel would run and turns booking
                    webhooks into Telegram messages; prebuilt image, never
                    built; needs a domain, and an SMTP relay to send anything
+Keeper          <- standalone bundle with web, API, cron, worker, MCP,
+                   PostgreSQL and Redis; needs a domain
 Coolify         <- standalone; MANUAL install only (port conflict)
 
 Uptime Kuma     <- standalone
@@ -317,6 +320,8 @@ Open WebUI      <- depends on Ollama (OLLAMA_BASE_URL env var)
 Browserless     <- standalone; shares WEBUI_SECRET_KEY for auth token
 
 Time Machine    <- host networking; depends on avahi-daemon on host
+Sablier         <- internal wake controller; needs the Docker socket and the
+                   Traefik plugin; installed only when cold mode is enabled
 ```
 
 ### Network membership
@@ -333,6 +338,7 @@ Time Machine    <- host networking; depends on avahi-daemon on host
 | Authelia | YES | - | - |
 | n8n | YES | - | - |
 | Cal.com (web, helper, db) | YES | - | - |
+| Keeper | YES | - | - |
 | Stalwart | YES | - | - |
 | Uptime Kuma | YES | YES | - |
 | Grafana | YES | YES | - |
@@ -344,6 +350,7 @@ Time Machine    <- host networking; depends on avahi-daemon on host
 | Open WebUI | YES | - | YES |
 | Browserless | - | - | YES |
 | Time Machine | host networking | - | - |
+| Sablier | YES | - | - |
 
 ---
 
@@ -2120,17 +2127,18 @@ mocked, validates generated `docker-compose.yml` has correct values and passes
 ```bash
 cd dashboard/web && npm run build
 ```
-`tsc`, then `vite build`, then three checks. `logline-check.mjs` parses log
+`tsc`, then `vite build`, then four checks. `logline-check.mjs` parses log
 lines taken off a running box. `responsive-check.mjs` holds six small-screen
 rules, each one a mistake that was in the tree; two of them cover the
 navigation, which is a fixed left column on a wide screen and a drawer below
 that, so they check that the column is hidden on a phone, that the drawer and
 the control opening it both exist, and that nothing renders above that
-control. `render-check.mjs` mounts every section three times, against
+control. `poll-check.mjs` verifies overlapping requests, loading state and
+stale-response handling. `render-check.mjs` mounts every section three times, against
 fixtures, with every fetch failing, and at 360px, then opens the command
 palette with a synthetic Cmd+K. That last one matters because a dialog renders
 nothing until it is opened, so the palette is invisible to every other check,
-which is gotcha #37's lesson one interaction further in. All three were added
+which is gotcha #37's lesson one interaction further in. The checks were added
 after a bug they should have caught, which is the only honest reason to add a
 check: see gotchas #37 and #38.
 

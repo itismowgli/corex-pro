@@ -1,4 +1,5 @@
 import * as React from "react"
+import { usePageVisible } from "./use-page-visible"
 
 /**
  * Fetch on mount, then on an interval, and expose a manual refresh.
@@ -20,6 +21,8 @@ export function usePoll<T>(
   intervalMs = 0,
   enabled = true
 ) {
+  const visible = usePageVisible()
+  const active = enabled && visible
   const [data, setData] = React.useState<T | null>(null)
   const [error, setError] = React.useState<string | null>(null)
   // Not loading until it is: a panel that has been asked for nothing should
@@ -28,20 +31,38 @@ export function usePoll<T>(
   const fnRef = React.useRef(fn)
   fnRef.current = fn
 
-  const refresh = React.useCallback(async () => {
-    try {
-      const next = await fnRef.current()
-      setData(next)
-      setError(null)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setLoading(false)
-    }
+  const generation = React.useRef(0)
+  const mounted = React.useRef(false)
+  const inFlight = React.useRef<{ generation: number; promise: Promise<void> } | null>(null)
+
+  const refresh = React.useCallback((): Promise<void> => {
+    if (!mounted.current) return Promise.resolve()
+    const current = generation.current
+    if (inFlight.current?.generation === current) return inFlight.current.promise
+    setLoading(true)
+    const valid = () => mounted.current && generation.current === current
+    // Defer invocation so the in-flight entry exists even for a synchronous throw.
+    const promise = Promise.resolve().then(() => fnRef.current()).then(
+      (next) => {
+        if (!valid()) return
+        setData(next)
+        setError(null)
+      },
+      (e: unknown) => {
+        if (valid()) setError(e instanceof Error ? e.message : String(e))
+      }
+    ).finally(() => {
+      if (valid()) setLoading(false)
+      if (inFlight.current?.promise === promise) inFlight.current = null
+    })
+    inFlight.current = { generation: current, promise }
+    return promise
   }, [])
 
   React.useEffect(() => {
-    if (!enabled) return
+    mounted.current = true
+    generation.current += 1
+    if (!active) setLoading(false)
     let live = true
     let timer: number | undefined
     const tick = async () => {
@@ -49,12 +70,14 @@ export function usePoll<T>(
       await refresh()
       if (live && intervalMs > 0) timer = window.setTimeout(tick, intervalMs)
     }
-    void tick()
+    if (active) void tick()
     return () => {
       live = false
+      mounted.current = false
+      generation.current += 1
       if (timer) window.clearTimeout(timer)
     }
-  }, [refresh, intervalMs, enabled])
+  }, [refresh, intervalMs, active])
 
   return { data, error, loading, refresh }
 }

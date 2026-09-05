@@ -25,6 +25,7 @@ EVERY READER FAILS SOFT
 """
 
 import datetime
+from collections import deque
 import json
 import os
 import re
@@ -469,13 +470,17 @@ def service_sizes(refresh=False):
     panel says so, rather than blocking the whole page on it.
     """
     with _sizes_lock:
-        fresh = time.time() - _sizes["at"] < SIZES_TTL
+        fresh = _sizes["at"] > 0 and time.monotonic() - _sizes["at"] < SIZES_TTL
         if fresh and not refresh:
             return _sizes["rows"]
         if _sizes["running"]:
             return _sizes["rows"]
         _sizes["running"] = True
-    threading.Thread(target=_compute_sizes, daemon=True).start()
+    try:
+        threading.Thread(target=_compute_sizes, daemon=True).start()
+    except RuntimeError:
+        with _sizes_lock:
+            _sizes["running"] = False
     return _sizes["rows"]
 
 
@@ -484,24 +489,28 @@ def _compute_sizes():
     base = os.path.join(DATA_ROOT, "service-data")
     try:
         names = sorted(os.listdir(base))
+        for name in names:
+            path = os.path.join(base, name)
+            if not os.path.isdir(path):
+                continue
+            rc, out = _run(["du", "-sb", path], timeout=120)
+            if rc != 0:
+                continue
+            try:
+                rows.append({"name": name, "bytes": int(out.split()[0])})
+            except (ValueError, IndexError):
+                continue
+        rows.sort(key=lambda r: -r["bytes"])
+        with _sizes_lock:
+            _sizes["rows"] = rows
+            _sizes["at"] = time.monotonic()
     except OSError:
-        names = []
-    for name in names:
-        path = os.path.join(base, name)
-        if not os.path.isdir(path):
-            continue
-        rc, out = _run(["du", "-sb", path], timeout=120)
-        if rc != 0:
-            continue
-        try:
-            rows.append({"name": name, "bytes": int(out.split()[0])})
-        except (ValueError, IndexError):
-            continue
-    rows.sort(key=lambda r: -r["bytes"])
-    with _sizes_lock:
-        _sizes["rows"] = rows
-        _sizes["at"] = time.time()
-        _sizes["running"] = False
+        # Keep the last successful result when the data disk is unavailable.
+        pass
+    finally:
+        # An unexpected failure must not permanently disable future scans.
+        with _sizes_lock:
+            _sizes["running"] = False
 
 
 # ── Watchdog, thermal, Kuma ─────────────────────────────────────────────────
@@ -512,7 +521,7 @@ _WD = re.compile(r"^(?P<t>\S+) watchdog: (?P<body>.*)$")
 def watchdog_findings(limit=25, path=WATCHDOG_LOG):
     try:
         with open(path, encoding="utf-8", errors="replace") as fh:
-            lines = fh.readlines()[-400:]
+            lines = deque(fh, maxlen=400)
     except OSError:
         return []
     out = []
@@ -809,9 +818,22 @@ def collect(want_sizes=True):
         shed = thermal.get("shed_c") or 88.0
         state = "hot" if temp >= shed else "warn" if temp >= warn else "ok"
 
+    if not want_sizes:
+        # The stream consumes only these fields. Avoid reading log history,
+        # SQLite, SMART and maintenance state on every live temperature tick.
+        return {
+            "at": int(time.time()),
+            "cpu": {"temp_c": temp, "temp_source": temp_src, "temp_state": state,
+                    "load": load, "cores": os.cpu_count()},
+            "memory": mem,
+            "docker": None, "purgeable": None,
+        }
+
     # Read once and handed to both, because `docker system df` walks every
     # image and container and the two callers want the same answer anyway.
-    _df = docker_df()
+    # The vitals stream consumes CPU and memory only. Storage accounting can
+    # take longer than its entire request deadline and must stay off this path.
+    _df = docker_df() if want_sizes else None
 
     return {
         "at": int(time.time()),
@@ -824,7 +846,7 @@ def collect(want_sizes=True):
         "disks": disks(),
         "storage": storage_layout() if want_sizes else None,
         "docker": _df,
-        "purgeable": docker_purgeable(_df),
+        "purgeable": docker_purgeable(_df) if want_sizes else None,
         "service_sizes": service_sizes() if want_sizes else [],
         "series": series(),
         "watchdog": watchdog_findings(),

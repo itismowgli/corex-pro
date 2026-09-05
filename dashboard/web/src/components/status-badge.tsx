@@ -1,4 +1,4 @@
-import { AlertTriangleIcon, CheckIcon, CircleSlashIcon, MinusIcon } from "lucide-react"
+import { AlertTriangleIcon, CheckIcon, CircleSlashIcon, MinusIcon, MoonIcon } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import type { ServiceStatus } from "@/lib/api"
@@ -10,6 +10,7 @@ const MAP: Record<ServiceStatus, { variant: "ok" | "destructive" | "secondary"; 
   HEALTHY: { variant: "ok", icon: CheckIcon },
   UNHEALTHY: { variant: "destructive", icon: AlertTriangleIcon },
   MISSING: { variant: "secondary", icon: CircleSlashIcon },
+  SLEEPING: { variant: "secondary", icon: MoonIcon },
   DISABLED: { variant: "secondary", icon: MinusIcon },
   UNKNOWN: { variant: "secondary", icon: MinusIcon },
 }

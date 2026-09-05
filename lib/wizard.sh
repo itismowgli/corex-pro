@@ -15,14 +15,15 @@ source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 # Validate an IPv4 address. Returns 0 if valid, 1 if not.
 validate_ip() {
     local ip="$1"
-    [[ -z "$ip" ]] && return 1
+    local -a octets=()
+    [[ "$ip" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || return 1
     local IFS='.'
     read -r -a octets <<< "$ip"
     [[ "${#octets[@]}" -ne 4 ]] && return 1
     local o
     for o in "${octets[@]}"; do
-        [[ "$o" =~ ^[0-9]+$ ]] || return 1
-        [[ "$o" -ge 0 && "$o" -le 255 ]] || return 1
+        [[ "$o" =~ ^[0-9]{1,3}$ ]] || return 1
+        (( 10#$o <= 255 )) || return 1
     done
     return 0
 }
@@ -36,13 +37,26 @@ validate_domain() {
     [[ "$domain" =~ [[:space:]] ]] && return 1
     [[ "$domain" =~ \. ]] || return 1   # Must contain at least one dot
     [[ "$domain" =~ ^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$ ]] || return 1
+    [[ ${#domain} -le 253 ]] || return 1
+    local label
+    local -a labels=()
+    IFS='.' read -r -a labels <<< "$domain"
+    for label in "${labels[@]}"; do
+        [[ ${#label} -ge 1 && ${#label} -le 63 ]] || return 1
+        [[ "$label" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?$ ]] || return 1
+    done
     return 0
+}
+
+validate_port() {
+    [[ "$1" =~ ^[0-9]{1,5}$ ]] && (( 10#$1 >= 1 && 10#$1 <= 65535 ))
 }
 
 # Validate an email address. Returns 0 if valid, 1 if not.
 validate_email() {
     local email="$1"
     [[ -z "$email" ]] && return 1
+    [[ ! "$email" =~ [[:space:]] ]] || return 1
     [[ "$email" =~ ^[^@]+@[^@]+\.[^@]+$ ]] || return 1
     return 0
 }
@@ -67,7 +81,7 @@ _msgbox() {
 }
 
 # Get text input from user
-# Usage: value=$(_inputbox "Title" "Prompt" "default")
+# Usage: value=$(_inputbox "Title" "Prompt" "default") || return 1
 _inputbox() {
     local title="$1" prompt="$2" default="${3:-}"
     if _has_whiptail; then
@@ -77,13 +91,13 @@ _inputbox() {
         echo -e "${prompt}" >&2
         [[ -n "$default" ]] && echo -e "(default: ${default})" >&2
         local val
-        read -r -p "> " val
+        read -r -p "> " val || return 1
         echo "${val:-$default}"
     fi
 }
 
 # Present a menu and return the chosen value
-# Usage: choice=$(_menu "Title" "Prompt" "opt1" "desc1" "opt2" "desc2" ...)
+# Usage: choice=$(_menu "Title" "Prompt" "opt1" "desc1" "opt2" "desc2" ...) || return 1
 _menu() {
     local title="$1" prompt="$2"
     shift 2
@@ -101,14 +115,19 @@ _menu() {
             ((i+=2))
         done
         local choice
-        read -r -p "> " choice
-        # Return the key at that position
-        echo "${items[$(((choice-1)*2))]}"
+        while true; do
+            read -r -p "> " choice || return 1
+            if [[ "$choice" =~ ^[0-9]{1,3}$ ]] && (( 10#$choice >= 1 && 10#$choice <= ${#items[@]}/2 )); then
+                echo "${items[$(((10#$choice-1)*2))]}"
+                return 0
+            fi
+            echo "Enter a number from 1 to $((${#items[@]}/2))." >&2
+        done
     fi
 }
 
 # Present a checklist and return space-separated selected items
-# Usage: selected=$(_checklist "Title" "Prompt" "item1" "desc1" "ON|OFF" ...)
+# Usage: selected=$(_checklist "Title" "Prompt" "item1" "desc1" "ON|OFF" ...) || return 1
 _checklist() {
     local title="$1" prompt="$2"
     shift 2
@@ -130,15 +149,29 @@ _checklist() {
             echo "  [$mark] $idx. $key — $desc" >&2
             ((i+=3)); ((idx++))
         done
-        local input selected=()
-        read -r -p "> " input
-        IFS=',' read -r -a nums <<< "$input"
-        local num
-        for num in "${nums[@]}"; do
-            local pos=$(( (num-1)*3 ))
-            [[ -n "${items[$pos]:-}" ]] && selected+=("\"${items[$pos]}\"")
+        local input num pos valid
+        local selected=() nums=()
+        while true; do
+            read -r -p "> " input || return 1
+            selected=(); valid=true
+            if [[ -z "$input" ]]; then
+                for ((pos=0; pos<${#items[@]}; pos+=3)); do
+                    [[ "${items[$((pos+2))]}" == "ON" ]] && selected+=("\"${items[$pos]}\"")
+                done
+            else
+                IFS=',' read -r -a nums <<< "$input"
+                for num in "${nums[@]}"; do
+                    num="${num//[[:space:]]/}"
+                    if [[ ! "$num" =~ ^[0-9]{1,3}$ ]] || (( 10#$num < 1 || 10#$num > ${#items[@]}/3 )); then
+                        valid=false; break
+                    fi
+                    pos=$(( (10#$num-1)*3 ))
+                    selected+=("\"${items[$pos]}\"")
+                done
+            fi
+            [[ "$valid" == true ]] && { echo "${selected[*]}"; return 0; }
+            echo "Enter valid comma-separated numbers, or Enter for the marked defaults." >&2
         done
-        echo "${selected[*]}"
     fi
 }
 
@@ -157,8 +190,10 @@ get_services_in_category() {
     for f in "${services_dir}"/*.sh; do
         [[ -f "$f" ]] || continue
         # Source temporarily in a subshell to read metadata
-        local cat
+        local cat hidden
         cat=$(bash -c "source '$f' 2>/dev/null; echo \"\${SERVICE_CATEGORY:-}\"")
+        hidden=$(bash -c "source '$f' 2>/dev/null; echo \"\${SERVICE_HIDDEN:-false}\"")
+        [[ "$hidden" == "true" ]] && continue
         if [[ "$cat" == "$category" ]]; then
             bash -c "source '$f' 2>/dev/null; echo \"\${SERVICE_NAME:-}\""
         fi
@@ -176,30 +211,28 @@ _services_dir() {
 # tar or SMB share leaves ._name.sh beside the real file, it matches the glob,
 # and it is binary.
 all_service_names() {
-    local dir f
+    local dir f hidden
     dir="$(_services_dir)"
     [[ -d "$dir" ]] || return 0
     for f in "${dir}"/*.sh; do
         [[ -f "$f" ]] || continue
         [[ "$(basename "$f")" == ._* ]] && continue
+        hidden=$(bash -c "source '$f' 2>/dev/null; echo \"\${SERVICE_HIDDEN:-false}\"")
+        [[ "$hidden" == "true" ]] && continue
         bash -c "source '$f' 2>/dev/null; echo \"\${SERVICE_NAME:-}\"" | grep . || true
     done
 }
 
 # One metadata field for one module, by module name.
 service_meta() {
-    local want="$1" field="$2" dir f name
+    local want="$1" field="$2" dir
+    [[ "$want" =~ ^[a-z0-9-]+$ && "$field" =~ ^SERVICE_[A-Z_]+$ ]] || return 1
     dir="$(_services_dir)"
-    for f in "${dir}"/*.sh; do
-        [[ -f "$f" ]] || continue
-        [[ "$(basename "$f")" == ._* ]] && continue
-        name=$(bash -c "source '$f' 2>/dev/null; echo \"\${SERVICE_NAME:-}\"")
-        if [[ "$name" == "$want" ]]; then
-            bash -c "source '$f' 2>/dev/null; echo \"\${${field}:-}\""
-            return 0
-        fi
-    done
-    return 1
+    [[ -f "$dir/$want.sh" ]] || return 1
+    # Filename and module name follow the module contract. One subprocess,
+    # instead of sourcing every module for each field in every preset.
+    bash -c 'source "$1" 2>/dev/null; printf "%s\n" "${!2}"' _ "$dir/$want.sh" "$field"
+
 }
 
 # True when the module works with no domain configured. SERVICE_NEEDS_DOMAIN
@@ -335,12 +368,12 @@ _gb() {
     awk -v mb="$mb" 'BEGIN { printf "%.1fGB", mb / 1024 }'
 }
 
-# Drops anything that needs a hostname, and names what it dropped. Called only
-# for a LAN-only install, where those services would deploy, start, and answer
-# on nothing.
+# Drops anything that needs a hostname, and names what it dropped. Called for
+# LAN-only and configure-later installs, where those services would otherwise
+# deploy, start, and answer on nothing.
 filter_services_for_mode() {
     local mode="$1"
-    [[ "$mode" == "local-only" ]] || return 0
+    [[ "$mode" != "with-domain" ]] || return 0
 
     local kept=() dropped=() s
     for s in "${SELECTED_SERVICES[@]}"; do
@@ -389,31 +422,31 @@ two minutes: myaccount.google.com -> Security -> 2-Step Verification
 Skipping is fine. Services that need mail will say so, and you can
 add it later with: corex manage mail-setup" \
         "configure" "Set up a mail relay now (recommended)" \
-        "skip"      "Skip, configure later")
+        "skip"      "Skip, configure later") || return 1
 
     [[ "$want" != "configure" ]] && { export SMTP_HOST SMTP_PORT SMTP_TLS_MODE SMTP_USER SMTP_PASSWORD SMTP_FROM; return 0; }
 
     SMTP_HOST=$(_inputbox "SMTP Server" \
-        "Your relay's hostname\nGmail: smtp.gmail.com" "smtp.gmail.com")
+        "Your relay's hostname\nGmail: smtp.gmail.com" "smtp.gmail.com") || return 1
     SMTP_PORT=$(_inputbox "SMTP Port" \
-        "587 for STARTTLS (usual), 465 for implicit TLS" "587")
+        "587 for STARTTLS (usual), 465 for implicit TLS" "587") || return 1
     [[ "$SMTP_PORT" == "465" ]] && SMTP_TLS_MODE="implicit" || SMTP_TLS_MODE="starttls"
     SMTP_USER=$(_inputbox "SMTP Username" \
-        "Usually the full email address" "")
+        "Usually the full email address" "") || return 1
     SMTP_PASSWORD=$(_inputbox "SMTP Password" \
 "For Gmail this is a 16-character app password, NOT your account
-password. Spaces are ignored, so paste it either way." "")
+password. Spaces are ignored, so paste it either way." "") || return 1
     # Google shows app passwords in four groups for readability; SMTP AUTH
     # wants the sixteen characters with no spaces, and an unstripped value
     # fails authentication with a message that blames the credentials.
-    SMTP_PASSWORD="${SMTP_PASSWORD//[[:space:]]/}"
+    [[ "$SMTP_HOST" == "smtp.gmail.com" ]] && SMTP_PASSWORD="${SMTP_PASSWORD//[[:space:]]/}"
     SMTP_FROM=$(_inputbox "Sender Address" \
 "The From address on outgoing mail.
 
 It usually has to match the account above: Gmail rewrites or rejects
 anything else. To send as you@${DOMAIN:-your-domain} you need a
 transactional relay with your domain verified, not Gmail." \
-        "${SMTP_USER}")
+        "${SMTP_USER}") || return 1
 
     export SMTP_HOST SMTP_PORT SMTP_TLS_MODE SMTP_USER SMTP_PASSWORD SMTP_FROM
 }
@@ -424,17 +457,15 @@ smtp_conf_write() {
     [[ -n "${SMTP_HOST:-}" && -n "${SMTP_USER:-}" ]] || return 0
     mkdir -p /etc/corex
     local prev_umask; prev_umask=$(umask); umask 077
-    cat > /etc/corex/smtp.conf << SMTPEOF
-# CoreX shared outbound mail relay. Sourced by services that send mail.
-# Values are quoted: an unquoted password containing a space is parsed as a
-# command prefix and silently never set.
-COREX_SMTP_HOST='${SMTP_HOST}'
-COREX_SMTP_PORT='${SMTP_PORT:-587}'
-COREX_SMTP_TLS_MODE='${SMTP_TLS_MODE:-starttls}'
-COREX_SMTP_USER='${SMTP_USER}'
-COREX_SMTP_PASSWORD='${SMTP_PASSWORD}'
-COREX_SMTP_FROM='${SMTP_FROM:-$SMTP_USER}'
-SMTPEOF
+    {
+        printf '# CoreX shared outbound mail relay. Shell-escaped values.\n'
+        printf 'COREX_SMTP_HOST=%q\n' "$SMTP_HOST"
+        printf 'COREX_SMTP_PORT=%q\n' "${SMTP_PORT:-587}"
+        printf 'COREX_SMTP_TLS_MODE=%q\n' "${SMTP_TLS_MODE:-starttls}"
+        printf 'COREX_SMTP_USER=%q\n' "$SMTP_USER"
+        printf 'COREX_SMTP_PASSWORD=%q\n' "$SMTP_PASSWORD"
+        printf 'COREX_SMTP_FROM=%q\n' "${SMTP_FROM:-$SMTP_USER}"
+    } > /etc/corex/smtp.conf
     umask "$prev_umask"
     chmod 600 /etc/corex/smtp.conf
 }
@@ -449,7 +480,7 @@ smtp_conf_load() {
 
 run_wizard() {
     # ── Welcome ──────────────────────────────────────────────────────────────
-    _msgbox "CoreX Pro v2 — Setup Wizard" \
+    _msgbox "CoreX Pro: Setup wizard" \
 "Welcome to CoreX Pro!
 
 This wizard will configure your sovereign homelab.
@@ -465,7 +496,7 @@ Requirements:
     MODE=$(_menu "Installation Mode" "How do you want to access your services?" \
         "with-domain"    "Full setup with domain + Cloudflare Tunnel + HTTPS" \
         "local-only"     "LAN-only access (no domain required)" \
-        "configure-later" "Install now, configure domain later")
+        "configure-later" "Install now, configure domain later") || return 1
 
     export MODE
 
@@ -475,7 +506,7 @@ Requirements:
     if [[ "$MODE" == "with-domain" ]]; then
         while true; do
             DOMAIN=$(_inputbox "Domain Configuration" \
-                "Enter your domain name\nExample: myhomelab.com" "")
+                "Enter your domain name\nExample: myhomelab.com" "") || return 1
             validate_domain "$DOMAIN" && break
             _msgbox "Invalid Domain" "Please enter a valid domain (e.g., example.com)"
         done
@@ -483,7 +514,7 @@ Requirements:
         while true; do
             EMAIL=$(_inputbox "Email Address" \
                 "Email for Let's Encrypt SSL certificates\nExample: admin@${DOMAIN}" \
-                "admin@${DOMAIN}")
+                "admin@${DOMAIN}") || return 1
             validate_email "$EMAIL" && break
             _msgbox "Invalid Email" "Please enter a valid email address"
         done
@@ -497,7 +528,7 @@ Requirements:
     while true; do
         SERVER_IP=$(_inputbox "Server IP Address" \
             "Your server's static local IP address\nDetected: ${detected_ip}" \
-            "${detected_ip}")
+            "${detected_ip}") || return 1
         validate_ip "$SERVER_IP" && break
         _msgbox "Invalid IP" "Please enter a valid IPv4 address (e.g., 192.168.1.100)"
     done
@@ -507,7 +538,7 @@ Requirements:
     CLOUDFLARE_TUNNEL_TOKEN="PASTE_YOUR_TUNNEL_TOKEN_HERE"
     if [[ "$MODE" == "with-domain" ]]; then
         CLOUDFLARE_TUNNEL_TOKEN=$(_inputbox "Cloudflare Tunnel" \
-"Enter your Cloudflare Tunnel token (optional — press Enter to skip)
+"Enter your Cloudflare Tunnel token (optional, press Enter to skip) || return 1
 
 Get it at: one.dash.cloudflare.com → Networks → Tunnels → Create Tunnel
 You can add it later with: corex-manage add cloudflared" \
@@ -516,20 +547,22 @@ You can add it later with: corex-manage add cloudflared" \
     export CLOUDFLARE_TUNNEL_TOKEN
 
     # ── Outbound mail relay ──────────────────────────────────────────────────
-    _wizard_smtp
+    _wizard_smtp || return 1
 
     # ── Timezone ─────────────────────────────────────────────────────────────
     local detected_tz
     detected_tz=$(timedatectl show --property=Timezone --value 2>/dev/null || echo "UTC")
     TIMEZONE=$(_inputbox "Timezone" \
         "Server timezone (e.g. America/New_York, Asia/Kolkata, Europe/London)" \
-        "$detected_tz")
+        "$detected_tz") || return 1
     export TIMEZONE
 
     # ── SSH port ─────────────────────────────────────────────────────────────
-    SSH_PORT=$(_inputbox "SSH Port" \
-        "Non-standard SSH port (security by obscurity)\nDefault: 2222" \
-        "2222")
+    while true; do
+        SSH_PORT=$(_inputbox "SSH Port" "SSH port (1 to 65535)" "2222") || return 1
+        validate_port "$SSH_PORT" && break
+        _msgbox "Invalid SSH Port" "Enter a port from 1 to 65535."
+    done
     export SSH_PORT
 
     # ── Docker storage location ───────────────────────────────────────────────
@@ -551,13 +584,13 @@ NO  — Docker stays on OS disk (simpler, fine if OS disk is large enough)" \
         echo "Move Docker image layers to external SSD? (/mnt/corex-data/docker-engine)" >&2
         echo "YES = OS disk stays lean (recommended) | NO = Docker stays on OS disk" >&2
         local docker_ssd_choice
-        read -r -p "Move to SSD? (y/N): " docker_ssd_choice
+        read -r -p "Move to SSD? (y/N): " docker_ssd_choice || return 1
         [[ "$docker_ssd_choice" == "y" || "$docker_ssd_choice" == "Y" ]] && DOCKER_ON_SSD="true"
     fi
     export DOCKER_ON_SSD
 
     # ── Profile or custom selection ───────────────────────────────────────────
-    declare -a SELECTED_SERVICES=()
+    SELECTED_SERVICES=()
 
     # Sized from the modules rather than from memory, so a preset cannot claim
     # a figure that stopped being true when a service was added to it.
@@ -575,7 +608,7 @@ NO  — Docker stays on OS disk (simpler, fine if OS disk is large enough)" \
         "privacy"  "Nextcloud, Immich, vault, mail, shared login (${ram_privacy})" \
         "dev"      "n8n, Coolify, monitoring and local AI (${ram_dev})" \
         "nodomain" "LAN-only: only what works without a domain (${ram_nodomain})" \
-        "custom"   "Choose services manually")
+        "custom"   "Choose services manually") || return 1
 
     if [[ "$profile_choice" == "custom" ]]; then
         # Build checklist from all service modules
@@ -585,7 +618,7 @@ NO  — Docker stays on OS disk (simpler, fine if OS disk is large enough)" \
 
         local checklist_items=()
         local hidden=()
-        local f svc_info svc label required ram needs_domain default_state
+        local f svc_info svc label required ram disk needs_domain hidden default_state
         for f in "${services_dir}"/*.sh; do
             [[ -f "$f" ]] || continue
             # A macOS tar or SMB share leaves ._name.sh beside the real file.
@@ -594,21 +627,23 @@ NO  — Docker stays on OS disk (simpler, fine if OS disk is large enough)" \
             # Read metadata safely, no eval; use printf+IFS to avoid injection
             svc_info=$(bash -c "
                 source '$f' 2>/dev/null
-                printf '%s\t%s\t%s\t%s\t%s\n' \
+                printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
                     \"\${SERVICE_NAME:-}\" \"\${SERVICE_LABEL:-}\" \
                     \"\${SERVICE_REQUIRED:-false}\" \"\${SERVICE_RAM_MB:-0}\" \
-                    \"\${SERVICE_NEEDS_DOMAIN:-false}\"
+                    \"\${SERVICE_DISK_GB:-0}\" \"\${SERVICE_NEEDS_DOMAIN:-false}\" \
+                    \"\${SERVICE_HIDDEN:-false}\"
             " 2>/dev/null)
-            IFS=$'\t' read -r svc label required ram needs_domain <<< "$svc_info"
+            IFS=$'\t' read -r svc label required ram disk needs_domain hidden <<< "$svc_info"
             [[ -z "$svc" ]] && continue
+            [[ "$hidden" == "true" ]] && continue
             # Offering a service that cannot answer on a hostname this install
             # does not have is offering a choice with one wrong answer.
-            if [[ "$MODE" == "local-only" && "$needs_domain" == "true" ]]; then
+            if [[ "$MODE" != "with-domain" && "$needs_domain" == "true" ]]; then
                 hidden+=("$svc")
                 continue
             fi
             [[ "$required" == "true" ]] && default_state="ON" || default_state="OFF"
-            checklist_items+=("$svc" "$label (RAM: ${ram}MB)" "$default_state")
+            checklist_items+=("$svc" "$label (RAM: ${ram}MB, disk: ${disk}GB)" "$default_state")
         done
 
         if [[ ${#hidden[@]} -gt 0 ]]; then
@@ -624,7 +659,7 @@ domain is configured."
         local selected_raw
         selected_raw=$(_checklist "Service Selection" \
             "Select services to install (Space to toggle, Enter to confirm):" \
-            "${checklist_items[@]}")
+            "${checklist_items[@]}") || return 1
 
         # Parse selected services (remove quotes)
         local s
@@ -657,7 +692,13 @@ domain is configured."
     export SELECTED_SERVICES
 
     # ── Confirmation summary ──────────────────────────────────────────────────
-    local summary
+    local summary selected_ram=0 selected_disk=0 resource_svc resource_value
+    for resource_svc in "${SELECTED_SERVICES[@]}"; do
+        resource_value=$(service_meta "$resource_svc" SERVICE_RAM_MB 2>/dev/null || true)
+        [[ "$resource_value" =~ ^[0-9]+$ ]] && selected_ram=$((selected_ram + resource_value))
+        resource_value=$(service_meta "$resource_svc" SERVICE_DISK_GB 2>/dev/null || true)
+        [[ "$resource_value" =~ ^[0-9]+$ ]] && selected_disk=$((selected_disk + resource_value))
+    done
     summary="Mode:     ${MODE}
 Domain:   ${DOMAIN:-none}
 Email:    ${EMAIL:-none}
@@ -665,21 +706,22 @@ Server IP: ${SERVER_IP}
 SSH Port: ${SSH_PORT}
 Timezone: ${TIMEZONE}
 Tunnel:   $([ "$CLOUDFLARE_TUNNEL_TOKEN" != "PASTE_YOUR_TUNNEL_TOKEN_HERE" ] && echo "configured" || echo "skip")
+Service estimates: $(_gb "$selected_ram") RAM, ${selected_disk}GB initial disk
 
 Services to install:
 $(printf '  • %s\n' "${SELECTED_SERVICES[@]}")"
 
     if _has_whiptail; then
         whiptail --title "Confirm Installation" \
-            --yesno "${summary}\n\nProceed with installation?" 30 70
+            --yesno "${summary}\n\nProceed with installation?" 30 70 || return 1
     else
         echo -e "\n${BOLD}Installation Summary${NC}"
         echo "─────────────────────"
         echo "$summary"
         echo ""
         local confirm
-        read -r -p "Proceed with installation? (y/N): " confirm
-        [[ "$confirm" == "y" || "$confirm" == "Y" ]] || { echo "Aborted."; exit 0; }
+        read -r -p "Proceed with installation? (y/N): " confirm || return 1
+        [[ "$confirm" == "y" || "$confirm" == "Y" ]] || { echo "Aborted."; return 1; }
     fi
 
     log_success "Configuration complete. Starting installation..."

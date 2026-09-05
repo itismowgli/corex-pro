@@ -28,6 +28,7 @@ run_syntax_checks() {
 
     local scripts=(
         "corex.sh"
+        "corex-manage.sh"
         "install-corex-master.sh"
         "nuke-corex.sh"
         "migrate-domain.sh"
@@ -65,6 +66,7 @@ run_shellcheck() {
 
     local scripts=(
         "corex.sh"
+        "corex-manage.sh"
         "install-corex-master.sh"
         "nuke-corex.sh"
         "migrate-domain.sh"
@@ -110,6 +112,20 @@ run_unit_tests() {
     fi
 }
 
+# Python regression tests use only the standard library and mocked host commands.
+run_python_tests() {
+    log_section "Python and cleanup regression tests"
+    if ! command -v python3 &>/dev/null; then
+        log_skip "python3 not installed"
+        return
+    fi
+    if python3 -m unittest discover -s "${SCRIPT_DIR}/python" -v; then
+        log_pass "Python regression tests passed"
+    else
+        log_fail "Python regression tests failed"
+    fi
+}
+
 # ─── Smoke Tests ──────────────────────────────────────────────────────────────
 
 run_smoke_tests() {
@@ -149,6 +165,7 @@ main() {
             ;;
         unit)
             run_unit_tests
+            run_python_tests
             ;;
         smoke)
             run_smoke_tests
@@ -157,6 +174,7 @@ main() {
             run_syntax_checks
             run_shellcheck
             run_unit_tests
+            run_python_tests
             run_smoke_tests
             ;;
     esac

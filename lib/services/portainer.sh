@@ -57,6 +57,29 @@ portainer_deploy() {
     local sso_label=""
     declare -f sso_label_for >/dev/null 2>&1 && sso_label="$(sso_label_for portainer)"
 
+    local cold_labels=""
+    if declare -f state_get >/dev/null && [[ "$(state_get cold_portainer 2>/dev/null)" == true ]]; then
+        # Append after shared authentication, never replace/bypass it.
+        if [[ -n "$sso_label" ]]; then
+            sso_label="${sso_label%\"},portainer-cold\""
+        else
+            sso_label='      - "traefik.http.routers.portainer.middlewares=portainer-cold"'
+        fi
+        cold_labels=$(cat <<'LABELS'
+      - "sablier.enable=true"
+      - "sablier.group=corex-portainer"
+      - "traefik.docker.allownonrunning=true"
+      - "traefik.http.middlewares.portainer-cold.plugin.sablier.group=corex-portainer"
+      - "traefik.http.middlewares.portainer-cold.plugin.sablier.sablierUrl=http://corex-sablier:10000"
+      - "traefik.http.middlewares.portainer-cold.plugin.sablier.sessionDuration=15m"
+      - "traefik.http.middlewares.portainer-cold.plugin.sablier.keepAliveInterval=30s"
+      - "traefik.http.middlewares.portainer-cold.plugin.sablier.dynamic.displayName=Portainer is waking up"
+      - "traefik.http.middlewares.portainer-cold.plugin.sablier.dynamic.showDetails=false"
+      - "traefik.http.middlewares.portainer-cold.plugin.sablier.ignoreUserAgent=(?i)uptime-kuma"
+LABELS
+)
+    fi
+
     cat > "${dir}/docker-compose.yml" << DCEOF
 services:
   portainer:
@@ -88,12 +111,13 @@ services:
       # insecure-backend@file skips verification for this backend only.
       - "traefik.http.services.portainer.loadbalancer.serverstransport=insecure-backend@file"
 ${sso_label}
+${cold_labels}
 networks:
   proxy-net: { external: true }
 DCEOF
 
     docker compose -f "${dir}/docker-compose.yml" up -d \
-        || log_warning "Portainer may not have started — check: docker ps"
+        || { log_warning "Portainer did not start. Check: docker ps"; return 1; }
     state_service_installed "portainer"
     log_success "Portainer deployed (https://${SERVER_IP}:9443)"
 }
@@ -107,7 +131,10 @@ portainer_destroy() {
 
 portainer_status() {
     if container_running "portainer"; then echo "HEALTHY"
-    elif container_exists "portainer"; then echo "UNHEALTHY"
+    elif container_exists "portainer"; then
+        if declare -f state_get >/dev/null && [[ "$(state_get cold_portainer 2>/dev/null)" == true ]] &&
+            [[ "$(docker inspect -f '{{.State.ExitCode}}' portainer 2>/dev/null)" == 0 ]]; then echo "SLEEPING"
+        else echo "UNHEALTHY"; fi
     else echo "MISSING"; fi
 }
 
@@ -118,7 +145,7 @@ portainer_repair() {
     # labels never reached an existing install. portainer_deploy is idempotent
     # by design (see CLAUDE.md "Idempotency pattern"), so calling it here is
     # safe and is what makes `corex doctor` able to deliver fixes at all.
-    portainer_deploy
+    portainer_deploy || return 1
     local dir="${DOCKER_ROOT}/portainer"
     [[ -f "${dir}/docker-compose.yml" ]] && \
         docker compose -f "${dir}/docker-compose.yml" up -d --force-recreate

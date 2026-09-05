@@ -2,7 +2,7 @@
 // privileged agent through it; nothing here can do more than the agent's own
 // whitelist allows, which is why none of these are destructive.
 
-export type ServiceStatus = "HEALTHY" | "UNHEALTHY" | "MISSING" | "DISABLED" | "UNKNOWN"
+export type ServiceStatus = "HEALTHY" | "UNHEALTHY" | "MISSING" | "DISABLED" | "SLEEPING" | "UNKNOWN"
 
 export type Service = {
   name: string
@@ -496,7 +496,7 @@ export type Vitals = {
 
 export type Overview = {
   metrics: Metrics | null
-  services: { healthy: number; unhealthy: number; stopped: number; missing: number }
+  services: { healthy: number; unhealthy: number; sleeping: number; stopped: number; missing: number }
   containers: { running: number; total: number; restarting: number; unhealthy: number }
   top: ContainerRow[]
   agent_ok: boolean

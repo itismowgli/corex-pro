@@ -225,7 +225,7 @@ function Dashboard({
   // seconds is plenty for numbers that move that slowly.
   const overview = usePoll(api.overview, 45_000)
   // The light half, pushed every five seconds so the tiles move on their own.
-  const vitals = useStream<Vitals>(api.vitalsStreamURL)
+  const vitals = useStream<Vitals>(api.vitalsStreamURL, tab === "overview")
   const ports = usePoll(api.ports, 0, tab === "system" || tab === "network")
   const catalogue = usePoll(api.catalogue, 0, tab === "catalogue")
 

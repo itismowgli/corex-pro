@@ -78,7 +78,7 @@ export function ServicesTab({
   onAction: (svc: Service, action: ServiceAction) => void
   onLogs: (svc: Service) => void
 }) {
-  if (loading) {
+  if (loading && !services.length) {
     return (
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {Array.from({ length: 6 }).map((_, i) => (

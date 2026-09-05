@@ -153,6 +153,13 @@ services:
     volumes:
       - ${MOUNT_POOL}/timemachine-data:/opt/timemachine
       - ${DOCKER_ROOT}/timemachine/smb.conf:/etc/samba/smb.conf:ro
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "1.0"
+        reservations:
+          memory: 64m
 volumes: {}
 DCEOF
 

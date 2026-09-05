@@ -48,9 +48,10 @@ type containerRow struct {
 // One `docker stats --no-stream` call, not one per container: it takes a full
 // sampling interval per invocation, so asking sixteen times is sixteen times
 // the wait for the same answer.
-// dockerStats is cached for a moment: `docker stats --no-stream` costs a full
-// sampling interval by design, and the overview handler and the streaming
-// sampler both want it.
+// dockerStats is cached across several live host-vital frames because
+// `docker stats --no-stream` costs a full sampling interval by design. Host
+// temperature and load still update every five seconds; container rankings
+// do not need to burn CPU at that rate.
 func dockerStats() map[string]containerRow {
 	return dockerStatsCache.get(dockerStatsTTL, func() interface{} {
 		return dockerStatsUncached()
@@ -213,6 +214,7 @@ type overview struct {
 	Services struct {
 		Healthy   int `json:"healthy"`
 		Unhealthy int `json:"unhealthy"`
+		Sleeping  int `json:"sleeping"`
 		Stopped   int `json:"stopped"`
 		Missing   int `json:"missing"`
 	} `json:"services"`
@@ -291,6 +293,8 @@ func overviewHandler(w http.ResponseWriter, r *http.Request) {
 			out.Services.Healthy++
 		case "UNHEALTHY":
 			out.Services.Unhealthy++
+		case "SLEEPING":
+			out.Services.Sleeping++
 		case "MISSING":
 			out.Services.Missing++
 		default:
@@ -499,6 +503,13 @@ func vitalsSubscribe() (<-chan []byte, []byte, func()) {
 
 func vitalsLoop() {
 	for {
+		vitalsHub.Lock()
+		if len(vitalsHub.subs) == 0 {
+			vitalsHub.running = false
+			vitalsHub.Unlock()
+			return
+		}
+		vitalsHub.Unlock()
 		body, err := json.Marshal(collectVitals())
 		vitalsHub.Lock()
 		if err == nil {

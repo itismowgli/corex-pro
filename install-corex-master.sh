@@ -152,7 +152,8 @@ main() {
     # ── Phase 0: Wizard + Pre-flight ─────────────────────────────────────────
     log_step "═══ PHASE 0: Configuration Wizard ═══"
     declare -a SELECTED_SERVICES=()
-    run_wizard   # Sets: DOMAIN, SERVER_IP, EMAIL, TIMEZONE, SSH_PORT, MODE, SELECTED_SERVICES
+    run_wizard || log_error "Setup cancelled; installation has not started."
+    # Sets: DOMAIN, SERVER_IP, EMAIL, TIMEZONE, SSH_PORT, MODE, SELECTED_SERVICES
 
     # ── Export core env vars for all modules ──────────────────────────────────
     export DOMAIN SERVER_IP EMAIL TIMEZONE SSH_PORT MODE
@@ -165,11 +166,11 @@ main() {
 
     # ── Phase 0b: Pre-flight checks + password generation ────────────────────
     log_step "═══ PHASE 0b: Pre-flight Checks ═══"
-    phase0_precheck
+    phase0_precheck || log_error "Pre-flight checks failed; installation stopped before disk setup."
 
     # ── Phase 1: Drive setup ──────────────────────────────────────────────────
     log_step "═══ PHASE 1: Drive & Storage Setup ═══"
-    phase1_drive
+    phase1_drive || log_error "Drive setup failed; installation stopped."
 
     # ── Phase 2: Security hardening ───────────────────────────────────────────
     log_step "═══ PHASE 2: Security Hardening ═══"

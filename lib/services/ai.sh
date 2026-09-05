@@ -72,6 +72,12 @@ services:
     container_name: ollama
     restart: unless-stopped
     ports: ["11434:11434"]
+    environment:
+      # Release model RAM after idle time; the next request reloads it.
+      OLLAMA_KEEP_ALIVE: "2m"
+      OLLAMA_MAX_LOADED_MODELS: "1"
+      OLLAMA_NUM_PARALLEL: "1"
+      OLLAMA_MAX_QUEUE: "32"
     volumes:
       - ${DATA_ROOT}/ollama:/root/.ollama
     networks: [ai-net, proxy-net]
@@ -143,7 +149,7 @@ services:
       TOKEN: "${BROWSERLESS_TOKEN}"
       # v2 renamed the concurrency limit. MAX_CONCURRENT_SESSIONS is v1 and is
       # ignored, which would have left the default in force.
-      CONCURRENT: "5"
+      CONCURRENT: "2"
       TIMEOUT: "60000"
     networks: [ai-net]
     security_opt: ["no-new-privileges:true"]

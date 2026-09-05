@@ -18,6 +18,7 @@ import { Meter, Spark } from "@/components/ui/spark"
 import { StatTile } from "@/components/stat-tile"
 import type { Consumer } from "@/components/consumers-dialog"
 import type { Overview, Vitals } from "@/lib/api"
+import { usePageVisible } from "@/lib/use-page-visible"
 import { ago, bytes, duration, pct } from "@/lib/format"
 
 /**
@@ -56,6 +57,7 @@ export function OverviewTab({
   error: string | null
   onDrill: (what: Consumer) => void
 }) {
+  const pageVisible = usePageVisible()
   const [range, setRange] = React.useState<RangeKey>("all")
 
   if (loading && !data) {
@@ -156,7 +158,7 @@ export function OverviewTab({
 
       <div className="text-muted-foreground flex items-center gap-1.5 text-xs">
         <RadioIcon className={`size-3 ${live ? "text-ok" : "text-muted-foreground"}`} />
-        {live ? "Live, updating every five seconds" : "Reconnecting to the live feed"}
+        {!pageVisible ? "Paused while this page is hidden" : live ? "Host vitals live · containers every 30 seconds" : "Connecting to the live feed"}
         <div className="ml-auto flex items-center gap-1">
           <span className="mr-1 hidden lg:inline">Tap a tile to see what is using it</span>
           {(Object.keys(RANGES) as RangeKey[]).map((k) => (
@@ -238,6 +240,9 @@ export function OverviewTab({
             <Badge variant="ok">{data?.services.healthy ?? 0} healthy</Badge>
             {(data?.services.unhealthy ?? 0) > 0 && (
               <Badge variant="destructive">{data?.services.unhealthy} unhealthy</Badge>
+            )}
+            {(data?.services.sleeping ?? 0) > 0 && (
+              <Badge variant="secondary">{data?.services.sleeping} sleeping</Badge>
             )}
             {(data?.services.stopped ?? 0) > 0 && (
               <Badge variant="secondary">{data?.services.stopped} stopped</Badge>

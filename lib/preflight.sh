@@ -18,6 +18,34 @@ phase0_precheck() {
         log_warning "Internet check failed. Proceeding anyway, but downloads may fail."
     fi
 
+    # Drive setup runs before the larger package-install phase. On a minimal
+    # Ubuntu image, parted and mkfs.ext4 may not exist yet, which used to make
+    # a completed wizard stop at the first real installation step. Install
+    # only the storage tools needed by Phase 1 here and fail before asking the
+    # operator to choose or format a disk if they cannot be provided.
+    local storage_missing=() cmd
+    for cmd in lsblk findmnt blkid wipefs udevadm tac parted partprobe mkfs.ext4; do
+        command -v "$cmd" >/dev/null 2>&1 || storage_missing+=("$cmd")
+    done
+    if [[ ${#storage_missing[@]} -gt 0 ]]; then
+        log_info "Installing drive-setup tools: ${storage_missing[*]}"
+        DEBIAN_FRONTEND=noninteractive apt-get update -qq || {
+            log_warning "Could not refresh package lists for drive-setup tools."
+            return 1
+        }
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            parted e2fsprogs util-linux coreutils udev || {
+            log_warning "Could not install the required drive-setup tools."
+            return 1
+        }
+        for cmd in lsblk findmnt blkid wipefs udevadm tac parted partprobe mkfs.ext4; do
+            command -v "$cmd" >/dev/null 2>&1 || {
+                log_warning "Drive-setup tool is still missing after install: $cmd"
+                return 1
+            }
+        done
+    fi
+
     # 2. RAM check
     local mem_total
     mem_total=$(free -g | awk '/Mem/{print $2}')
