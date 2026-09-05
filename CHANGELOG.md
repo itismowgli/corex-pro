@@ -10,6 +10,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 No changes yet.
 
+## [v3.25.1] - 2026-09-06
+
+### Fixed
+- Grafana is reachable remotely through Authelia instead of being restricted to
+  the LAN. Portainer is excluded from the shared login because it already has
+  its own account screen, preventing a double sign-in.
+
 ## [v3.25.0] - 2026-09-06
 
 ### Added

@@ -678,7 +678,7 @@ rotates a password to a value nothing recorded is the same as losing it.
 
 #### What is deliberately not behind it
 
-Vaultwarden, Nextcloud, Immich, Cal.com and the CoreX dashboard all have real
+Portainer, Vaultwarden, Nextcloud, Immich, Cal.com and the CoreX dashboard all have real
 logins of their own, so fronting them means two prompts for one door. The
 dashboard is excluded for a second reason: its login is tied to the action
 agent, the access log and the passkey store, and it is the page you open when
@@ -2014,7 +2014,7 @@ bash -n install-corex-master.sh      # parse check
 
 ## Version history
 
-The current release is v3.25.0. Recent versions added step-up confirmation
+The current release is v3.25.1. Recent versions added step-up confirmation
 before the power actions, reboot and shutdown from the dashboard, wake-on-LAN,
 scheduled maintenance, per-service update badges, Authelia, a CPU clock
 ceiling, and `lan-only`. `CHANGELOG.md` has the detail, including the faults

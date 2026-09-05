@@ -16,9 +16,10 @@
 #
 # In front of what, and deliberately not in front of what:
 #
-#   Portainer, Grafana, AdGuard and n8n get it. Their own logins range from
-#   passable to a single shared password, none of them can do two-factor
-#   properly, and Prometheus has no login at all.
+#   Grafana, AdGuard and n8n get it. Their own logins range from passable to a
+#   single shared password, none of them can do two-factor properly, and
+#   Prometheus has no login at all. Portainer is deliberately excluded because
+#   its own account system would create two consecutive login prompts.
 #
 #   Vaultwarden, Nextcloud, Immich, Cal.com and the CoreX dashboard do not.
 #   Every one has a real login of its own, so fronting them means signing in
@@ -35,14 +36,14 @@ SERVICE_NEEDS_DOMAIN=true
 SERVICE_NEEDS_EMAIL=false
 SERVICE_RAM_MB=128
 SERVICE_DISK_GB=1
-SERVICE_DESCRIPTION="One login, with two-factor, in front of the admin panels that have no real login of their own: Portainer, Grafana, AdGuard and n8n."
+SERVICE_DESCRIPTION="One login, with two-factor, in front of Grafana, AdGuard and n8n. Portainer keeps its own login."
 
 SERVICE_MONITORS="Authelia	https://auth.${DOMAIN:-}	[\"200-299\"]"
 
 # The routers that sit behind it. Router names, not service names, because
 # that is what the middleware attaches to: grafana lives inside the monitoring
 # module, and monitoring's other router (uptime) is left alone.
-AUTHELIA_DEFAULT_PROTECT="portainer grafana adguard n8n"
+AUTHELIA_DEFAULT_PROTECT="grafana adguard n8n"
 
 AUTHELIA_IMAGE="authelia/authelia:4.39"
 
