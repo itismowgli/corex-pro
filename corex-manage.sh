@@ -705,6 +705,34 @@ cmd_storage() {
     echo -e "  Run ${CYAN}corex manage cleanup --dry-run${NC} to preview freeable space."
 }
 
+# ── disk ──────────────────────────────────────────────────────────────────────
+
+# Everything about which physical disk holds what, and making a swap survivable.
+# The library carries the reasoning; this is the dispatch and the help.
+cmd_disk() {
+    source "${SCRIPT_DIR}/lib/disks.sh"
+    local sub="${1:-list}"
+    shift || true
+    case "$sub" in
+        list)    disks_list ;;
+        check)   disks_check ;;
+        adopt)   check_root; disks_adopt "${1:-}" ;;
+        relabel) check_root; disks_relabel ;;
+        guard)   check_root; disks_guard_docker ;;
+        *)
+            echo "Usage: corex manage disk <list|check|adopt|relabel|guard>"
+            echo ""
+            echo "  list     every disk, what it holds, and what CoreX uses it for"
+            echo "  check    whether a disk swap would come back on its own"
+            echo "  adopt    erase a NEW disk and label it as a CoreX data disk"
+            echo "  relabel  put the labels on the disks already in use, and"
+            echo "           switch fstab from UUID to label so a swap works"
+            echo "  guard    stop Docker starting when the data disk is absent"
+            return 1
+            ;;
+    esac
+}
+
 # ── cleanup ───────────────────────────────────────────────────────────────────
 
 # Ask corex_metrics for what the cleanup policy will actually remove. It owns
@@ -2760,6 +2788,7 @@ main() {
         os-upgrade)   cmd_os_upgrade "$@" ;;
         mail-setup)   cmd_mail_setup ;;
         storage)      cmd_storage ;;
+        disk)         cmd_disk "$@" ;;
         cleanup)      cmd_cleanup "$@" ;;
         lan-setup)    cmd_lan_setup ;;
         network-tune)  cmd_network_tune ;;

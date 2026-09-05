@@ -850,3 +850,51 @@ _repair_body() {
     body=$(awk '/^cmd_enable\(\)/,/^}/' "${REPO_ROOT}/corex-manage.sh")
     echo "$body" | grep -q 'restart=unless-stopped'
 }
+
+# ─── Disks: a swap or a replacement has to come back on its own ───────────────
+
+# The installer labels both partitions and then wrote fstab entries keyed on
+# UUID, which belongs to one filesystem. Replacing the SSD, or restoring onto a
+# new one, produced a disk that would not mount however correct its contents.
+@test "the installer mounts the data partition by label, not UUID" {
+    run grep -c 'LABEL=COREX_DATA .*MOUNT_POOL\|LABEL=COREX_DATA \$MOUNT_POOL' "${REPO_ROOT}/lib/drive.sh"
+    [ "$status" -eq 0 ]
+}
+
+# nofail lets a headless box boot without the data disk, which is right. What
+# was wrong is that Docker then started anyway and every bind mount created an
+# empty directory on the root filesystem, so the databases initialised fresh
+# and the box came up looking new instead of looking broken.
+@test "Docker is made to require the data mount" {
+    grep -q "RequiresMountsFor" "${REPO_ROOT}/lib/disks.sh"
+}
+
+@test "the data mount keeps nofail so a missing disk still boots to a shell" {
+    # disks.sh builds the line from variables, so match the options it writes
+    # rather than a literal that only exists once expanded.
+    grep -qE 'ext4 defaults,noatime,nofail' "${REPO_ROOT}/lib/disks.sh"
+    grep -qE 'LABEL=COREX_DATA .*nofail' "${REPO_ROOT}/lib/drive.sh"
+}
+
+# Writing LABEL= for a label nothing carries is how a box stops booting
+# cleanly, so both writers check before they commit to it.
+@test "nothing writes a LABEL= fstab entry without checking the label exists" {
+    grep -q "blkid -L" "${REPO_ROOT}/lib/disks.sh"
+    grep -qE "blkid -s LABEL|e2label" "${REPO_ROOT}/lib/drive.sh"
+}
+
+@test "disk adopt refuses the disk holding the running system" {
+    grep -q "holds the running system" "${REPO_ROOT}/lib/disks.sh"
+}
+
+@test "disk adopt demands a typed confirmation" {
+    grep -q 'DESTROY' "${REPO_ROOT}/lib/disks.sh"
+}
+
+# lsblk -r leaves empty columns empty, and bash collapses runs of IFS
+# whitespace, so a tab separator shifted every later value one place left and
+# the listing reported the mountpoint as the label.
+@test "the disk listing does not split lsblk output on IFS whitespace" {
+    ! grep -q "IFS=\$'\\\\t' read -r dev size tran" "${REPO_ROOT}/lib/disks.sh"
+    grep -q "IFS='|' read -r dev size tran" "${REPO_ROOT}/lib/disks.sh"
+}

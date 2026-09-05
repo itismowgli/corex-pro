@@ -76,19 +76,59 @@ phase1_drive() {
 
     mkdir -p "$MOUNT_TM" "$MOUNT_POOL"
 
-    local U1 U2
-    U1=$(blkid -s UUID -o value "$P1")
-    U2=$(blkid -s UUID -o value "$P2")
-    [[ -z "$U1" || -z "$U2" ]] && log_error "Could not read partition UUIDs."
+    # Mount by label, not by UUID.
+    #
+    # A UUID belongs to one filesystem, so replacing the SSD, or restoring its
+    # contents onto a new one, produces a disk that will not mount however
+    # correct its contents are. The label is the disk's role, and these
+    # partitions are already labelled above, so keying on it makes a swap
+    # something you can do with a screwdriver rather than an editor.
+    #
+    # The labels have to exist before this runs. On the re-use path the
+    # partitions were formatted by an earlier install, so check rather than
+    # assume: writing LABEL= for a label nothing carries is how a box ends up
+    # not booting cleanly.
+    local L1 L2
+    L1=$(blkid -s LABEL -o value "$P1" 2>/dev/null || true)
+    L2=$(blkid -s LABEL -o value "$P2" 2>/dev/null || true)
+    [[ "$L1" == "TIMEMACHINE" ]] || { e2label "$P1" TIMEMACHINE 2>/dev/null && L1=TIMEMACHINE; }
+    [[ "$L2" == "COREX_DATA" ]]  || { e2label "$P2" COREX_DATA  2>/dev/null && L2=COREX_DATA; }
 
-    echo "UUID=$U1 $MOUNT_TM ext4 defaults,noatime,nofail 0 2" >> /etc/fstab
-    echo "UUID=$U2 $MOUNT_POOL ext4 defaults,noatime,nofail 0 2" >> /etc/fstab
+    if [[ "$L1" == "TIMEMACHINE" && "$L2" == "COREX_DATA" ]]; then
+        echo "LABEL=TIMEMACHINE $MOUNT_TM ext4 defaults,noatime,nofail 0 2" >> /etc/fstab
+        echo "LABEL=COREX_DATA $MOUNT_POOL ext4 defaults,noatime,nofail 0 2" >> /etc/fstab
+    else
+        log_warning "Could not label both partitions; falling back to UUID entries."
+        log_warning "Run 'corex manage disk relabel' later to make a disk swap work."
+        local U1 U2
+        U1=$(blkid -s UUID -o value "$P1")
+        U2=$(blkid -s UUID -o value "$P2")
+        [[ -z "$U1" || -z "$U2" ]] && log_error "Could not read partition UUIDs."
+        echo "UUID=$U1 $MOUNT_TM ext4 defaults,noatime,nofail 0 2" >> /etc/fstab
+        echo "UUID=$U2 $MOUNT_POOL ext4 defaults,noatime,nofail 0 2" >> /etc/fstab
+    fi
     mount -a
 
     mountpoint -q "$MOUNT_TM" && mountpoint -q "$MOUNT_POOL" \
         && log_success "Both partitions mounted." \
         || log_error "Mount failed. Check dmesg for errors."
     df -h "$MOUNT_TM" "$MOUNT_POOL"
+
+    # Docker must not start without the data disk. Every service bind-mounts
+    # out of it, so starting without it creates those paths as empty
+    # directories on the root filesystem and the databases initialise fresh:
+    # the box comes up looking new rather than looking broken, which is the
+    # worst way for a missing disk to present.
+    # SCRIPT_DIR is the installer's, and this file is also sourced by tests
+    # that do not set it, so it is read defensively: under `set -u` a bare
+    # ${SCRIPT_DIR} here would abort the install at the last phase of the
+    # drive setup, which is the worst possible place to fail.
+    local _lib="${SCRIPT_DIR:-}/lib/disks.sh"
+    if [[ -n "${SCRIPT_DIR:-}" && -f "$_lib" ]]; then
+        # shellcheck source=/dev/null
+        source "$_lib"
+        disks_guard_docker
+    fi
 
     systemctl start docker 2>/dev/null || true
 }
