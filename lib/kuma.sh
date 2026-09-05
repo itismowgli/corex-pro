@@ -243,13 +243,15 @@ def main(db_path):
                 print("skipped %s: %s does not answer acceptably yet" % (name, url),
                       file=sys.stderr)
                 continue
-        row = cur.execute("SELECT id, url FROM monitor WHERE name = ?", (name,)).fetchone()
+        row = cur.execute(
+            "SELECT id, url, accepted_statuscodes_json, active FROM monitor WHERE name = ?",
+            (name,)).fetchone()
         if row:
             mid = row[0]
             # Only the address and the accepted codes are ours to correct: a
             # renamed hostname has to reach the monitor, but an interval the
             # operator changed in the interface is theirs.
-            if row[1] != url:
+            if row[1] != url or row[2] != codes or not row[3]:
                 cur.execute("UPDATE monitor SET url = ?, accepted_statuscodes_json = ?, "
                             "active = 1 WHERE id = ?", (url, codes, mid))
                 updated += 1

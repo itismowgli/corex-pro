@@ -10,7 +10,7 @@ SERVICE_RAM_MB=1024
 SERVICE_DISK_GB=5
 SERVICE_FIREWALL_SPECS=()
 SERVICE_DESCRIPTION="Sync personal, work and Nextcloud calendars through Google, Outlook or CalDAV. Runs continuously so calendar changes keep syncing."
-SERVICE_MONITORS="Keeper\thttps://keeper.${DOMAIN:-}\t[\"200-299\",\"307\"]"
+SERVICE_MONITORS="Keeper	https://keeper.${DOMAIN:-}	[\"200-299\",\"307\"]"
 KEEPER_IMAGE="${KEEPER_IMAGE:-ghcr.io/ridafkih/keeper-standalone:2.18.7}"
 
 keeper_dirs() {

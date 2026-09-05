@@ -52,7 +52,9 @@ class ServiceTests(unittest.TestCase):
         self.assertIn('keeper-db:/var/lib/postgresql/data', compose)
         self.assertNotIn('ports:', compose)
         self.assertNotIn(original.decode().splitlines()[0].split('=', 1)[1], compose)
-        self.assertIn('"307"', self.run_service('keeper', 'printf "%s" "$SERVICE_MONITORS"').stdout)
+        monitor = self.run_service('keeper', 'printf "%s" "$SERVICE_MONITORS"').stdout
+        self.assertEqual(monitor.split('\t'), [
+            'Keeper', 'https://keeper.example.com', '["200-299","307"]'])
 
     def test_keeper_refuses_replacing_keys_for_existing_data(self):
         db = self.base/'data/keeper-db'
