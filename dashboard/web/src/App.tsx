@@ -360,14 +360,22 @@ function Dashboard({
   // The agent serialises jobs, so one running action locks the rest.
   const locked = job?.state === "running"
 
-  const refreshAll = () => {
-    void services.refresh()
-    void state.refresh()
-    void storage.refresh()
-    void ports.refresh()
-    void catalogue.refresh()
-    void overview.refresh()
-  }
+  // Re-read everything now, rather than waiting out the poll intervals, which
+  // run from 15 seconds to 45. The button spins while it does: without that
+  // there is no way to tell a refresh that ran from a button that does
+  // nothing, which is exactly how it read.
+  const [refreshing, setRefreshing] = React.useState(false)
+  const refreshAll = React.useCallback(() => {
+    setRefreshing(true)
+    void Promise.allSettled([
+      services.refresh(),
+      state.refresh(),
+      storage.refresh(),
+      ports.refresh(),
+      catalogue.refresh(),
+      overview.refresh(),
+    ]).finally(() => setRefreshing(false))
+  }, [services, state, storage, ports, catalogue, overview])
 
   // Refresh either way. A logout call that failed to reach the server still
   // has to be reflected here, or the page claims a session it may not have.
@@ -549,8 +557,15 @@ function Dashboard({
                   {counts.other > 0 && <Badge variant="secondary">{counts.other}</Badge>}
                 </div>
               )}
-              <Button size="icon" variant="ghost" onClick={refreshAll} aria-label="Refresh">
-                <RefreshCwIcon />
+              <Button
+                size="icon"
+                variant="ghost"
+                onClick={refreshAll}
+                disabled={refreshing}
+                aria-label="Refresh everything now"
+                title="Re-read every panel now, instead of waiting for the next poll"
+              >
+                <RefreshCwIcon className={refreshing ? "animate-spin" : undefined} />
               </Button>
               <Button size="icon" variant="ghost" onClick={toggleTheme} aria-label="Toggle theme">
                 {dark ? <SunIcon /> : <MoonIcon />}

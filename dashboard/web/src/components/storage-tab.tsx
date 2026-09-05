@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/table"
 import { Meter } from "@/components/ui/spark"
 import { StatTile } from "@/components/stat-tile"
+import { StorageMap } from "@/components/storage-map"
 import type { Metrics } from "@/lib/api"
 import { bytes } from "@/lib/format"
 
@@ -68,6 +69,12 @@ export function StorageTab({
   const data = disks.find((d) => d.path === "/mnt/corex-data") ?? disks[disks.length - 1] ?? null
   const root = disks.find((d) => d.path === "/") ?? null
   const dockerTotal = Object.values(docker ?? {}).reduce((a, d) => a + (d?.size_b ?? 0), 0)
+  const layout = metrics?.storage ?? null
+  // The Time Machine partition: allocated, mounted, and on this hardware
+  // holding almost nothing, which no df line makes obvious.
+  const tm = layout?.disks
+    .flatMap((d) => d.parts)
+    .find((p) => p.label === "TIMEMACHINE" || p.mount === "/mnt/timemachine")
 
   return (
     <div className="flex flex-col gap-3">
@@ -114,12 +121,64 @@ export function StorageTab({
         />
       </div>
 
+      {layout && <StorageMap layout={layout} />}
+
+      {layout && (layout.totals.idle_b > 0 || (tm && tm.usage && tm.usage.used_b / tm.usage.total_b < 0.02)) && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm">Capacity that is not doing anything</CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-4 text-sm">
+            {layout.lvm && layout.lvm.free_b > 0 && (
+              <div className="grid gap-1">
+                <p className="font-medium">
+                  {bytes(layout.lvm.free_b)} unallocated on the internal disk
+                </p>
+                <p className="text-muted-foreground text-xs leading-relaxed">
+                  Free space in the volume group that no filesystem covers, so nothing can
+                  write to it and no `df` mentions it. It is the fastest storage in the
+                  machine. Give some of it to the databases with{" "}
+                  <code className="text-foreground">corex manage disk fast-tier</code>, or leave
+                  it: LVM will grow a volume on demand but will not shrink one without a
+                  fight, so unspent headroom is a decision rather than waste.
+                </p>
+              </div>
+            )}
+
+            {tm && tm.usage && (
+              <div className="grid gap-1">
+                <p className="font-medium">
+                  Time Machine holds {bytes(tm.usage.used_b)} of its {bytes(tm.size_b)}
+                </p>
+                <p className="text-muted-foreground text-xs leading-relaxed">
+                  {tm.usage.used_b / tm.usage.total_b < 0.02 ? (
+                    <>
+                      Almost nothing. Backups from a Mac land in the shared pool on the data
+                      partition now, so this one is a leftover from an older layout.{" "}
+                    </>
+                  ) : (
+                    <>Backups from a Mac land here. </>
+                  )}
+                  Turning Time Machine off does <span className="text-foreground">not</span> hand
+                  this space back on its own, and the partitions cannot simply be merged: this
+                  one sits <span className="text-foreground">before</span> the data partition on
+                  the disk, so freeing it leaves a gap in the wrong place, and a partition
+                  cannot grow backwards into space that precedes it. Reclaiming it means moving
+                  the data partition's start, with every service stopped. Using it where it is,
+                  as somewhere separate to write backups, costs nothing and needs no downtime.
+                </p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       <div className="grid gap-3 lg:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-sm">
               <HardDriveIcon className="size-4" />
-              Disks
+              What CoreX writes to
             </CardTitle>
           </CardHeader>
           <CardContent className="grid gap-3">

@@ -137,6 +137,127 @@ def disks():
     return out
 
 
+def storage_layout():
+    """Every disk in the box, what is on it, and what is not being used.
+
+    `disks()` above answers "are the two filesystems CoreX writes to filling
+    up", which is the operational question. This answers the different one the
+    Storage page needs: what hardware is fitted, how it is divided, and which
+    parts of it are doing nothing. Those are not the same, and the gap between
+    them is where capacity hides: on the reference box a 400GB partition sat
+    idle because Time Machine had moved elsewhere years earlier, and 240GB of
+    the internal NVMe had never been handed out at all, neither of which any
+    `df` output mentions.
+
+    Sizes are bytes throughout. A filesystem always reports less than its
+    partition, because formatting costs a few percent and ext4 reserves five
+    more for root; that difference is returned rather than hidden, so the page
+    can account for every byte instead of quietly losing some.
+    """
+    layout = {"disks": [], "lvm": None,
+              "totals": {"raw_b": 0, "used_b": 0, "free_b": 0, "idle_b": 0}}
+
+    # -b for bytes, -P for key="value" pairs: the raw format collapses empty
+    # columns and shifts every later value one place left.
+    rc, text = _run(["lsblk", "-b", "-P", "-o",
+                     "NAME,KNAME,TYPE,SIZE,FSTYPE,LABEL,MOUNTPOINT,MODEL,TRAN,PKNAME"],
+                    timeout=30)
+    if rc != 0:
+        return layout
+
+    rows = []
+    for line in text.splitlines():
+        row = {}
+        for m in re.finditer(r'(\w+)="([^"]*)"', line):
+            row[m.group(1)] = m.group(2)
+        if row:
+            rows.append(row)
+
+    def usage(mount):
+        if not mount:
+            return None
+        try:
+            u = shutil.disk_usage(mount)
+        except OSError:
+            return None
+        return {"used_b": u.used, "total_b": u.total, "free_b": u.free,
+                "pct": round(u.used * 100.0 / u.total, 1) if u.total else 0}
+
+    by_disk = {}
+    for row in rows:
+        if row.get("TYPE") != "disk":
+            continue
+        by_disk[row["KNAME"]] = {
+            "name": row["NAME"],
+            "size_b": _int(row.get("SIZE")),
+            "model": (row.get("MODEL") or "").strip() or None,
+            # usb or nvme is the single most useful fact about a disk here,
+            # because it is the difference between a good place for a database
+            # and a bad one.
+            "transport": (row.get("TRAN") or "").strip() or None,
+            "parts": [],
+            "unallocated_b": 0,
+        }
+
+    for row in rows:
+        if row.get("TYPE") not in ("part", "lvm", "crypt"):
+            continue
+        parent = row.get("PKNAME") or ""
+        disk = by_disk.get(parent)
+        mount = row.get("MOUNTPOINT") or ""
+        part = {
+            "name": row["NAME"],
+            "kind": row.get("TYPE"),
+            "size_b": _int(row.get("SIZE")),
+            "fstype": (row.get("FSTYPE") or "").strip() or None,
+            "label": (row.get("LABEL") or "").strip() or None,
+            "mount": mount or None,
+            "usage": usage(mount),
+        }
+        if disk is not None:
+            disk["parts"].append(part)
+        else:
+            # An LV sits on the volume group, not on a disk, so it has no
+            # parent among the physical disks. It is still worth reporting.
+            layout.setdefault("volumes", []).append(part)
+
+    # Space on a disk that no partition covers. Not the same as free space in
+    # a filesystem, and invisible to df, which is exactly why it goes unnoticed.
+    for disk in by_disk.values():
+        covered = sum(p["size_b"] for p in disk["parts"] if p["kind"] == "part")
+        disk["unallocated_b"] = max(0, disk["size_b"] - covered)
+
+    layout["disks"] = sorted(by_disk.values(), key=lambda d: d["name"])
+
+    # Space in the volume group that no logical volume has claimed. This is
+    # free capacity on the fastest disk in the machine and nothing else
+    # reports it.
+    rc, text = _run(["vgs", "--noheadings", "--nosuffix", "--units", "b",
+                     "-o", "vg_name,vg_size,vg_free"], timeout=20)
+    if rc == 0 and text.strip():
+        f = text.split()
+        if len(f) >= 3:
+            layout["lvm"] = {"vg": f[0], "size_b": _int(f[1]), "free_b": _int(f[2])}
+
+    # Totals, in the terms the page asks its question in.
+    raw = sum(d["size_b"] for d in layout["disks"])
+    used = free = 0
+    for d in layout["disks"]:
+        for p in d["parts"]:
+            if p["usage"]:
+                used += p["usage"]["used_b"]
+                free += p["usage"]["free_b"]
+    for v in layout.get("volumes", []):
+        if v["usage"]:
+            used += v["usage"]["used_b"]
+            free += v["usage"]["free_b"]
+    idle = sum(d["unallocated_b"] for d in layout["disks"])
+    if layout["lvm"]:
+        idle += layout["lvm"]["free_b"]
+    layout["totals"] = {"raw_b": raw, "used_b": used, "free_b": free, "idle_b": idle}
+    return layout
+
+
 # ── The time series, read from the blackbox ─────────────────────────────────
 
 _SAMPLE = re.compile(
@@ -701,6 +822,7 @@ def collect(want_sizes=True):
         "memory": mem,
         "uptime_s": uptime_seconds(),
         "disks": disks(),
+        "storage": storage_layout() if want_sizes else None,
         "docker": _df,
         "purgeable": docker_purgeable(_df),
         "service_sizes": service_sizes() if want_sizes else [],

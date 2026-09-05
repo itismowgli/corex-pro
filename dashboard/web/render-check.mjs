@@ -109,6 +109,37 @@ const METRICS = {
     images: { count: 36, active: 32, size: "34.55GB", reclaimable: "576.5MB", size_b: 34550000000, reclaimable_b: 576500000 },
     build_cache: { count: 100, active: 0, size: "2.5GB", reclaimable: "2.0GB", size_b: 2553000000, reclaimable_b: 2047000000 },
   },
+  // The whole storage picture, with the two shapes that matter carried on
+  // purpose: a partition that is allocated and mounted while holding almost
+  // nothing (the Time Machine leftover), and space in the volume group that no
+  // filesystem covers. Neither appears in any df output, which is why both
+  // went unnoticed on the real box for months.
+  storage: {
+    disks: [
+      {
+        name: "nvme0n1", size_b: 512110190592, model: "YC ELECTRONIX 512GB",
+        transport: "nvme", unallocated_b: 0,
+        parts: [
+          { name: "nvme0n1p1", kind: "part", size_b: 1127219200, fstype: "vfat", label: null, mount: "/boot/efi", usage: { used_b: 6200000, total_b: 1100000000, free_b: 1093800000, pct: 0.6 } },
+          { name: "nvme0n1p3", kind: "part", size_b: 508833038336, fstype: "LVM2_member", label: null, mount: null, usage: null },
+        ],
+      },
+      {
+        name: "sda", size_b: 1000171323904, model: "Extreme 55AE",
+        transport: "usb", unallocated_b: 0,
+        parts: [
+          { name: "sda1", kind: "part", size_b: 399999238144, fstype: "ext4", label: "TIMEMACHINE", mount: "/mnt/timemachine", usage: { used_b: 151000000, total_b: 392600000000, free_b: 392449000000, pct: 0.1 } },
+          { name: "sda2", kind: "part", size_b: 600170299392, fstype: "ext4", label: "COREX_DATA", mount: "/mnt/corex-data", usage: { used_b: 120647729152, total_b: 589600727040, free_b: 438927708160, pct: 20.5 } },
+        ],
+      },
+    ],
+    volumes: [
+      { name: "ubuntu--vg-ubuntu--lv", kind: "lvm", size_b: 268435456000, fstype: "ext4", label: null, mount: "/", usage: { used_b: 63089823744, total_b: 263624122368, free_b: 188685045760, pct: 23.9 } },
+      { name: "ubuntu--vg-corex--fast", kind: "lvm", size_b: 53687091200, fstype: "ext4", label: "COREX_FAST", mount: "/mnt/corex-fast", usage: { used_b: 779000000, total_b: 52600000000, free_b: 51821000000, pct: 1.5 } },
+    ],
+    lvm: { vg: "ubuntu-vg", size_b: 508833038336, free_b: 186700000000 },
+    totals: { raw_b: 1512281514496, used_b: 184900000000, free_b: 1051800000000, idle_b: 186700000000 },
+  },
   // The state that made the Reclaim button look broken: Docker reports
   // gigabytes unused, and none of it is old enough for cleanup to take. The
   // panel has to say that rather than offer a number it will not deliver.
@@ -262,10 +293,14 @@ function mount(url, me, withData = true, width = 1280) {
 const EXPECT = {
   system: "enp2s0",
   maintenance: "Never run",
-  // Not the tile label: the sentence that only appears when cleanup can free
-  // nothing and Docker still reports gigabytes unused. That divergence is the
-  // whole bug this panel was rewritten for.
+  // Three things at once, because the Storage panel now answers three
+  // different questions and each has been silently blank at some point:
+  // the divergence between what Docker calls unused and what cleanup will
+  // take, the physical disk map, and the Time Machine partition that is
+  // allocated while holding nothing.
   storage: "too new to remove",
+  storageMap: "Extreme 55AE",
+  storageIdle: "unallocated on the internal disk",
   // The range toggle over the blackbox series.
   overview: "30 min",
   // Not just the card: the sentence the check writes above the grid, which
@@ -342,6 +377,16 @@ for (const tab of TABS) {
   // consequence panel on the page: it has to name the interface it read.
   if (withData && EXPECT[tab] && !text.includes(EXPECT[tab])) {
     failures.push("mounted but did not show " + JSON.stringify(EXPECT[tab]))
+  }
+  // Extra assertions for a tab that answers more than one question. Keyed
+  // "<tab>Something" so one tab can carry several without a second table.
+  if (withData) {
+    for (const [key, want] of Object.entries(EXPECT)) {
+      if (key === tab || !key.startsWith(tab)) continue
+      if (!text.includes(want)) {
+        failures.push("mounted but did not show " + JSON.stringify(want))
+      }
+    }
   }
   for (const line of consoleErrors) {
     if (line.includes("dashboard render failed")) failures.push("error boundary caught: " + line)

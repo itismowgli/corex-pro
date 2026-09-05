@@ -276,6 +276,46 @@ export type Disk = {
   pct: number
 }
 
+export type DiskUsage = {
+  used_b: number
+  total_b: number
+  free_b: number
+  pct: number
+}
+
+export type Partition = {
+  name: string
+  /** part on a disk, lvm for a logical volume. */
+  kind: string
+  size_b: number
+  fstype: string | null
+  label: string | null
+  mount: string | null
+  usage: DiskUsage | null
+}
+
+export type PhysicalDisk = {
+  name: string
+  size_b: number
+  model: string | null
+  /** usb or nvme, which is the difference between a good place for a database and a bad one. */
+  transport: string | null
+  parts: Partition[]
+  /** Covered by no partition. Invisible to df, which is why it goes unnoticed. */
+  unallocated_b: number
+}
+
+/**
+ * The whole of the storage in the box, not just the two filesystems CoreX
+ * writes to. The gap between those two answers is where capacity hides.
+ */
+export type StorageLayout = {
+  disks: PhysicalDisk[]
+  volumes?: Partition[]
+  lvm: { vg: string; size_b: number; free_b: number } | null
+  totals: { raw_b: number; used_b: number; free_b: number; idle_b: number }
+}
+
 export type Purgeable = {
   /** Removable right now, and the number the button may promise. */
   images_b: number
@@ -335,6 +375,7 @@ export type Metrics = {
    * image is most of the time.
    */
   purgeable: Purgeable | null
+  storage: StorageLayout | null
   service_sizes: { name: string; bytes: number }[]
   series: Sample[]
   watchdog: Finding[]

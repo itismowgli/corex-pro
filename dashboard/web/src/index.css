@@ -60,6 +60,10 @@
      the destructive. */
   --ok: oklch(0.63 0.16 149);
   --ok-foreground: oklch(0.985 0 0);
+  --seg-used: oklch(0.55 0.09 195);
+  --seg-free: oklch(0.83 0.01 250);
+  --seg-idle: oklch(0.68 0.12 75);
+  --seg-system: oklch(0.52 0.08 255);
   --warn: oklch(0.75 0.15 70);
   --warn-foreground: oklch(0.21 0.03 60);
 }
@@ -85,8 +89,21 @@
   --ring: oklch(0.556 0 0);
   --ok: oklch(0.7 0.15 152);
   --ok-foreground: oklch(0.16 0.02 150);
+  --seg-used: oklch(0.62 0.10 195);
+  --seg-free: oklch(0.42 0.02 250);
+  --seg-idle: oklch(0.72 0.13 75);
+  --seg-system: oklch(0.55 0.09 255);
   --warn: oklch(0.78 0.14 75);
   --warn-foreground: oklch(0.18 0.03 60);
+}
+
+@theme inline {
+  /* The four roles the storage map uses, and only four. Teal is space doing a
+     job, ochre is space doing nothing, steel is the system, slate is free. */
+  --color-seg-used: var(--seg-used);
+  --color-seg-free: var(--seg-free);
+  --color-seg-idle: var(--seg-idle);
+  --color-seg-system: var(--seg-system);
 }
 
 @layer base {
