@@ -34,6 +34,9 @@ Uptime Kuma	https://status.${DOMAIN:-}	[\"200-299\",\"302\"]"
 
 monitoring_dirs() {
     mkdir -p "${DOCKER_ROOT}/monitoring"
+    mkdir -p "${DOCKER_ROOT}/monitoring/grafana/provisioning/datasources"
+    mkdir -p "${DOCKER_ROOT}/monitoring/grafana/provisioning/dashboards"
+    mkdir -p "${DOCKER_ROOT}/monitoring/grafana/dashboards"
     mkdir -p "${DATA_ROOT}/uptime-kuma" "${DATA_ROOT}/grafana" "${DATA_ROOT}/prometheus"
     chown -R 1000:1000 "${DATA_ROOT}/uptime-kuma"
     chown -R 472:472 "${DATA_ROOT}/grafana"         # Grafana runs as uid 472
@@ -44,6 +47,642 @@ monitoring_firewall() {
     ufw allow 3001/tcp comment 'Uptime Kuma Status Page' 2>/dev/null || true
     ufw allow 3002/tcp comment 'Grafana Dashboards'      2>/dev/null || true
     ufw allow 9090/tcp comment 'Prometheus (LAN only)'   2>/dev/null || true
+}
+
+
+# Grafana, with something in it.
+#
+# Without this the stack collects metrics into a store nothing displays: a
+# fresh Grafana has no datasource and no dashboards, so the first thing it
+# shows anyone is an empty home page and a form asking for a database URL.
+# Four containers were running to fill a picture nobody could see, which is
+# the entire reason this stack was switched off as "not in use".
+#
+# Regenerated unconditionally on every deploy and repair rather than written
+# only when absent, for the reason in gotcha #22: these are generated files,
+# not user state. A dashboard someone edits in the browser is saved by Grafana
+# into its own database under a different id, so editing is not lost.
+# The dashboard, pinned to the datasource above by uid rather than by name, so
+# renaming the datasource in the UI cannot leave every panel querying nothing.
+#
+# It plots every hwmon sensor rather than guessing which chip is the CPU: on
+# this box that is a Ryzen k10temp reading alongside five NVMe sensors, and the
+# PCI address in the chip label is hardware specific, so picking one by name
+# would draw an empty panel on anyone else's machine. Thresholds sit at the
+# same 80C and 85C the thermal guardian uses, so the chart and the thing that
+# shuts containers down agree about what "hot" means.
+_monitoring_write_host_dashboard() {
+    cat > "$1" << 'GDASHEOF'
+{
+  "uid": "corex-host",
+  "title": "CoreX host and containers",
+  "tags": [
+    "corex"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "1m",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Temperature, every sensor",
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "corex-prom"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 4,
+            "showPoints": "never",
+            "spanNulls": true,
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "unit": "celsius",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "#d9a24a",
+                "value": 80
+              },
+              {
+                "color": "red",
+                "value": 85
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "node_hwmon_temp_celsius",
+          "legendFormat": "{{chip}} {{sensor}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "corex-prom"
+          }
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "CPU used",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 9
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "corex-prom"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 14,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "100 - (avg(rate(node_cpu_seconds_total{mode=\"idle\"}[$__rate_interval])) * 100)",
+          "legendFormat": "busy",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "corex-prom"
+          }
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Load average",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 9
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "corex-prom"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "node_load1",
+          "legendFormat": "1 min",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "corex-prom"
+          }
+        },
+        {
+          "expr": "node_load5",
+          "legendFormat": "5 min",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "corex-prom"
+          }
+        },
+        {
+          "expr": "node_load15",
+          "legendFormat": "15 min",
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "corex-prom"
+          }
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Memory in use",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 17
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "corex-prom"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "bytes",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes",
+          "legendFormat": "used",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "corex-prom"
+          }
+        },
+        {
+          "expr": "node_memory_MemTotal_bytes",
+          "legendFormat": "total",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "corex-prom"
+          }
+        },
+        {
+          "expr": "node_memory_SwapTotal_bytes - node_memory_SwapFree_bytes",
+          "legendFormat": "swap",
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "corex-prom"
+          }
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Disk space used",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 17
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "corex-prom"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": true,
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "#d9a24a",
+                "value": 80
+              },
+              {
+                "color": "red",
+                "value": 90
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "100 - (node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay|squashfs\"} / node_filesystem_size_bytes{fstype!~\"tmpfs|overlay|squashfs\"} * 100)",
+          "legendFormat": "{{mountpoint}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "corex-prom"
+          }
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "CPU by container",
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 25
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "corex-prom"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "topk(10, sum(rate(container_cpu_usage_seconds_total{name!=\"\"}[$__rate_interval])) by (name)) * 100",
+          "legendFormat": "{{name}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "corex-prom"
+          }
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Memory by container",
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 25
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "corex-prom"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "bytes",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "topk(10, container_memory_working_set_bytes{name!=\"\"})",
+          "legendFormat": "{{name}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "corex-prom"
+          }
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Network",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 34
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "corex-prom"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "Bps",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(node_network_receive_bytes_total{device!~\"lo|veth.*|br-.*|docker.*\"}[$__rate_interval])",
+          "legendFormat": "in {{device}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "corex-prom"
+          }
+        },
+        {
+          "expr": "rate(node_network_transmit_bytes_total{device!~\"lo|veth.*|br-.*|docker.*\"}[$__rate_interval])",
+          "legendFormat": "out {{device}}",
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "corex-prom"
+          }
+        }
+      ]
+    }
+  ]
+}
+GDASHEOF
+}
+
+_monitoring_write_grafana_provisioning() {
+    local dir="$1"
+
+    cat > "${dir}/grafana/provisioning/datasources/prometheus.yml" << 'GDSEOF'
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    uid: corex-prom
+    type: prometheus
+    access: proxy
+    # The container name on monitoring-net. Not localhost: Grafana and
+    # Prometheus are different containers.
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: 30s
+GDSEOF
+
+    cat > "${dir}/grafana/provisioning/dashboards/corex.yml" << 'GPEOF'
+apiVersion: 1
+providers:
+  - name: CoreX
+    orgId: 1
+    folder: CoreX
+    type: file
+    disableDeletion: false
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/dashboards
+      foldersFromFilesStructure: false
+GPEOF
+
+    _monitoring_write_host_dashboard "${dir}/grafana/dashboards/corex-host.json"
+    chown -R 472:472 "${dir}/grafana" 2>/dev/null || true
 }
 
 monitoring_deploy() {
@@ -63,9 +702,16 @@ scrape_configs:
     static_configs:
       - targets: ["node-exporter:9100"]
   - job_name: cadvisor
+    # cAdvisor enumerates every container on each scrape, so it is slower than
+    # the 10s default even with the filesystem walks switched off. A timeout
+    # shorter than the target's honest response time turns the whole job into
+    # "context deadline exceeded" forever, with no other symptom.
+    scrape_timeout: 20s
     static_configs:
       - targets: ["cadvisor:8080"]
 PEOF
+
+    _monitoring_write_grafana_provisioning "$dir"
 
     # Prometheus disk space alerts
     cat > "${dir}/alerts.yml" << 'ALEOF'
@@ -156,6 +802,11 @@ services:
     ports: ["3002:3000"]
     volumes:
       - ${DATA_ROOT}/grafana:/var/lib/grafana
+      # Read-only: these are generated on every repair, and Grafana writing
+      # back into them would be overwritten without warning. Edits made in the
+      # browser are saved to Grafana's own database instead, which survives.
+      - ${DOCKER_ROOT}/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ${DOCKER_ROOT}/monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
     environment:
       GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASS}"
       GF_SERVER_ROOT_URL: "https://grafana.${DOMAIN}"
@@ -198,6 +849,24 @@ ${sso_label}
     image: gcr.io/cadvisor/cadvisor:latest
     container_name: cadvisor
     restart: unless-stopped
+    # Measured on this hardware before these flags: one scrape took 5m44s and
+    # Prometheus gave up on every one of them, so cAdvisor ran permanently and
+    # delivered nothing. The cost is per-container filesystem walks, which
+    # cAdvisor logs itself: "disk usage and inodes count on following dirs took
+    # 51.9s" for a single container, repeated across all of them. On a box that
+    # thermal trips, that is a lot of disk and CPU for a number `docker system
+    # df` already answers.
+    command:
+      # The expensive metrics are the filesystem ones. Everything else cAdvisor
+      # collects is cheap and is the reason it is here.
+      - --disable_metrics=disk,diskIO,tcp,udp,advtcp,sched,process,hugetlb,referenced_memory,cpu_topology,resctrl,memory_numa
+      # Only containers, not every cgroup on the host. node-exporter covers the
+      # host and does it far more cheaply.
+      - --docker_only=true
+      # Match the scrape interval. Housekeeping faster than the scrape is work
+      # nobody reads.
+      - --housekeeping_interval=30s
+      - --store_container_labels=false
     volumes:
       - /:/rootfs:ro
       - /var/run:/var/run:ro
