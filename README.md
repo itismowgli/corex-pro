@@ -2014,7 +2014,7 @@ bash -n install-corex-master.sh      # parse check
 
 ## Version history
 
-The current release is v3.23.1. Recent versions added step-up confirmation
+The current release is v3.25.0. Recent versions added step-up confirmation
 before the power actions, reboot and shutdown from the dashboard, wake-on-LAN,
 scheduled maintenance, per-service update badges, Authelia, a CPU clock
 ceiling, and `lan-only`. `CHANGELOG.md` has the detail, including the faults

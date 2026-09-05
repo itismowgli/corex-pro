@@ -8,7 +8,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ## [Unreleased]
 
+No changes yet.
+
+## [v3.25.0] - 2026-09-06
+
 ### Added
+- Grafana can opt into the same Sablier wake-on-access policy as Portainer with
+  `corex manage cold enable grafana`; Prometheus and Uptime Kuma remain online
+  for collection and alerts.
+
+- Service discovery tests now source and syntax-check every `lib/services/*.sh`
+  file, require its declared name to match its filename, and account for hidden
+  modules. A broken module or macOS sidecar can no longer disappear from the
+  coverage check.
+
 - `keeper` installs the standalone Keeper.sh calendar sync service behind
   Traefik. It keeps its PostgreSQL data on the CoreX data pool, stores generated
   keys in a private environment file, backs up the database with `pg_dump`, and
@@ -42,6 +55,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 
 ### Fixed
+- Monitoring compose generation no longer evaluates backticks in comments as
+  shell commands while writing the file.
+
+- Keeper's Bun workers and database pools use bounded concurrency and Bun's
+  small-memory mode, reducing idle resident memory while keeping calendar sync
+  available.
 - The dashboard now shares one live host sampler, pauses browser requests while
   the page is hidden, and limits container statistics to one sample every 30
   seconds. The fast metrics path no longer scans disks, logs, SQLite, SMART or
