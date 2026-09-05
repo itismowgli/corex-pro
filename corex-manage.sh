@@ -719,8 +719,11 @@ cmd_disk() {
         adopt)   check_root; disks_adopt "${1:-}" ;;
         relabel) check_root; disks_relabel ;;
         guard)   check_root; disks_guard_docker ;;
+        fast|fast-status) disks_fast_status ;;
+        fast-tier)   disks_fast_tier ;;
+        fast-commit) disks_fast_commit ;;
         *)
-            echo "Usage: corex manage disk <list|check|adopt|relabel|guard>"
+            echo "Usage: corex manage disk <list|check|adopt|relabel|guard|fast-tier>"
             echo ""
             echo "  list     every disk, what it holds, and what CoreX uses it for"
             echo "  check    whether a disk swap would come back on its own"
@@ -728,6 +731,10 @@ cmd_disk() {
             echo "  relabel  put the labels on the disks already in use, and"
             echo "           switch fstab from UUID to label so a swap works"
             echo "  guard    stop Docker starting when the data disk is absent"
+            echo ""
+            echo "  fast         where the databases are reading from"
+            echo "  fast-tier    move the databases onto the internal NVMe"
+            echo "  fast-commit  delete the kept originals, once you are satisfied"
             return 1
             ;;
     esac

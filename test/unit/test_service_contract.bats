@@ -898,3 +898,38 @@ _repair_body() {
     ! grep -q "IFS=\$'\\\\t' read -r dev size tran" "${REPO_ROOT}/lib/disks.sh"
     grep -q "IFS='|' read -r dev size tran" "${REPO_ROOT}/lib/disks.sh"
 }
+
+# ─── Fast tier ────────────────────────────────────────────────────────────────
+
+# A module regenerates its compose file on every repair (gotcha #22), so a path
+# edited there is reverted the next time anyone runs `corex manage repair`, and
+# the database then starts against an empty directory on the old disk and
+# initialises itself fresh. The bind keeps the path the module writes and
+# changes only what is behind it.
+@test "the fast tier moves databases with bind mounts, not compose edits" {
+    grep -q "none bind,nofail" "${REPO_ROOT}/lib/disks.sh"
+    ! grep -qE "sed .*docker-compose.yml" "${REPO_ROOT}/lib/disks.sh"
+}
+
+# A bind that failed while its filesystem mounted is the same catastrophe in a
+# smaller costume, so Docker requires each bind target and not just the disk.
+@test "the docker guard covers each fast-tier bind target" {
+    grep -q "RequiresMountsFor=\${src}" "${REPO_ROOT}/lib/disks.sh"
+}
+
+# These four directories run as four different uids that the database images
+# check on startup.
+@test "the fast tier copy preserves ownership numerically" {
+    grep -q "rsync -aHAX --numeric-ids" "${REPO_ROOT}/lib/disks.sh"
+}
+
+# Deleting the source before the destination has proved itself leaves no way
+# back if a database refuses to open on the new disk.
+@test "the fast tier keeps the original until it is committed" {
+    grep -q "pre-fast" "${REPO_ROOT}/lib/disks.sh"
+    grep -q "disks_fast_commit" "${REPO_ROOT}/lib/disks.sh"
+}
+
+@test "fast-commit refuses to delete an original that is not yet replaced" {
+    grep -q "is not reading from the fast disk; keeping" "${REPO_ROOT}/lib/disks.sh"
+}

@@ -258,3 +258,202 @@ disks_relabel() {
     disks_fstab_use_labels
     disks_guard_docker
 }
+
+# ── Fast tier ─────────────────────────────────────────────────────────────────
+#
+# The databases are the one thing on this box doing constant small random
+# reads, and on the reference hardware they sit on a USB SSD while an NVMe is
+# half empty beside it. Together they are under a gigabyte, so moving them is
+# cheap and the latency floor drops for every page load that touches one.
+#
+# They are moved with bind mounts rather than by editing compose files, and
+# that is the whole design. A module regenerates its compose on every repair
+# (gotcha #22), so a path edited there is silently reverted the next time
+# anyone runs `corex manage repair`, and the service then starts against an
+# empty directory on the old disk and initialises a fresh database. The bind
+# keeps the path the module writes and changes only what is behind it.
+DISK_FAST_LABEL="COREX_FAST"
+DISK_FAST_MOUNT="/mnt/corex-fast"
+DISK_FAST_LV="corex-fast"
+DISK_FAST_SIZE="${DISK_FAST_SIZE:-50G}"
+
+# What belongs on it. Directory names under service-data, nothing else: these
+# are the small, latency-sensitive stores. Bulk data (photos, files, metrics)
+# stays on the big disk, where sequential throughput is all that matters.
+DISK_FAST_DIRS=(nextcloud-db immich-db calcom-db crowdsec-db)
+
+_fast_src()  { echo "${DATA_ROOT:-/mnt/corex-data/service-data}/$1"; }
+_fast_dest() { echo "${DISK_FAST_MOUNT}/$1"; }
+
+# Containers that bind-mount a given host path, so the move stops exactly what
+# is holding the files open and nothing else.
+_fast_users() {
+    local path="$1" c
+    for c in $(docker ps -a --format '{{.Names}}' 2>/dev/null); do
+        if docker inspect "$c" --format '{{range .Mounts}}{{.Source}}
+{{end}}' 2>/dev/null | grep -qxF "$path"; then
+            echo "$c"
+        fi
+    done
+}
+
+# Docker must require every path a database lives behind, not just the disk.
+# A bind that failed while its filesystem mounted is the same catastrophe in a
+# smaller costume: the service starts, finds an empty directory, and makes a
+# new database in it.
+disks_guard_docker_paths() {
+    local dir="/etc/systemd/system/docker.service.d"
+    mkdir -p "$dir"
+    {
+        echo "[Unit]"
+        echo "# Every service bind-mounts out of these. Started without one,"
+        echo "# Docker creates it as an empty directory and the databases"
+        echo "# initialise fresh, so the box comes up looking new instead of"
+        echo "# looking broken. Refusing to start is the recoverable failure."
+        echo "RequiresMountsFor=${DISK_DATA_MOUNT}"
+        if mountpoint -q "$DISK_FAST_MOUNT" 2>/dev/null; then
+            echo "RequiresMountsFor=${DISK_FAST_MOUNT}"
+            local d src
+            for d in "${DISK_FAST_DIRS[@]}"; do
+                src=$(_fast_src "$d")
+                mountpoint -q "$src" 2>/dev/null && echo "RequiresMountsFor=${src}"
+            done
+        fi
+    } > "${dir}/99-corex-datadisk.conf"
+    systemctl daemon-reload 2>/dev/null || true
+}
+
+disks_fast_status() {
+    echo ""
+    echo -e "${CYAN}${BOLD}Fast tier${NC}"
+    echo "──────────────────────────────────────────────────────────────"
+    if ! mountpoint -q "$DISK_FAST_MOUNT" 2>/dev/null; then
+        echo "  Not set up. The databases are on the same disk as everything else."
+        echo -e "  Create it with: ${CYAN}corex manage disk fast-tier${NC}"
+        echo ""
+        return 0
+    fi
+    df -h "$DISK_FAST_MOUNT" | tail -1 | awk '{printf "  %s on %s, %s of %s used\n", $1, $6, $3, $2}'
+    local d src
+    for d in "${DISK_FAST_DIRS[@]}"; do
+        src=$(_fast_src "$d")
+        if mountpoint -q "$src" 2>/dev/null; then
+            echo -e "  ${GREEN}ok${NC}    ${d} reads from the fast disk"
+        elif [[ -d "$src" ]]; then
+            echo -e "  ${YELLOW}warn${NC}  ${d} is still on the data disk"
+        fi
+    done
+    echo ""
+}
+
+# Create the volume and move the databases onto it. Safe to re-run.
+disks_fast_tier() {
+    check_root
+    command -v lvcreate >/dev/null 2>&1 || log_error "LVM is not installed, so there is no volume group to carve."
+
+    local vg
+    vg=$(vgs --noheadings -o vg_name 2>/dev/null | head -1 | tr -d ' ')
+    [[ -n "$vg" ]] || log_error "No volume group found."
+
+    # 1. The volume itself.
+    if ! lvs "${vg}/${DISK_FAST_LV}" >/dev/null 2>&1; then
+        local free_g
+        free_g=$(vgs --noheadings --units g -o vg_free "$vg" 2>/dev/null | tr -dc '0-9.' | cut -d. -f1)
+        log_info "Volume group ${vg} has ${free_g:-?}G free; taking ${DISK_FAST_SIZE}."
+        [[ "${free_g:-0}" -lt 10 ]] && log_error "Not enough free space in ${vg}."
+        lvcreate -L "$DISK_FAST_SIZE" -n "$DISK_FAST_LV" "$vg" \
+            || log_error "Could not create the logical volume."
+        mkfs.ext4 -F -L "$DISK_FAST_LABEL" "/dev/${vg}/${DISK_FAST_LV}" >/dev/null \
+            || log_error "Could not format the logical volume."
+        log_success "Created /dev/${vg}/${DISK_FAST_LV}, labelled ${DISK_FAST_LABEL}."
+    else
+        log_info "Logical volume ${vg}/${DISK_FAST_LV} already exists."
+    fi
+
+    # 2. Mount it, by label, for the same reason everything else is.
+    mkdir -p "$DISK_FAST_MOUNT"
+    if ! grep -qE "^LABEL=${DISK_FAST_LABEL}[[:space:]]" /etc/fstab; then
+        sed -i "\|[[:space:]]${DISK_FAST_MOUNT}[[:space:]]|d" /etc/fstab
+        echo "LABEL=${DISK_FAST_LABEL} ${DISK_FAST_MOUNT} ext4 defaults,noatime,nofail 0 2" >> /etc/fstab
+        systemctl daemon-reload 2>/dev/null || true
+    fi
+    mountpoint -q "$DISK_FAST_MOUNT" || mount "$DISK_FAST_MOUNT" || log_error "Could not mount ${DISK_FAST_MOUNT}."
+    log_success "${DISK_FAST_MOUNT} is mounted."
+
+    # 3. Move each directory, one at a time, stopping only what holds it.
+    local d src dest users moved=0
+    for d in "${DISK_FAST_DIRS[@]}"; do
+        src=$(_fast_src "$d")
+        dest=$(_fast_dest "$d")
+        [[ -d "$src" ]] || { log_info "${d}: not installed, skipping."; continue; }
+        if mountpoint -q "$src"; then
+            log_info "${d}: already on the fast tier."
+            continue
+        fi
+
+        users=$(_fast_users "$src" | tr '\n' ' ')
+        log_step "Moving ${d}$([[ -n "${users// }" ]] && echo " (stopping:${users%% })")..."
+        # shellcheck disable=SC2086
+        [[ -n "${users// }" ]] && docker stop $users >/dev/null 2>&1 || true
+
+        # -a keeps ownership, and these directories run as four different uids
+        # that the database images check on startup. --numeric-ids because the
+        # names do not exist on the host.
+        mkdir -p "$dest"
+        if ! rsync -aHAX --numeric-ids --delete "${src}/" "${dest}/"; then
+            # shellcheck disable=SC2086
+            [[ -n "${users// }" ]] && docker start $users >/dev/null 2>&1 || true
+            log_error "${d}: copy failed, nothing was changed."
+        fi
+        chown --reference="$src" "$dest"
+        chmod --reference="$src" "$dest"
+
+        # The original is kept, renamed, until everything is verified. It is
+        # the only way back if a database refuses to open on the new disk.
+        mv "$src" "${src}.pre-fast" || log_error "${d}: could not set the original aside."
+        mkdir -p "$src"
+        chown --reference="${src}.pre-fast" "$src"
+        chmod --reference="${src}.pre-fast" "$src"
+
+        sed -i "\|[[:space:]]${src}[[:space:]]|d" /etc/fstab
+        echo "${dest} ${src} none bind,nofail 0 0" >> /etc/fstab
+        systemctl daemon-reload 2>/dev/null || true
+        if ! mount "$src"; then
+            rmdir "$src" 2>/dev/null || true
+            mv "${src}.pre-fast" "$src"
+            sed -i "\|[[:space:]]${src}[[:space:]]|d" /etc/fstab
+            log_error "${d}: bind mount failed, the original was put back."
+        fi
+
+        # shellcheck disable=SC2086
+        [[ -n "${users// }" ]] && docker start $users >/dev/null 2>&1 || true
+        log_success "${d} now reads from the fast disk."
+        moved=$((moved + 1))
+    done
+
+    disks_guard_docker_paths
+    echo ""
+    log_success "Fast tier ready. ${moved} database(s) moved."
+    echo "  The originals are kept as *.pre-fast until you are satisfied."
+    echo -e "  Check the services, then reclaim them with: ${CYAN}corex manage disk fast-commit${NC}"
+    echo ""
+}
+
+# Remove the kept originals, once the services have proved themselves.
+disks_fast_commit() {
+    check_root
+    local d src found=0
+    for d in "${DISK_FAST_DIRS[@]}"; do
+        src="$(_fast_src "$d").pre-fast"
+        [[ -d "$src" ]] || continue
+        found=1
+        # Never delete an original while its replacement is not mounted.
+        if ! mountpoint -q "$(_fast_src "$d")"; then
+            log_warning "${d} is not reading from the fast disk; keeping ${src}."
+            continue
+        fi
+        log_info "Removing $(du -sh "$src" 2>/dev/null | cut -f1) from ${src}"
+        rm -rf "$src"
+    done
+    [[ "$found" == "1" ]] && log_success "Old copies removed." || log_info "Nothing to remove."
+}

@@ -8,6 +8,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ## [Unreleased]
 
+### Added
+- **`corex manage disk`, and a fast tier for the databases.** The internal NVMe
+  had 240GB never handed out while the four databases sat on a USB SSD doing
+  the one workload that disk is worst at. They are under a gigabyte together,
+  so `disk fast-tier` carves a volume, moves them, and leaves the rest of the
+  NVMe unallocated as headroom.
+
+  They move by **bind mount, not by editing compose files**, and that is the
+  whole design. A module regenerates its compose on every repair (gotcha #22),
+  so a path edited there is reverted the next time anyone runs
+  `corex manage repair`, and the database then starts against an empty
+  directory on the old disk and initialises itself fresh. The bind keeps the
+  path the module writes and changes only what sits behind it.
+
+  The original of each directory is kept as `<name>.pre-fast` until
+  `disk fast-commit` removes it, and that command refuses to delete an original
+  whose replacement is not mounted.
+
+- **`corex manage disk fast`** reports where each database is actually reading
+  from, rather than where it was configured to read from.
+
+
 ### Fixed
 - **The Reclaim button freed nothing, and said it had worked.** Three
   independent faults, each sufficient on its own, and all three silent.
@@ -69,6 +91,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
   every check. It asserts both ways in are present, that the passkey comes
   first, and that the field carries the `webauthn` token, since a conditional
   request without it is armed and never offered.
+
+- **Monitoring is on again, and now shows something.** Grafana had no
+  datasource and no dashboards, so four containers scraped into a store nobody
+  could see, which is why the stack read as unused. It is provisioned now, with
+  one dashboard of eight panels. And cAdvisor was walking every container's
+  filesystem on every scrape: 51.9 seconds for a single container by its own
+  log, 5m44s for a full scrape against a 10s timeout, so Prometheus recorded
+  `context deadline exceeded` forever while cAdvisor burned disk and CPU
+  continuously. Measured after disabling the filesystem metrics: 0.059s.
 
 - **The dashboard populates in about a second instead of about four.** Opening
   it asks `/api/services` and `/api/overview` at the same moment, and both ran
