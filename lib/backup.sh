@@ -196,7 +196,10 @@ rc=0
 # configuration, the agent token and the dashboard accounts. Without it a
 # restore gives you the data back and nothing that knows what to do with it.
 # /var/lib/corex carries the maintenance history and the update cache.
-restic backup "${DATA_ROOT}" "${DOCKER_ROOT}" /etc/corex /var/lib/corex \
+# fstab carries the shared data mount and NVMe database bind mounts. Without
+# it, a bare-system restore has the data but starts services against empty
+# directories on the OS disk.
+restic backup "${DATA_ROOT}" "${DOCKER_ROOT}" /etc/corex /etc/fstab /var/lib/corex \
     --tag corex \
     --exclude="*.tmp" \
     --exclude="*.log" \
