@@ -414,13 +414,13 @@ check_containers() {
 
     # shellcheck disable=SC2086
     raw=$(docker inspect --format \
-        '{{.Name}}|{{.State.Status}}|{{.RestartCount}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}-{{end}}|{{.HostConfig.RestartPolicy.Name}}|{{.State.OOMKilled}}' \
+        '{{.Name}}|{{.State.Status}}|{{.RestartCount}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}-{{end}}|{{.HostConfig.RestartPolicy.Name}}|{{.State.OOMKilled}}|{{if eq (index .Config.Labels "sablier.enable") "true"}}true{{else}}false{{end}}' \
         $ids 2>/dev/null)
     [[ -n "$raw" ]] || return 0
 
     local down="" unhealthy="" oom="" looping="" now_state=""
-    local name status rcount health policy oomk prev_rc prev_oom delta
-    while IFS='|' read -r name status rcount health policy oomk; do
+    local name status rcount health policy oomk cold prev_rc prev_oom delta
+    while IFS='|' read -r name status rcount health policy oomk cold; do
         [[ -n "${name:-}" ]] || continue
         name="${name#/}"
         now_state="${now_state}${name} ${rcount} ${oomk}"$'\n'
@@ -431,7 +431,10 @@ check_containers() {
         if [[ "$status" != "running" ]]; then
             # Restart policy is the intent signal. `corex manage disable` sets
             # restart=no, so a service stopped on purpose is correct, not a
-            # fault, and must not alert.
+            # fault, and must not alert. Sablier's explicit label is the same
+            # intent for an opted-in cold service whose restart policy remains
+            # unless-stopped so it can wake through Traefik.
+            [[ "$cold" == true ]] && continue
             case "$policy" in
                 always|unless-stopped) down="${down:+$down, }${name}" ;;
             esac
