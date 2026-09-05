@@ -76,9 +76,14 @@ backup_write_scripts() {
 #!/bin/bash
 # CoreX Pro — Daily Backup Script
 # Runs automatically at 3AM via cron. Can also be run manually.
+# Where the repository lives. Read from /etc/corex/backup.conf when it exists,
+# so moving the repository is one edit rather than three scripts that must be
+# kept in step. Every generated script reads the same file.
 BACKUP_ROOT="/mnt/corex-data/backups"
+[[ -r /etc/corex/backup.conf ]] && . /etc/corex/backup.conf
 DATA_ROOT="/mnt/corex-data/service-data"
 DOCKER_ROOT="/mnt/corex-data/docker-configs"
+DUMP_DIR="${DATA_ROOT}/.db-dumps"
 CRED_FILE="/root/corex-credentials.txt"
 LOG="/var/log/corex-backup.log"
 export RESTIC_REPOSITORY="${BACKUP_ROOT}/restic-repo"
@@ -100,16 +105,91 @@ fi
 
 echo "$(date '+%Y-%m-%d %H:%M:%S') -- Backup starting..." >> "$LOG"
 
+# ── Database dumps ───────────────────────────────────────────────────────
+#
+# Copying a running database's files is not a backup of that database. Restic
+# walks the data directory over seconds or minutes while Postgres and MariaDB
+# are still writing, so the snapshot catches a torn mixture of pages and WAL
+# from different instants. It usually restores. When it does not, you find out
+# during the restore, which is the worst possible moment.
+#
+# A dump is taken through the engine instead, which is consistent by
+# definition, and is what the restore should prefer. The file copy stays,
+# because it carries everything a dump does not.
+#
+# Never fatal: a database that cannot be dumped must not stop the rest of the
+# backup, it must be reported and the file copy taken anyway.
+dump_rc=0
+mkdir -p "$DUMP_DIR"
+chmod 700 "$DUMP_DIR"
+
+_dump_pg() {   # container, then the file to write
+    # The superuser is whatever POSTGRES_USER says, read from inside the
+    # container rather than assumed. Immich uses postgres and Cal.com uses
+    # calcom, so a hardcoded -U postgres dumped one and failed the other.
+    docker exec "$1" sh -c \
+        'exec pg_dumpall -U "${POSTGRES_USER:-postgres}"' 2>>"$LOG" | gzip > "${DUMP_DIR}/$2.sql.gz"
+    # PIPESTATUS, not $?: $? here is gzip's, which succeeds happily on an
+    # empty stream, so a failed dump would be recorded as a good one.
+    local st=${PIPESTATUS[0]}
+    if (( st != 0 )); then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') -- WARNING: pg_dumpall failed for $1 (exit ${st})" >> "$LOG"
+        rm -f "${DUMP_DIR}/$2.sql.gz"
+        dump_rc=1
+    fi
+}
+
+_dump_mysql() {
+    # The image sets one of these two depending on its age and its lineage.
+    # Naming only the MariaDB one meant an empty password on an image that
+    # sets the MySQL one, which mysqldump rejects with exit 2.
+    docker exec "$1" sh -c \
+        'exec mysqldump --all-databases --single-transaction --quick \
+             -uroot -p"${MARIADB_ROOT_PASSWORD:-$MYSQL_ROOT_PASSWORD}"' \
+        2>>"$LOG" | gzip > "${DUMP_DIR}/$2.sql.gz"
+    local st=${PIPESTATUS[0]}
+    if (( st != 0 )); then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') -- WARNING: mysqldump failed for $1 (exit ${st})" >> "$LOG"
+        rm -f "${DUMP_DIR}/$2.sql.gz"
+        dump_rc=1
+    fi
+}
+
+for c in immich-db calcom-db; do
+    docker ps --format '{{.Names}}' | grep -qx "$c" && _dump_pg "$c" "$c"
+done
+docker ps --format '{{.Names}}' | grep -qx nextcloud-db && _dump_mysql nextcloud-db nextcloud-db
+
+# SQLite is a single file and its own tool takes a consistent copy of it while
+# the application is still writing. cp does not.
+for pair in "vaultwarden:/data/db.sqlite3" "uptime-kuma:/app/data/kuma.db"; do
+    c="${pair%%:*}"; f="${pair##*:}"
+    docker ps --format '{{.Names}}' | grep -qx "$c" || continue
+    if docker exec "$c" sh -c "command -v sqlite3 >/dev/null 2>&1"; then
+        docker exec "$c" sqlite3 "$f" ".backup /tmp/corex-dump.db" 2>>"$LOG" \
+            && docker cp "$c:/tmp/corex-dump.db" "${DUMP_DIR}/${c}.db" 2>>"$LOG" \
+            && docker exec "$c" rm -f /tmp/corex-dump.db 2>/dev/null
+    fi
+done
+(( dump_rc != 0 )) && echo "$(date '+%Y-%m-%d %H:%M:%S') -- one or more dumps failed, see above" >> "$LOG"
+
 # Exit statuses are kept. The previous version ran all four restic commands
 # and then logged "Backup complete" whatever happened, so a repository this
 # script could not even open reported a successful backup every night for
 # months.
 rc=0
-restic backup "${DATA_ROOT}" "${DOCKER_ROOT}" \
+# /etc/corex is the difference between a backup and a restorable box. It holds
+# state.json, the thermal, maintenance and power settings, the SSO and SMTP
+# configuration, the agent token and the dashboard accounts. Without it a
+# restore gives you the data back and nothing that knows what to do with it.
+# /var/lib/corex carries the maintenance history and the update cache.
+restic backup "${DATA_ROOT}" "${DOCKER_ROOT}" /etc/corex /var/lib/corex \
     --tag corex \
     --exclude="*.tmp" \
     --exclude="*.log" \
     --exclude="*/cache/*" \
+    --exclude="${DATA_ROOT}/prometheus" \
+    --exclude="${DATA_ROOT}/*-db/*" \
     >> "$LOG" 2>&1 || rc=$?
 
 if (( rc != 0 )); then
@@ -126,11 +206,31 @@ restic forget \
 
 # ── Integrity verification (spot-check 5% of data) ───────────────────────
 echo "$(date '+%Y-%m-%d %H:%M:%S') — Running integrity check..." >> "$LOG"
+check_rc=0
 if restic check --read-data-subset=5% >> "$LOG" 2>&1; then
-    echo "$(date '+%Y-%m-%d %H:%M:%S') — Integrity check PASSED." >> "$LOG"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') -- Integrity check PASSED." >> "$LOG"
 else
-    echo "$(date '+%Y-%m-%d %H:%M:%S') — INTEGRITY CHECK FAILED! Repository may be corrupted." >> "$LOG"
-    echo "$(date '+%Y-%m-%d %H:%M:%S') — Run manually: restic check --read-data" >> "$LOG"
+    check_rc=1
+    echo "$(date '+%Y-%m-%d %H:%M:%S') -- INTEGRITY CHECK FAILED. Repository may be corrupted." >> "$LOG"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') -- Run manually: restic check --read-data" >> "$LOG"
+fi
+
+# The snapshot this run made, not merely the newest one in the repository.
+# Asking whether any snapshot exists answers yes for a repository that has not
+# been written to in a month, which is the reassuring answer to the wrong
+# question.
+if ! restic snapshots --tag corex --latest 1 --json 2>/dev/null \
+     | grep -q "$(date '+%Y-%m-%d')"; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') -- WARNING: no snapshot from today in the repository." >> "$LOG"
+    check_rc=1
+fi
+
+# Each stage reported separately, and a failure in any of them is the script's
+# exit status. Logging a problem and then exiting 0 is how the scheduled task
+# recorded months of successful backups it had never taken.
+echo "$(date '+%Y-%m-%d %H:%M:%S') -- backup=ok dumps=$( ((dump_rc==0)) && echo ok || echo FAILED ) integrity=$( ((check_rc==0)) && echo ok || echo FAILED )" >> "$LOG"
+if (( dump_rc != 0 || check_rc != 0 )); then
+    exit 1
 fi
 
 restic stats --mode raw-data >> "$LOG" 2>&1
@@ -144,6 +244,7 @@ BKEOF
 # CoreX Pro — Restore Script
 # Usage: sudo corex-restore.sh [--list | --dry-run | snapshot-id]
 BACKUP_ROOT="/mnt/corex-data/backups"
+[[ -r /etc/corex/backup.conf ]] && . /etc/corex/backup.conf
 DOCKER_ROOT="/mnt/corex-data/docker-configs"
 CRED_FILE="/root/corex-credentials.txt"
 export RESTIC_REPOSITORY="${BACKUP_ROOT}/restic-repo"

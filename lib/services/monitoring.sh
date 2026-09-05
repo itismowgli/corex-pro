@@ -784,7 +784,10 @@ services:
       - ${DATA_ROOT}/prometheus:/prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
+      # Time alone lets a busy month fill the disk, and the disk filling is
+      # what stops the services. Whichever limit is reached first wins.
       - "--storage.tsdb.retention.time=30d"
+      - "--storage.tsdb.retention.size=8GB"
       - "--web.enable-lifecycle"
     networks: [monitoring-net]
     deploy:

@@ -357,6 +357,32 @@ check_disk() {
             reasons="${reasons:+$reasons$nl}The data SSD is filling up: ${ssdf}% free, and the floor is ${WATCHDOG_SSD_FREE_PCT}%."
     fi
 
+    # Anything else CoreX has been given: the database volume, a separate
+    # backup partition. Checking only the two original mounts meant a volume
+    # added later was watched by nothing, and the database volume filling
+    # stops Nextcloud, Immich and Cal.com at once.
+    local extra pct
+    for extra in /mnt/corex-fast /mnt/corex-backup; do
+        mountpoint -q "$extra" 2>/dev/null || continue
+        pct=$(free_pct "$extra")
+        [[ -n "$pct" ]] || continue
+        (( pct < worst )) && worst=$pct
+        (( pct < WATCHDOG_SSD_FREE_PCT )) && \
+            reasons="${reasons:+$reasons$nl}${extra} is filling up: ${pct}% free, and the floor is ${WATCHDOG_SSD_FREE_PCT}%."
+    done
+
+    # A mount that should be there and is not. Docker refuses to start without
+    # the data disk, but a volume that disappears while the box is running is
+    # silent: the services keep writing, to the empty directory underneath.
+    local want
+    for want in "$COREX_SSD_MOUNT" /mnt/corex-fast; do
+        if [[ -d "$want" ]] && grep -qE "[[:space:]]${want}[[:space:]]" /etc/fstab 2>/dev/null \
+           && ! mountpoint -q "$want" 2>/dev/null; then
+            reasons="${reasons:+$reasons$nl}${want} is in fstab but is not mounted. Anything writing there is writing to the disk underneath it, not to the volume."
+            worst=0
+        fi
+    done
+
     if [[ -n "$reasons" ]]; then
         push disk down "${reasons}${nl}Free some up with: corex manage cleanup" "$worst"
     else
