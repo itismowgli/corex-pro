@@ -311,7 +311,9 @@ dashboard_deploy() {
         echo "      cd ${SCRIPT_DIR:-/opt/corex-pro}/dashboard/web && npm ci && npm run build"
         return 1
     fi
-    docker compose -f "${dir}/docker-compose.yml" up -d 2>&1 | tail -5
+    local up_args=(-d)
+    [[ "${DASHBOARD_FORCE_RECREATE:-false}" == "true" ]] && up_args+=(--force-recreate)
+    docker compose -f "${dir}/docker-compose.yml" up "${up_args[@]}" 2>&1 | tail -5
 
     # Verify it is ACTUALLY running before claiming success. The previous
     # version logged "deployed" even when the image pull had failed, so a
@@ -362,10 +364,10 @@ dashboard_repair() {
     # labels never reached an existing install. dashboard_deploy is idempotent
     # by design (see CLAUDE.md "Idempotency pattern"), so calling it here is
     # safe and is what makes `corex doctor` able to deliver fixes at all.
-    dashboard_deploy
-    local dir="${DOCKER_ROOT}/dashboard"
-    [[ -f "${dir}/docker-compose.yml" ]] && \
-        docker compose -f "${dir}/docker-compose.yml" up -d --force-recreate
+    # Build and force-recreate in one Compose pass. Running deploy and then a
+    # second `up --force-recreate` rebuilt the image cache and restarted the
+    # container twice for every repair.
+    DASHBOARD_FORCE_RECREATE=true dashboard_deploy
 }
 
 dashboard_credentials() {

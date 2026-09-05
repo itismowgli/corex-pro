@@ -46,7 +46,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
   the page is hidden, and limits container statistics to one sample every 30
   seconds. The fast metrics path no longer scans disks, logs, SQLite, SMART or
   update state. A cold Portainer appears as sleeping instead of failed or
-  stopped.
+  stopped. Dashboard repair now builds and recreates the container once.
 
 - The setup wizard now retries invalid menu input, handles cancellation and
   end-of-file input, preserves its selected services after returning, validates
