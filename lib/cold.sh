@@ -13,19 +13,46 @@ cold_manage() {
             else
                 echo "Portainer: always running. Enable: corex manage cold enable portainer"
             fi
+            if cold_enabled grafana; then
+                echo "Grafana: wake on HTTPS access; stop after 15 minutes idle."
+            else
+                echo "Grafana: always running. Enable: corex manage cold enable grafana"
+            fi
             echo "AI: models unload after 2 minutes idle; one loaded model and one inference at a time."
             echo "Calendar sync, Nextcloud, mail, workflows, backups and infrastructure remain running."
             return 0 ;;
         enable|disable) ;;
-        *) echo "Usage: corex manage cold <status|enable|disable> [portainer]" >&2; return 2 ;;
+        *) echo "Usage: corex manage cold <status|enable|disable> [portainer|grafana]" >&2; return 2 ;;
     esac
-    [[ "$service" == portainer ]] || {
-        echo "Only Portainer supports container sleep. Other services may do scheduled or background work." >&2; return 2;
+    local compose deploy_fn label url
+    case "$service" in
+        portainer)
+            compose="${DOCKER_ROOT}/portainer/docker-compose.yml"
+            deploy_fn=portainer_deploy
+            label=Portainer
+            url="https://portainer.${DOMAIN:-}"
+            source "${SCRIPT_DIR}/lib/services/portainer.sh"
+            ;;
+        grafana)
+            compose="${DOCKER_ROOT}/monitoring/docker-compose.yml"
+            deploy_fn=monitoring_deploy
+            label=Grafana
+            url="https://grafana.${DOMAIN:-}"
+            source "${SCRIPT_DIR}/lib/services/monitoring.sh"
+            if declare -f state_component_is_enabled >/dev/null 2>&1; then
+                state_component_is_enabled monitoring grafana || {
+                    echo "Enable monitoring:grafana before enabling its cold mode." >&2; return 1;
+                }
+            fi
+            ;;
+        *)
+            echo "Only Portainer and Grafana support container sleep. Other services do background work." >&2
+            return 2
+            ;;
+    esac
+    [[ -f "$compose" ]] || {
+        echo "Install ${label} and finish its setup first." >&2; return 1;
     }
-    [[ -f "${DOCKER_ROOT}/portainer/docker-compose.yml" ]] || {
-        echo "Install Portainer and finish its admin setup first." >&2; return 1;
-    }
-    source "${SCRIPT_DIR}/lib/services/portainer.sh"
     if [[ "$action" == enable ]]; then
         [[ -n "${DOMAIN:-}" ]] || { echo "Wake-on-access requires a configured HTTPS domain." >&2; return 1; }
         # Confirm a running Traefik with the stopped-container routing support.
@@ -36,16 +63,16 @@ cold_manage() {
         }
         source "${SCRIPT_DIR}/lib/services/sablier.sh"
         sablier_deploy || return 1
-        state_set cold_portainer true || return 1
+        state_set "cold_${service}" true || return 1
         source "${SCRIPT_DIR}/lib/services/traefik.sh"
-        traefik_repair || { state_set cold_portainer false; return 1; }
-        portainer_deploy || { state_set cold_portainer false; return 1; }
-        echo "Portainer wakes at https://portainer.${DOMAIN}; direct port 9443 does not wake it."
+        traefik_repair || { state_set "cold_${service}" false; return 1; }
+        "$deploy_fn" || { state_set "cold_${service}" false; return 1; }
+        echo "${label} wakes at ${url} and sleeps after 15 minutes idle."
     else
         # Recreate a running backend without the middleware before removing
         # the intent. Leave Sablier installed so disabling is reversible.
-        state_set cold_portainer false || return 1
-        portainer_deploy || return 1
-        echo "Portainer is always running again."
+        state_set "cold_${service}" false || return 1
+        "$deploy_fn" || return 1
+        echo "${label} is always running again."
     fi
 }

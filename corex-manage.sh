@@ -513,6 +513,10 @@ cmd_disable() {
         source "${SCRIPT_DIR}/lib/cold.sh"
         cold_manage disable portainer || return 1
     fi
+    if [[ "$arg" == monitoring:grafana ]] && [[ "$(state_get cold_grafana 2>/dev/null)" == true ]]; then
+        source "${SCRIPT_DIR}/lib/cold.sh"
+        cold_manage disable grafana || return 1
+    fi
     [[ -z "$arg" ]] && { echo "Usage: corex-manage disable <service>[:<component>]"; exit 1; }
 
     # svc:component turns off one container inside a module and leaves the

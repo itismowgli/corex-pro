@@ -740,6 +740,30 @@ ALEOF
     local sso_label=""
     declare -f sso_label_for >/dev/null 2>&1 && sso_label="$(sso_label_for grafana)"
 
+    local grafana_cold_labels=""
+    if declare -f state_get >/dev/null && [[ "$(state_get cold_grafana 2>/dev/null)" == true ]]; then
+        # Authenticate before waking the UI so internet scanners cannot keep
+        # it resident. Prometheus and Uptime Kuma remain online throughout.
+        if [[ -n "$sso_label" ]]; then
+            sso_label="${sso_label%\"},grafana-cold\""
+        else
+            sso_label='      - "traefik.http.routers.grafana.middlewares=grafana-cold"'
+        fi
+        grafana_cold_labels=$(cat <<'LABELS'
+      - "sablier.enable=true"
+      - "sablier.group=corex-grafana"
+      - "traefik.docker.allownonrunning=true"
+      - "traefik.http.middlewares.grafana-cold.plugin.sablier.group=corex-grafana"
+      - "traefik.http.middlewares.grafana-cold.plugin.sablier.sablierUrl=http://corex-sablier:10000"
+      - "traefik.http.middlewares.grafana-cold.plugin.sablier.sessionDuration=15m"
+      - "traefik.http.middlewares.grafana-cold.plugin.sablier.keepAliveInterval=30s"
+      - "traefik.http.middlewares.grafana-cold.plugin.sablier.dynamic.displayName=Grafana is waking up"
+      - "traefik.http.middlewares.grafana-cold.plugin.sablier.dynamic.showDetails=false"
+      - "traefik.http.middlewares.grafana-cold.plugin.sablier.ignoreUserAgent=(?i)uptime-kuma"
+LABELS
+)
+    fi
+
     cat > "${dir}/docker-compose.yml" << DCEOF
 services:
   uptime-kuma:
@@ -828,6 +852,7 @@ services:
       - "traefik.http.routers.grafana.tls.certresolver=myresolver"
       - "traefik.http.services.grafana.loadbalancer.server.port=3000"
 ${sso_label}
+${grafana_cold_labels}
 
   node-exporter:
     image: prom/node-exporter:latest
@@ -923,6 +948,11 @@ monitoring_status() {
 
     for c in "${required[@]}"; do
         if ! container_running "$c"; then
+            if [[ "$c" == grafana ]] && declare -f state_get >/dev/null 2>&1 &&
+               [[ "$(state_get cold_grafana 2>/dev/null)" == true ]] && container_exists grafana &&
+               [[ "$(docker inspect -f '{{.State.ExitCode}}' grafana 2>/dev/null)" == 0 ]]; then
+                continue
+            fi
             container_exists "$c" && { echo "UNHEALTHY"; return 0; }
             echo "MISSING"; return 0
         fi

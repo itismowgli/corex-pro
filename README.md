@@ -2063,8 +2063,10 @@ The Python tests mock host commands and do not clean the local machine.
 ### Efficient dashboard, service sleep and calendar sync
 
 The dashboard pauses background polling and live streams while hidden. AI models
-unload after idle time, and Portainer can optionally wake on web access with
-`corex manage cold enable portainer`. Sync and scheduled services stay running.
+unload after idle time. Portainer and Grafana can optionally wake on web access
+with `corex manage cold enable portainer` or
+`corex manage cold enable grafana`. Prometheus, Uptime Kuma, sync jobs and
+scheduled services stay running.
 See [performance and storage](docs/performance-and-storage.md) for behavior,
 limits, and the migration plan from legacy Time Machine partitions.
 

@@ -351,7 +351,9 @@ ${acme_challenge}
       email: "${acme_email}"
       storage: /acme.json
 TEOF
-    if declare -f state_get >/dev/null && [[ "$(state_get cold_portainer 2>/dev/null)" == true ]]; then
+    if declare -f state_get >/dev/null &&
+       { [[ "$(state_get cold_portainer 2>/dev/null)" == true ]] ||
+         [[ "$(state_get cold_grafana 2>/dev/null)" == true ]]; }; then
         cat >> "${dir}/traefik.yml" <<'PLUGIN'
 experimental:
   plugins:

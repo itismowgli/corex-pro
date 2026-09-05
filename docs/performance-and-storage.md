@@ -24,6 +24,7 @@ throttling is not a substitute for the host's thermal guardian.
 | Ollama | One loaded model, one parallel inference, unload after two minutes idle |
 | Browserless | At most two concurrent browser sessions |
 | Portainer | Optional automatic container sleep after 15 minutes without HTTP activity |
+| Grafana | Optional automatic container sleep; Prometheus and Uptime Kuma stay online |
 
 Ollama's API clients can override `keep_alive` per request; check those clients
 if models remain resident. A cold model reload takes longer for the first request.
@@ -32,32 +33,38 @@ The existing CPU-clock ceiling and thermal shedding remain in force. Use
 their configured state before changing thresholds. Do not raise thermal shutdown
 limits to hide heat.
 
-### Portainer wake on access
+### Portainer and Grafana wake on access
 
 After finishing Portainer's admin setup, on a server running Traefik 3.6+:
 
 ```sh
 corex manage cold enable portainer
+corex manage cold enable grafana
 corex manage cold status
 ```
 
-This installs Sablier, enables its pinned Traefik plugin and recreates Portainer
-with opt-in labels. Open `https://portainer.YOUR_DOMAIN` once to establish its
-idle session. Later requests show a waiting page while the container starts.
+This installs Sablier, enables its pinned Traefik plugin and recreates the
+selected interface with opt-in labels. Open `https://portainer.YOUR_DOMAIN` or
+`https://grafana.YOUR_DOMAIN` once to establish its idle session. Later requests
+show a waiting page while the container starts.
 Long-lived proxied connections renew the session. Access to port 9443 directly
 cannot wake a stopped container. Use the HTTPS hostname for this mode.
 
 Existing IP restrictions and shared authentication run before the wake
 middleware. Uptime Kuma's User-Agent receives a synthetic success without waking
-Portainer, so that check verifies the route, not the sleeping application. Do not
-use this option if you rely on Portainer's own scheduled background tasks.
+the sleeping interface, so those checks verify the route rather than waking the
+application. Prometheus and Uptime Kuma continue collecting metrics and sending
+alerts while Grafana sleeps. Do not use the Portainer option if you rely on its
+own scheduled background tasks.
 
 ```sh
 corex manage cold disable portainer
+corex manage cold disable grafana
 ```
 
-Disabling restores an always-running Portainer. The dashboard Stop action also
-removes its wake configuration so a web request cannot undo a deliberate stop.
+Disabling restores the selected interface to always running. The dashboard Stop
+action also removes its wake configuration so a web request cannot undo a
+deliberate stop.
 Sablier has no published port; its Docker control socket is privileged, like
 Portainer's. CoreX permits only opted-in containers and does not automatically
 apply sleep to databases, calendar services, workflows or backups.

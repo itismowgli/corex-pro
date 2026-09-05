@@ -22,7 +22,8 @@ class ServiceTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.base = pathlib.Path(self.temp.name)
         self.env = dict(os.environ, DOCKER_ROOT=str(self.base/'compose'), DATA_ROOT=str(self.base/'data'),
-                        DOMAIN='example.com', SERVER_IP='192.168.1.10', TIMEZONE='UTC')
+                        DOMAIN='example.com', SERVER_IP='192.168.1.10', TIMEZONE='UTC',
+                        GRAFANA_ADMIN_PASS='test-password')
 
     def tearDown(self):
         self.temp.cleanup()
@@ -87,6 +88,22 @@ portainer_deploy
         self.assertIn('portainer/portainer-ce:2.45.0', compose)
         self.assertNotIn('portainer/portainer-ce:latest', compose)
         self.assertNotIn('sablier.enable=true', compose)
+
+    def test_grafana_cold_keeps_collectors_online_and_preserves_auth_order(self):
+        result = self.run_service('monitoring', '''
+state_get() { echo true; }
+sso_label_for() { printf '      - "traefik.http.routers.grafana.middlewares=corex-lan@file,authelia@docker"'; }
+compose_up_enabled() { :; }
+monitoring_deploy
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        compose = (self.base/'compose/monitoring/docker-compose.yml').read_text()
+        self.validate_compose('monitoring')
+        self.assertIn('middlewares=corex-lan@file,authelia@docker,grafana-cold"', compose)
+        self.assertIn('sablier.group=corex-grafana', compose)
+        self.assertEqual(compose.count('sablier.enable=true'), 1)
+        self.assertIn('container_name: prometheus', compose)
+        self.assertIn('container_name: uptime-kuma', compose)
 
     def test_portainer_repair_recreates_once(self):
         result = self.run_service('portainer', '''

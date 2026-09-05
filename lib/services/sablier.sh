@@ -45,8 +45,9 @@ DCEOF
     state_service_installed sablier
 }
 sablier_destroy() {
-    if [[ "$(state_get cold_portainer 2>/dev/null)" == true ]]; then
-        log_warning "Disable Portainer cold mode before removing its wake controller."; return 1
+    if [[ "$(state_get cold_portainer 2>/dev/null)" == true ]] ||
+       [[ "$(state_get cold_grafana 2>/dev/null)" == true ]]; then
+        log_warning "Disable Portainer and Grafana cold mode before removing their wake controller."; return 1
     fi
     docker compose -f "${DOCKER_ROOT}/sablier/docker-compose.yml" down || return 1
     state_service_removed sablier
