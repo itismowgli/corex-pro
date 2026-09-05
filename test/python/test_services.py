@@ -82,6 +82,16 @@ portainer_deploy
         self.assertNotIn('portainer/portainer-ce:latest', compose)
         self.assertNotIn('sablier.enable=true', compose)
 
+    def test_portainer_repair_recreates_once(self):
+        result = self.run_service('portainer', '''
+docker() { printf 'DOCKER %s\\n' "$*"; }
+portainer_repair
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = [line for line in result.stdout.splitlines() if line.startswith('DOCKER ')]
+        self.assertEqual(len(calls), 1, result.stdout)
+        self.assertIn('up -d --force-recreate', calls[0])
+
     def test_sablier_has_no_public_port_and_rejects_unlabelled_requests(self):
         result = self.run_service('sablier', 'sablier_deploy')
         self.assertEqual(result.returncode, 0, result.stderr)

@@ -118,7 +118,9 @@ networks:
   proxy-net: { external: true }
 DCEOF
 
-    docker compose -f "${dir}/docker-compose.yml" up -d \
+    local up_args=(-d)
+    [[ "${PORTAINER_FORCE_RECREATE:-false}" == "true" ]] && up_args+=(--force-recreate)
+    docker compose -f "${dir}/docker-compose.yml" up "${up_args[@]}" \
         || { log_warning "Portainer did not start. Check: docker ps"; return 1; }
     state_service_installed "portainer"
     log_success "Portainer deployed (https://${SERVER_IP}:9443)"
@@ -147,10 +149,9 @@ portainer_repair() {
     # labels never reached an existing install. portainer_deploy is idempotent
     # by design (see CLAUDE.md "Idempotency pattern"), so calling it here is
     # safe and is what makes `corex doctor` able to deliver fixes at all.
-    portainer_deploy || return 1
-    local dir="${DOCKER_ROOT}/portainer"
-    [[ -f "${dir}/docker-compose.yml" ]] && \
-        docker compose -f "${dir}/docker-compose.yml" up -d --force-recreate
+    # Regenerate and force-recreate in one Compose pass. A second `up` caused
+    # two back-to-back restarts for every repair.
+    PORTAINER_FORCE_RECREATE=true portainer_deploy
 }
 
 portainer_credentials() {
