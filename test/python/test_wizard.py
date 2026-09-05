@@ -74,6 +74,32 @@ main
         self.assertIn('keeper', r.stdout.splitlines())
         self.assertNotIn('sablier', r.stdout.splitlines())
 
+    def test_every_service_file_sources_and_matches_discovery(self):
+        modules = sorted((ROOT / 'lib/services').glob('*.sh'))
+        self.assertTrue(modules)
+        declared = {}
+        hidden = set()
+        for module in modules:
+            syntax = subprocess.run(['bash', '-n', str(module)], capture_output=True, text=True)
+            self.assertEqual(syntax.returncode, 0, f'{module.name}: {syntax.stderr}')
+            sourced = subprocess.run(
+                ['bash', '-c', 'source "$1"; printf "%s\\t%s" "${SERVICE_NAME:-}" "${SERVICE_HIDDEN:-false}"',
+                 '_', str(module)], capture_output=True, text=True)
+            self.assertEqual(sourced.returncode, 0, f'{module.name}: {sourced.stderr}')
+            name, separator, visibility = sourced.stdout.partition('\t')
+            self.assertTrue(separator and name, f'{module.name} does not declare SERVICE_NAME')
+            self.assertEqual(name, module.stem, f'{module.name} declares SERVICE_NAME={name!r}')
+            self.assertNotIn(name, declared, f'duplicate SERVICE_NAME={name!r}')
+            declared[name] = module.name
+            if visibility == 'true':
+                hidden.add(name)
+
+        discovered = self.bash('all_service_names')
+        self.assertEqual(discovered.returncode, 0, discovered.stderr)
+        visible = set(discovered.stdout.splitlines())
+        self.assertEqual(visible, set(declared) - hidden)
+        self.assertEqual(len(modules), len(visible) + len(hidden))
+
 
 if __name__ == '__main__':
     unittest.main()

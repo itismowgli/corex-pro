@@ -64,10 +64,14 @@ services:
       BETTER_AUTH_URL: "https://keeper.${DOMAIN}"
       TRUSTED_ORIGINS: "https://keeper.${DOMAIN}"
       COMMERCIAL_MODE: "false"
+      # Keeper launches five Bun services in the standalone image. The small
+      # heap trades some peak throughput for a much lower idle footprint,
+      # which suits a personal calendar server.
+      BUN_OPTIONS: "--smol"
       WORKER_JOB_QUEUE_ENABLED: "true"
-      WORKER_CONCURRENCY: "2"
-      DATABASE_POOL_MAX: "3"
-      CRON_FLUSH_POOL_MAX: "2"
+      WORKER_CONCURRENCY: "1"
+      DATABASE_POOL_MAX: "2"
+      CRON_FLUSH_POOL_MAX: "1"
       TZ: "${TIMEZONE:-UTC}"
     volumes:
       - ${DATA_ROOT}/keeper-db:/var/lib/postgresql/data
