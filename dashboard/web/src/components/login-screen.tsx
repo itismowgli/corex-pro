@@ -11,7 +11,13 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Field, Input } from "@/components/ui/input"
 import { auth, type Me } from "@/lib/api"
-import { explain, get as webauthnGet, supported as webauthnSupported } from "@/lib/webauthn"
+import {
+  conditionalAvailable,
+  explain,
+  get as webauthnGet,
+  getConditional,
+  supported as webauthnSupported,
+} from "@/lib/webauthn"
 
 // The four things this screen can be showing. It is one screen rather than
 // four routes because the dashboard is a single page behind one hostname and a
@@ -77,6 +83,39 @@ export function LoginScreen({
       () => {}
     ).catch(() => {})
   }
+
+  // The same ceremony, offered through the username field's own autofill.
+  //
+  // It is armed on mount and shows nothing by itself: the browser puts the
+  // passkey in the dropdown beside the saved passwords, so signing in is one
+  // tap and typing a password in that field still behaves exactly as before.
+  // A visitor with no passkey never sees a difference.
+  //
+  // Every failure is swallowed on purpose. This path is an offer, not the way
+  // in: an abort, an unsupported browser or a user who ignored the dropdown
+  // must all leave the password form untouched rather than painting an error
+  // over a form nobody has submitted yet.
+  React.useEffect(() => {
+    if (stage !== "password") return
+    const ctrl = new AbortController()
+    let live = true
+    void (async () => {
+      try {
+        if (!(await conditionalAvailable())) return
+        const started = await auth.passkeyLoginBegin()
+        if (!live) return
+        const response = await getConditional(started.options, ctrl.signal)
+        await auth.passkeyLoginFinish(started.ceremony, response)
+        if (live) onSignedIn()
+      } catch {
+        // Deliberately silent. See above.
+      }
+    })()
+    return () => {
+      live = false
+      ctrl.abort()
+    }
+  }, [stage, onSignedIn])
 
   const submitPassword = (e: React.FormEvent) => {
     e.preventDefault()
@@ -183,10 +222,32 @@ export function LoginScreen({
 
             {stage === "password" && (
               <form className="grid gap-4" onSubmit={submitPassword}>
+                {/* The passkey comes first because it is the stronger and the
+                    shorter way in, not because it is newer. It already proves
+                    possession of the device and verifies the person holding
+                    it, so asking for a password in front of it would add a
+                    step and no security. The password stays below as the way
+                    in when the device is not to hand. */}
+                {canPasskey && (
+                  <>
+                    <Button type="button" disabled={busy} onClick={signInWithPasskey}>
+                      <FingerprintIcon />
+                      Sign in with a passkey
+                    </Button>
+                    <div className="text-muted-foreground flex items-center gap-2 text-xs">
+                      <span className="bg-border h-px flex-1" />
+                      or use your password
+                      <span className="bg-border h-px flex-1" />
+                    </div>
+                  </>
+                )}
                 <Field label="Username" htmlFor="username">
                   <Input
                     id="username"
-                    autoComplete="username"
+                    /* "webauthn" is what lets the browser put the passkey in
+                       this field's own autofill dropdown. Without it the
+                       conditional request above is armed and never offered. */
+                    autoComplete="username webauthn"
                     autoFocus
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
@@ -201,28 +262,14 @@ export function LoginScreen({
                     onChange={(e) => setPassword(e.target.value)}
                   />
                 </Field>
-                <Button type="submit" disabled={busy || !username || !password}>
+                <Button
+                  type="submit"
+                  variant={canPasskey ? "outline" : "default"}
+                  disabled={busy || !username || !password}
+                >
                   {busy && <LoaderCircleIcon className="animate-spin" />}
                   Sign in
                 </Button>
-                {canPasskey && (
-                  <>
-                    <div className="text-muted-foreground flex items-center gap-2 text-xs">
-                      <span className="bg-border h-px flex-1" />
-                      or
-                      <span className="bg-border h-px flex-1" />
-                    </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      disabled={busy}
-                      onClick={signInWithPasskey}
-                    >
-                      <FingerprintIcon />
-                      Use a passkey
-                    </Button>
-                  </>
-                )}
                 <button
                   type="button"
                   className="text-muted-foreground hover:text-foreground text-xs underline-offset-4 hover:underline"

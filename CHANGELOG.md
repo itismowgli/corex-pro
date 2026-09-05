@@ -49,6 +49,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
   report the still-running container either.
 
 ### Changed
+- **The login offers the passkey first, and offers it from the username field
+  itself.** A passkey already proves possession of the device and verifies the
+  person holding it, so it is both factors in one gesture; putting a password
+  in front of it would add a step and no security. It leads now, with the
+  password kept below as the way in when the device is not to hand.
+
+  The username field is marked `autocomplete="username webauthn"` and a
+  conditional ceremony is armed while the form is open, so the browser offers
+  the passkey in that field's own autofill dropdown beside the saved
+  passwords. Nothing pops up unbidden, typing a password there still behaves
+  exactly as before, and a visitor with no passkey sees no difference. Every
+  failure on that path is swallowed deliberately: it is an offer, not the way
+  in, and an aborted ceremony must not paint an error over a form nobody has
+  submitted.
+
+  `render-check.mjs` stubs WebAuthn for the login mount, because jsdom has
+  none and without the stub the passkey half of the form was invisible to
+  every check. It asserts both ways in are present, that the passkey comes
+  first, and that the field carries the `webauthn` token, since a conditional
+  request without it is armed and never offered.
+
 - **The dashboard populates in about a second instead of about four.** Opening
   it asks `/api/services` and `/api/overview` at the same moment, and both ran
   `corex manage status --plain` (0.7s measured) and `docker stats --no-stream`,

@@ -429,6 +429,16 @@ for (const tab of TABS) {
     ...SIGNED_IN,
     authenticated: false,
   }, true)
+  // jsdom has no WebAuthn, so without this stub the passkey half of the form
+  // never renders and the check can only ever see the password. The stub is
+  // deliberately minimal: `supported()` asks for these three and nothing
+  // else, and a conditional ceremony that is never offered is exactly what a
+  // browser without autofill support does.
+  window.PublicKeyCredential = function () {}
+  window.navigator.credentials = {
+    create: async () => null,
+    get: async () => new Promise(() => {}),
+  }
   const failures = []
   window.addEventListener("error", (e) =>
     failures.push("uncaught: " + (e.error?.stack || e.message))
@@ -446,9 +456,34 @@ for (const tab of TABS) {
     failures.push("threw while loading " + entry + ": " + (e.stack || e.message))
   }
   await new Promise((r) => setTimeout(r, 400))
-  const text = (window.document.getElementById("root")?.textContent || "").trim()
+  const root = window.document.getElementById("root")
+  const text = (root?.textContent || "").trim()
   if (!text.includes("Sign in")) {
     failures.push("the login form did not render: " + JSON.stringify(text.slice(0, 200)))
+  }
+  // Both ways in have to be on the screen. Losing the password leaves anyone
+  // without their device locked out of the control panel; losing the passkey
+  // silently demotes the stronger factor to nothing.
+  if (!text.includes("Sign in with a passkey")) {
+    failures.push("the passkey button is missing from the login form")
+  }
+  if (!text.includes("or use your password")) {
+    failures.push("the password fallback is missing from the login form")
+  }
+  // And in that order. A passkey offered after a password reads as a second
+  // step rather than an alternative, which is the arrangement to avoid: a
+  // passkey already proves possession and verifies the person.
+  const passkeyAt = text.indexOf("Sign in with a passkey")
+  const passwordAt = text.indexOf("or use your password")
+  if (passkeyAt >= 0 && passwordAt >= 0 && passkeyAt > passwordAt) {
+    failures.push("the password is offered before the passkey")
+  }
+  // The field has to be marked for it, or the conditional request is armed
+  // and the browser never offers it anywhere.
+  const user = root?.querySelector("#username")
+  const ac = user?.getAttribute("autocomplete") || ""
+  if (!ac.split(/\s+/).includes("webauthn")) {
+    failures.push('the username field is not marked autocomplete="... webauthn", so autofill cannot offer a passkey')
   }
   if (failures.length) {
     failed = true

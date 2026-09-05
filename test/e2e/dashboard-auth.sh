@@ -21,10 +21,11 @@ if [ "${IN_CONTAINER:-}" != "1" ]; then
     repo=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
     work=$(mktemp -d)
     trap 'rm -rf "$work"' EXIT
-    cp "$repo"/dashboard/main.go "$repo"/dashboard/auth.go \
-       "$repo"/dashboard/overview.go "$repo"/dashboard/passkey.go \
-       "$repo"/dashboard/stepup.go \
-       "$repo"/dashboard/auth_test.go "$repo"/dashboard/stepup_test.go \
+    # Every .go file, by glob. Naming them one by one is how adding stepup.go
+    # once produced an image built without it, and adding cache.go broke this
+    # script the same way: the failure is `undefined: <symbol>` from the
+    # compiler, which says nothing at all about a missing copy.
+    cp "$repo"/dashboard/*.go \
        "$repo"/dashboard/go.mod \
        "$repo"/dashboard/go.sum "$repo"/agent/corex_users.py "$work/"
     cp "$repo"/test/e2e/fake-agent.py "$work/fakeagent.py"

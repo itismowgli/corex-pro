@@ -103,6 +103,57 @@ export async function create(options: unknown): Promise<AnyRecord> {
   return encode(cred)
 }
 
+/**
+ * Whether the browser can offer a passkey from the username field's own
+ * autofill, rather than only from a button.
+ *
+ * Guarded rather than assumed: the method is newer than WebAuthn itself, and
+ * a browser that has passkeys but not this returns undefined rather than
+ * false, which is truthy enough to break a naive check.
+ */
+export async function conditionalAvailable(): Promise<boolean> {
+  if (!supported()) return false
+  const pk = window.PublicKeyCredential as unknown as {
+    isConditionalMediationAvailable?: () => Promise<boolean>
+  }
+  if (typeof pk.isConditionalMediationAvailable !== "function") return false
+  try {
+    return (await pk.isConditionalMediationAvailable()) === true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The same ceremony, offered through autofill instead of a button.
+ *
+ * mediation "conditional" means the browser shows nothing of its own: it waits
+ * until the user touches a field marked `autocomplete="... webauthn"` and puts
+ * the passkey in that field's dropdown, beside the saved passwords. Nothing
+ * pops up unbidden, and typing a password in the same field still works, so it
+ * costs a visitor with no passkey exactly nothing.
+ *
+ * The call sits pending until the user picks one, so it needs an abort signal
+ * to be cancelled when the form goes away. Without it a second call throws
+ * outright, because only one conditional request may be outstanding.
+ */
+export async function getConditional(
+  options: unknown,
+  signal: AbortSignal
+): Promise<AnyRecord> {
+  const req = decodeRequest(options as AnyRecord) as CredentialRequestOptions & {
+    mediation?: string
+    signal?: AbortSignal
+  }
+  req.mediation = "conditional"
+  req.signal = signal
+  const cred = (await navigator.credentials.get(
+    req as CredentialRequestOptions
+  )) as PublicKeyCredential | null
+  if (!cred) throw new Error("the authenticator returned nothing")
+  return encode(cred)
+}
+
 export async function get(options: unknown): Promise<AnyRecord> {
   const cred = (await navigator.credentials.get(
     decodeRequest(options as AnyRecord)
