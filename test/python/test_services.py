@@ -78,6 +78,8 @@ portainer_deploy
         result = self.run_service('portainer', 'portainer_deploy')
         self.assertEqual(result.returncode, 0, result.stderr)
         compose = (self.base/'compose/portainer/docker-compose.yml').read_text()
+        self.assertIn('portainer/portainer-ce:2.45.0', compose)
+        self.assertNotIn('portainer/portainer-ce:latest', compose)
         self.assertNotIn('sablier.enable=true', compose)
 
     def test_sablier_has_no_public_port_and_rejects_unlabelled_requests(self):

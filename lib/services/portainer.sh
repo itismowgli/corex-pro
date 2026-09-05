@@ -83,7 +83,9 @@ LABELS
     cat > "${dir}/docker-compose.yml" << DCEOF
 services:
   portainer:
-    image: portainer/portainer-ce:latest
+    # Pin the deployed release so a routine repair cannot apply an unreviewed
+    # database migration or behavior change from the floating latest tag.
+    image: portainer/portainer-ce:2.45.0
     container_name: portainer
     restart: unless-stopped
     ports: ["9443:9443"]
