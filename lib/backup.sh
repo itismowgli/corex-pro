@@ -120,6 +120,7 @@ echo "$(date '+%Y-%m-%d %H:%M:%S') -- Backup starting..." >> "$LOG"
 # Never fatal: a database that cannot be dumped must not stop the rest of the
 # backup, it must be reported and the file copy taken anyway.
 dump_rc=0
+dumped=""          # names whose files may safely be excluded below
 mkdir -p "$DUMP_DIR"
 chmod 700 "$DUMP_DIR"
 
@@ -155,10 +156,24 @@ _dump_mysql() {
     fi
 }
 
-for c in immich-db calcom-db; do
-    docker ps --format '{{.Names}}' | grep -qx "$c" && _dump_pg "$c" "$c"
+# Discovered, not listed. The raw *-db directories are excluded from the file
+# backup below because the dump supersedes them, so a database this loop does
+# not find is backed up nowhere at all. A hardcoded list made that a silent
+# consequence of adding a service: keeper arrived with a keeper-db Postgres
+# directory and would have had no backup of any kind.
+#
+# The engine is decided by which client is actually in the image rather than by
+# the container's name or its tag, because neither is reliable.
+for c in $(docker ps --format '{{.Names}}' | grep -E -- '-db$|^db$' || true); do
+    if docker exec "$c" sh -c 'command -v pg_dumpall >/dev/null 2>&1'; then
+        _dump_pg "$c" "$c"
+    elif docker exec "$c" sh -c 'command -v mysqldump >/dev/null 2>&1'; then
+        _dump_mysql "$c" "$c"
+    else
+        echo "$(date '+%Y-%m-%d %H:%M:%S') -- WARNING: ${c} looks like a database but has no dump tool; its files are excluded from this backup" >> "$LOG"
+        dump_rc=1
+    fi
 done
-docker ps --format '{{.Names}}' | grep -qx nextcloud-db && _dump_mysql nextcloud-db nextcloud-db
 
 # Keeper bundles PostgreSQL inside the app container. Back up through its
 # engine as well as retaining the volume and the credential env files.
@@ -191,6 +206,15 @@ done
 # script could not even open reported a successful backup every night for
 # months.
 rc=0
+# Exclude a database's files only where a dump actually replaced them. A
+# blanket "*-db" pattern drops the files of any database that was stopped at
+# backup time, and a stopped database is exactly what a disabled service has,
+# so a service switched off for a week would quietly lose its only copy.
+db_excludes=()
+for name in $dumped; do
+    db_excludes+=(--exclude="${DATA_ROOT}/${name}")
+done
+
 # /etc/corex is the difference between a backup and a restorable box. It holds
 # state.json, the thermal, maintenance and power settings, the SSO and SMTP
 # configuration, the agent token and the dashboard accounts. Without it a
@@ -205,7 +229,7 @@ restic backup "${DATA_ROOT}" "${DOCKER_ROOT}" /etc/corex /etc/fstab /var/lib/cor
     --exclude="*.log" \
     --exclude="*/cache/*" \
     --exclude="${DATA_ROOT}/prometheus" \
-    --exclude="${DATA_ROOT}/*-db/*" \
+    "${db_excludes[@]}" \
     >> "$LOG" 2>&1 || rc=$?
 
 if (( rc != 0 )); then
