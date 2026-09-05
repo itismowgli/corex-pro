@@ -53,10 +53,13 @@ export function StorageTab({
   onCleanup: (dryRun: boolean) => void
 }) {
   const docker = metrics?.docker ?? null
-  const reclaimable = Object.values(docker ?? {}).reduce(
-    (a, d) => a + (d?.reclaimable_b ?? 0),
-    0
-  )
+  // What cleanup will actually take, not what Docker calls unused. The button
+  // used to offer the second number and run a command that removes the first,
+  // so on this hardware it advertised 3.7GB and freed nothing, every time.
+  const purge = metrics?.purgeable ?? null
+  const reclaimable = purge?.total_b ?? 0
+  const held = purge?.held_b ?? 0
+  const dueIn = purge?.next_due_h ?? null
   const sizes = metrics?.service_sizes ?? []
   const biggest = sizes.length ? sizes[0].bytes : 0
   const disks = metrics?.disks ?? []
@@ -96,12 +99,18 @@ export function StorageTab({
         />
         <StatTile
           icon={TrashIcon}
-          label="Purgeable"
+          label="Purgeable now"
           value={bytes(reclaimable)}
           of={dockerTotal ? bytes(dockerTotal) : undefined}
           ratio={dockerTotal ? reclaimable / dockerTotal : undefined}
           tone={reclaimable > 0 ? "warn" : "ok"}
-          sub={reclaimable > 0 ? "unused images and build cache" : "nothing to reclaim"}
+          sub={
+            reclaimable > 0
+              ? "unreferenced images and old build cache"
+              : held > 0
+                ? `nothing yet, ${bytes(held)} still too new`
+                : "nothing to reclaim"
+          }
         />
       </div>
 
@@ -157,17 +166,22 @@ export function StorageTab({
                   size="xs"
                   variant="outline"
                   disabled={busy || locked || reclaimable === 0}
+                  title={
+                    reclaimable === 0
+                      ? "Nothing is removable right now"
+                      : "Remove unreferenced images and build cache older than three days"
+                  }
                   onClick={() => {
                     if (
                       window.confirm(
-                        "Remove stale images and build cache? No service data is deleted."
+                        "Remove unreferenced images and build cache older than three days? No service data is deleted."
                       )
                     )
                       onCleanup(false)
                   }}
                 >
                   <EraserIcon />
-                  Reclaim {bytes(reclaimable)}
+                  {reclaimable === 0 ? "Nothing to reclaim" : `Reclaim ${bytes(reclaimable)}`}
                 </Button>
               </span>
             </CardTitle>
@@ -219,10 +233,21 @@ export function StorageTab({
               </div>
             )}
             <p className="text-muted-foreground mt-3 text-xs">
-              Cleanup removes images unused for seven days or more and build cache older than
-              three days. It never touches service data, and it never runs a volume prune,
-              because that would destroy every unnamed volume including ones in use.
+              Cleanup removes images no container references, stopped containers included, and
+              build cache older than three days. It never touches service data, and it never
+              runs a volume prune, because that would destroy every unnamed volume including
+              ones in use.
             </p>
+            {held > 0 && (
+              <p className="text-muted-foreground mt-2 text-xs">
+                A further <span className="text-foreground font-mono">{bytes(held)}</span> of
+                build cache is unused but too new to remove
+                {dueIn != null && <> . The oldest of it becomes eligible in about{" "}
+                  {dueIn < 1 ? "an hour" : `${Math.round(dueIn)} hours`}</>}
+                . Docker counts that as reclaimable; this panel does not, because a button that
+                offers space it will not free is how this one came to do nothing at all.
+              </p>
+            )}
           </CardContent>
         </Card>
       </div>

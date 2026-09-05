@@ -276,6 +276,19 @@ export type Disk = {
   pct: number
 }
 
+export type Purgeable = {
+  /** Removable right now, and the number the button may promise. */
+  images_b: number
+  cache_b: number
+  total_b: number
+  /** Unused, but younger than the age limit, so cleanup will not take it. */
+  cache_held_b: number
+  held_b: number
+  /** Hours until the oldest held-back item becomes eligible. */
+  next_due_h: number | null
+  cache_age_h: number
+}
+
 export type DockerUsage = {
   count: number
   active: number
@@ -315,6 +328,13 @@ export type Metrics = {
   uptime_s: number | null
   disks: Disk[]
   docker: Record<string, DockerUsage> | null
+  /**
+   * What a cleanup will actually remove, as opposed to what `docker system
+   * df` calls unused. The two disagree whenever the unused build cache is
+   * newer than the age limit, which on a box that builds its own dashboard
+   * image is most of the time.
+   */
+  purgeable: Purgeable | null
   service_sizes: { name: string; bytes: number }[]
   series: Sample[]
   watchdog: Finding[]

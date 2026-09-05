@@ -564,6 +564,28 @@ func serviceAddresses(name string, state CoreXState) []string {
 	return urls
 }
 
+// cachedModuleStatus runs `corex manage status --plain` at most once every
+// few seconds. Opening the page asks /api/services and /api/overview at the
+// same moment and both need this, so it used to run twice per load, in
+// series, at 0.7 seconds each.
+func cachedModuleStatus() map[string]string {
+	return moduleStatusCache.get(moduleStatusTTL, func() interface{} {
+		status := map[string]string{}
+		out, err := runManage("status", "--plain")
+		if err != nil {
+			log.Printf("serviceList: module status unavailable, falling back to container state: %v", err)
+			return status
+		}
+		for _, line := range strings.Split(out, "\n") {
+			parts := strings.SplitN(strings.TrimSpace(line), "\t", 2)
+			if len(parts) == 2 && parts[0] != "" {
+				status[parts[0]] = strings.TrimSpace(parts[1])
+			}
+		}
+		return status
+	}).(map[string]string)
+}
+
 func getServices(state CoreXState) []ServiceInfo {
 	running := getRunningContainers()
 	var svcs []ServiceInfo
@@ -575,17 +597,7 @@ func getServices(state CoreXState) []ServiceInfo {
 	// dashboard disagree with `corex doctor` and report such a service
 	// HEALTHY. Fall back to the container check only if the modules cannot
 	// be consulted.
-	moduleStatus := map[string]string{}
-	if out, err := runManage("status", "--plain"); err == nil {
-		for _, line := range strings.Split(out, "\n") {
-			parts := strings.SplitN(strings.TrimSpace(line), "\t", 2)
-			if len(parts) == 2 && parts[0] != "" {
-				moduleStatus[parts[0]] = strings.TrimSpace(parts[1])
-			}
-		}
-	} else {
-		log.Printf("serviceList: module status unavailable, falling back to container state: %v", err)
-	}
+	moduleStatus := cachedModuleStatus()
 
 	for name, entry := range state.Services {
 		if !entry.Installed {

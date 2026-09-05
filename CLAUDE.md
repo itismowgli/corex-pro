@@ -1987,6 +1987,76 @@ on `log_info`, so the dependency is not new, but a missing `install_script`
 fails in a much worse way than a missing log function: the generated script is
 simply never written, so the guardian does not exist and nothing says so.
 
+### 50. A button that offers a number must run the command that delivers it
+
+The dashboard's Reclaim button freed nothing for the life of the feature, and
+reported success every time. Three separate faults, and the shape they share
+is worth more than any of them: **the number came from one source and the
+action from another, and nobody ever compared them.**
+
+`docker system df` reports what is unused, with no notion of age.
+`corex manage cleanup` removed images unused for seven days and build cache
+older than three. On a box that rebuilds its own dashboard image the cache is
+never three days old, so the button advertised 3.7GB and removed 0B, forever.
+`agent/corex_metrics.py:docker_purgeable()` now computes what the policy will
+actually take, and the button offers that.
+
+**Docker flags move, and the failures are silent.** Three in one function:
+
+| Written | On Docker 29 |
+|---|---|
+| `docker image prune` (no `-a`) | dangling only, while every figure read counts all unused images |
+| `--keep-storage 0` | renamed to `--reserved-space`; the old name warns and still works |
+| `--dry-run` on `builder prune` | not a buildx flag at all, exits 125, and `2>/dev/null` hid it |
+
+**`--filter until=` did the opposite of its intent.** With the containerd
+image store an unused 212-day-old image was absent from
+`docker image ls --filter until=168h`, so the filtered prune reclaimed 0B
+where the unfiltered one reclaimed 771MB. The filter is gone: `-a` already
+refuses to touch an image any container references, stopped ones included, so
+a disabled service keeps its image and only a removed one loses it.
+
+**And Docker's own "Total reclaimed space" under-reports on that store.** It
+printed `0B` while deleting an image and taking 320MB off the total, because
+the layers were shared with an image that stayed. So the headline figure is
+measured before and after with the same function, not taken from the prune.
+
+The wider rule, which is gotcha #45 in a different costume: `2>/dev/null ||
+true` on every step of a task means the task cannot fail. The weekly
+maintenance run had been recording `rc: 0` and "Cleanup complete" for a run
+that freed nothing. Each step reports what it did and a failed step makes the
+command exit non-zero.
+
+Two other buttons had the same shape. `corex manage enable` and `disable`
+ran `docker start` and `docker stop` as `>/dev/null 2>&1 || true` and then
+logged "started" or "stopped" unconditionally. The stop is the worse of the
+two: `state.json` then records the stop as deliberate, so the resource
+watchdog will not report the container that is still running either.
+
+### 51. Two handlers, one command, twice per page load
+
+Opening the dashboard asks `/api/services` and `/api/overview` at the same
+moment. Both called `corex manage status --plain` (0.7s measured), and
+`/api/overview` also ran `docker stats --no-stream`, which costs a full
+sampling interval by design (2.1s measured), then waited on the agent's
+metrics (about a second, more on a cold `du`). All of it in series, twice.
+Measured end to end: 7.5 seconds of shell before the page had anything to
+draw, against 2.1 seconds for the same work run together.
+
+Two fixes, and the second is the one with a trap in it. The independent reads
+in `overviewHandler` run concurrently. And `dashboard/cache.go` gives the two
+shared commands a TTL cache whose window is **deliberately shorter than the
+poll interval of anything that reads it**: 5s against a 15s services poll, 4s
+against the 5s vitals interval. That collapses duplicate work inside one page
+load and nothing else. A longer TTL starts hiding real state changes, which
+for a panel whose job is to say what the box is doing right now is the wrong
+trade, and it is exactly how a dashboard ends up reporting a service as
+running after it has stopped.
+
+The cache also collapses concurrent misses onto one call rather than letting
+each caller start its own, because the case that matters here is two handlers
+hitting a two-second command in the same instant.
+
 ---
 
 ## What NOT to Do

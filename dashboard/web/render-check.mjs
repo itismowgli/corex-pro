@@ -109,6 +109,18 @@ const METRICS = {
     images: { count: 36, active: 32, size: "34.55GB", reclaimable: "576.5MB", size_b: 34550000000, reclaimable_b: 576500000 },
     build_cache: { count: 100, active: 0, size: "2.5GB", reclaimable: "2.0GB", size_b: 2553000000, reclaimable_b: 2047000000 },
   },
+  // The state that made the Reclaim button look broken: Docker reports
+  // gigabytes unused, and none of it is old enough for cleanup to take. The
+  // panel has to say that rather than offer a number it will not deliver.
+  purgeable: {
+    images_b: 0,
+    cache_b: 0,
+    total_b: 0,
+    cache_held_b: 5981853984,
+    held_b: 5981853984,
+    next_due_h: 27.7,
+    cache_age_h: 72,
+  },
   service_sizes: [{ name: "immich", bytes: 41000000000 }, { name: "nextcloud", bytes: 9000000000 }],
   series: Array.from({ length: 60 }, (_, i) => ({
     t: "2026-09-03T23:00:00+05:30",
@@ -250,8 +262,10 @@ function mount(url, me, withData = true, width = 1280) {
 const EXPECT = {
   system: "enp2s0",
   maintenance: "Never run",
-  // The tile row, which only exists if the panel read the disk payload.
-  storage: "Purgeable",
+  // Not the tile label: the sentence that only appears when cleanup can free
+  // nothing and Docker still reports gigabytes unused. That divergence is the
+  // whole bug this panel was rewritten for.
+  storage: "too new to remove",
   // The range toggle over the blackbox series.
   overview: "30 min",
   // Not just the card: the sentence the check writes above the grid, which

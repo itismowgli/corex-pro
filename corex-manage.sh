@@ -488,7 +488,14 @@ cmd_enable() {
         # restart=no is what disable set, so put the policy back before
         # starting, or the service will not survive the next reboot.
         echo "$ids" | xargs -r docker update --restart=unless-stopped >/dev/null 2>&1 || true
-        echo "$ids" | xargs -r docker start >/dev/null 2>&1 || true
+        # Not `|| true`. This is the command that does the thing the caller
+        # asked for, and discarding its status meant a start that failed
+        # outright still printed "started", which the dashboard showed as a
+        # green job and the Telegram bot announced as done.
+        local start_err
+        if ! start_err=$(echo "$ids" | xargs -r docker start 2>&1 >/dev/null); then
+            log_error "${svc} did not start: ${start_err:-docker start failed}"
+        fi
         log_info "${svc} has no CoreX compose file; started its containers directly."
     fi
     state_service_enable "$svc"
@@ -516,7 +523,10 @@ cmd_disable() {
         ids=$(docker compose -f "${m_dir}/docker-compose.yml" ps -aq "$m_comp" 2>/dev/null)
         if [[ -n "$ids" ]]; then
             echo "$ids" | xargs -r docker update --restart=no >/dev/null 2>&1 || true
-            echo "$ids" | xargs -r docker stop >/dev/null 2>&1 || true
+            local stop_err
+            if ! stop_err=$(echo "$ids" | xargs -r docker stop 2>&1 >/dev/null); then
+                log_error "${m_svc}:${m_comp} did not stop: ${stop_err:-docker stop failed}"
+            fi
         fi
         state_component_disable "$m_svc" "$m_comp"
         log_success "${m_svc}:${m_comp} stopped and set not to restart."
@@ -535,7 +545,14 @@ cmd_disable() {
     # when the daemon restarts even though it was stopped deliberately, which
     # is how Coolify would have restarted itself on the next reboot.
     echo "$ids" | xargs -r docker update --restart=no >/dev/null 2>&1 || true
-    echo "$ids" | xargs -r docker stop >/dev/null 2>&1 || true
+    # The stop itself is the point of the command, so its failure is the
+    # command's failure. "stopped and set not to restart" over a container
+    # that is still running is worse than an error: the watchdog will not
+    # report it either, because state.json now says the stop was deliberate.
+    local stop_err
+    if ! stop_err=$(echo "$ids" | xargs -r docker stop 2>&1 >/dev/null); then
+        log_error "${svc} did not stop: ${stop_err:-docker stop failed}"
+    fi
 
     state_service_disable "$svc"
     log_success "${svc} stopped and set not to restart (data preserved)."
@@ -690,83 +707,165 @@ cmd_storage() {
 
 # ── cleanup ───────────────────────────────────────────────────────────────────
 
+# Ask corex_metrics for what the cleanup policy will actually remove. It owns
+# the age limits and this function applies them, so the numbers cannot drift
+# the way the dashboard's number drifted from this command's behaviour.
+# Prints six space separated integers, or nothing if it cannot be asked.
+_cleanup_eligible() {
+    local lib="/usr/local/lib/corex"
+    [[ -f "${lib}/corex_metrics.py" ]] || return 1
+    python3 - "$lib" <<'PYEOF' 2>/dev/null || return 1
+import sys
+sys.path.insert(0, sys.argv[1])
+import corex_metrics as m
+p = m.docker_purgeable()
+print(p["images_b"], p["cache_b"], p["cache_held_b"], p["total_b"],
+      "" if p["next_due_h"] is None else p["next_due_h"])
+PYEOF
+}
+
+_human() { numfmt --to=iec-i --suffix=B --format="%.1f" "${1:-0}" 2>/dev/null || echo "${1:-0} B"; }
+
+# "Total reclaimed space: 848.3MB" is the only honest answer to what a prune
+# did. df deltas move with everything else happening on the box.
+_reclaimed_from() {
+    echo "$1" | grep -oE "Total(:| reclaimed space:)[[:space:]]*[0-9.]+[[:space:]]*[KMGT]?i?B" \
+        | grep -oE "[0-9.]+[[:space:]]*[KMGT]?i?B" | tail -1
+}
+
 cmd_cleanup() {
     local dry_run=false
     [[ "${1:-}" == "--dry-run" ]] && dry_run=true
 
     echo ""
     if [[ "$dry_run" == "true" ]]; then
-        echo -e "${CYAN}${BOLD}CoreX Cleanup — DRY RUN (no changes)${NC}"
+        echo -e "${CYAN}${BOLD}CoreX Cleanup, preview only${NC}"
     else
         echo -e "${CYAN}${BOLD}CoreX Cleanup${NC}"
     fi
     echo "─────────────────────────────────────────────────────────"
     echo ""
-
-    # Stale images unused 7+ days
-    local stale_images
-    stale_images=$(docker image ls --filter "dangling=false" \
-        --format "{{.Repository}}:{{.Tag}}" 2>/dev/null | wc -l)
-    echo -e "  ${BOLD}Stale Docker images (unused 7+ days):${NC}"
-    docker image ls --filter "until=168h" --format "  {{.Repository}}:{{.Tag}} ({{.Size}})" \
-        2>/dev/null || true
+    echo "  Removes images no container references at all, and build cache older"
+    echo "  than 3 days. Never volumes: that would destroy live data."
     echo ""
 
-    echo -e "  ${BOLD}Build cache (3+ days old):${NC}"
-    docker builder prune --filter "until=72h" --keep-storage 0 \
-        $([ "$dry_run" == "true" ] && echo "--dry-run" || echo "--force") 2>/dev/null \
-        | grep -v "^$" | sed 's/^/  /' || true
+    # What the policy will take, before taking it. The distinction that
+    # matters is between "nothing is unused" and "everything unused is too
+    # new", because the second looks identical from the outside and is the
+    # reason this command used to report success while freeing nothing.
+    local img_b cache_b cache_held total_b due
+    if read -r img_b cache_b cache_held total_b due < <(_cleanup_eligible); then
+        echo -e "  ${BOLD}Eligible now:${NC} $(_human "$total_b")"
+        echo "    images       $(_human "$img_b")"
+        echo "    build cache  $(_human "$cache_b")"
+        if [[ "${cache_held:-0}" -gt 0 ]]; then
+            echo -e "  ${BOLD}Held back:${NC} $(_human "$cache_held") of build cache, newer than 3 days"
+            [[ -n "$due" ]] && echo "    the oldest of it becomes eligible in ${due} hours"
+        fi
+    else
+        echo "  (could not measure what is eligible; the cleanup below still reports what it removed)"
+    fi
     echo ""
 
-    # Journal usage (was never reported or reclaimed)
     echo -e "  ${BOLD}systemd journal:${NC} $(journalctl --disk-usage 2>/dev/null \
         | grep -oE '[0-9.]+[GMK]' | head -1 || echo 'n/a')"
     echo -e "  ${BOLD}apt cache:${NC} $(du -sh /var/cache/apt/archives 2>/dev/null \
         | cut -f1 || echo 'n/a')"
     echo ""
 
-    if [[ "$dry_run" == "false" ]]; then
-        local before_root before_data
-        before_root=$(df --output=avail / 2>/dev/null | tail -1)
-        before_data=$(df --output=avail /mnt/corex-data 2>/dev/null | tail -1)
-
-        echo -e "  ${BOLD}Removing stale images...${NC}"
-        docker image prune --filter "until=168h" --force 2>/dev/null || true
-        docker image prune --force 2>/dev/null || true
-
-        # Unused networks accumulate as services are added/removed. Volumes are
-        # deliberately NOT pruned — that would destroy live service data.
-        echo -e "  ${BOLD}Removing unused Docker networks...${NC}"
-        docker network prune --force 2>/dev/null || true
-
-        echo -e "  ${BOLD}Vacuuming systemd journal (keep 30d, cap 500M)...${NC}"
-        journalctl --vacuum-time=30d &>/dev/null || true
-        journalctl --vacuum-size=500M &>/dev/null || true
-
-        echo -e "  ${BOLD}Clearing apt cache...${NC}"
-        apt-get clean 2>/dev/null || true
-
-        echo -e "  ${BOLD}Removing rotated logs older than 30 days...${NC}"
-        find /var/log -type f -name '*.gz' -mtime +30 -delete 2>/dev/null || true
-        find /var/log -type f -regex '.*\.[0-9]+$' -mtime +30 -delete 2>/dev/null || true
-
-        echo -e "  ${BOLD}Cleaning old CoreX temp files...${NC}"
-        find /tmp -name "corex-*" -mtime +1 -delete 2>/dev/null || true
-
-        local after_root after_data
-        after_root=$(df --output=avail / 2>/dev/null | tail -1)
-        after_data=$(df --output=avail /mnt/corex-data 2>/dev/null | tail -1)
-        echo ""
-        echo -e "  ${BOLD}Reclaimed:${NC}"
-        printf '    /              %s MB\n' "$(( ( ${after_root:-0} - ${before_root:-0} ) / 1024 ))"
-        printf '    /mnt/corex-data %s MB\n' "$(( ( ${after_data:-0} - ${before_data:-0} ) / 1024 ))"
-        echo ""
-        log_warning "Old kernels/orphans not removed (dpkg transaction)."
-        echo "    Run manually when the system is stable: apt-get autoremove --purge"
-        log_success "Cleanup complete."
-    else
-        echo "  [DRY RUN] Run without --dry-run to apply cleanup."
+    if [[ "$dry_run" == "true" ]]; then
+        echo "  Nothing was changed. Run without --dry-run to apply."
+        return 0
     fi
+
+    # Every step reports its own outcome and its own failure. Previously all
+    # of these were `|| true` with stderr discarded, so a prune that rejected
+    # a flag outright looked exactly like a prune that had nothing to do, and
+    # the scheduled task recorded rc=0 either way.
+    local failures=0 out rc freed
+
+    echo -e "  ${BOLD}Removing images no container references...${NC}"
+    # -a, not the default: without it only dangling images go, while every
+    # figure the dashboard and `docker system df` report counts every unused
+    # image, so the button promised bytes this command would not touch.
+    #
+    # And no `--filter until=`, which was measured doing the opposite of its
+    # intent. With the containerd image store an unused 212-day-old image was
+    # absent from `docker image ls --filter until=168h`, so the filtered prune
+    # reclaimed 0B where the unfiltered one reclaimed 771MB. The safety it was
+    # meant to add is already in -a: an image any container references,
+    # stopped ones included, is never touched, so a disabled service keeps its
+    # image and only a removed one loses it.
+    out=$(docker image prune -a --force 2>&1); rc=$?
+    freed=$(_reclaimed_from "$out")
+    if [[ $rc -ne 0 ]]; then
+        log_warning "    image prune failed: $(echo "$out" | tail -1)"
+        failures=$((failures + 1))
+    else
+        # Docker's own "Total reclaimed space" under-reports on the containerd
+        # image store: removing an image whose layers are shared with one that
+        # stays is counted as 0B, and it printed exactly that while deleting an
+        # image and taking 320MB off the total. It is shown because it is
+        # Docker's answer, but the measured figure at the end is the one to
+        # read.
+        echo "    docker reports ${freed:-0B} removed"
+    fi
+
+    echo -e "  ${BOLD}Pruning build cache older than 3 days...${NC}"
+    # --reserved-space, not --keep-storage. Docker 29 routes `builder prune`
+    # to buildx, which renamed the flag; the old name still parses but prints
+    # a deprecation warning, and the older `--dry-run` this command used to
+    # pass in preview mode is not a buildx flag at all, so the preview
+    # silently reported nothing for the largest category on the box.
+    out=$(docker builder prune --filter "until=72h" --reserved-space 0 --force 2>&1); rc=$?
+    freed=$(_reclaimed_from "$out")
+    if [[ $rc -ne 0 ]]; then
+        log_warning "    build cache prune failed: $(echo "$out" | tail -1)"
+        failures=$((failures + 1))
+    else
+        echo "    docker reports ${freed:-0B} removed"
+    fi
+
+    # Unused networks accumulate as services are added and removed. Volumes
+    # are deliberately never pruned: that would destroy live service data.
+    echo -e "  ${BOLD}Removing unused Docker networks...${NC}"
+    out=$(docker network prune --force 2>&1) || { failures=$((failures + 1)); log_warning "    network prune failed"; }
+
+    echo -e "  ${BOLD}Vacuuming systemd journal (keep 30d, cap 500M)...${NC}"
+    journalctl --vacuum-time=30d &>/dev/null || { failures=$((failures + 1)); log_warning "    journal vacuum failed"; }
+    journalctl --vacuum-size=500M &>/dev/null || { failures=$((failures + 1)); log_warning "    journal cap failed"; }
+
+    echo -e "  ${BOLD}Clearing apt cache...${NC}"
+    apt-get clean 2>/dev/null || { failures=$((failures + 1)); log_warning "    apt-get clean failed"; }
+
+    echo -e "  ${BOLD}Removing rotated logs older than 30 days...${NC}"
+    find /var/log -type f -name '*.gz' -mtime +30 -delete 2>/dev/null || true
+    find /var/log -type f -regex '.*\.[0-9]+$' -mtime +30 -delete 2>/dev/null || true
+
+    echo -e "  ${BOLD}Cleaning old CoreX temp files...${NC}"
+    find /tmp -name "corex-*" -mtime +1 -delete 2>/dev/null || true
+
+    # What is left over, measured the same way as before the run, so the two
+    # numbers are comparable.
+    # Measured the same way as before the run, so the two are comparable, and
+    # so the headline number does not depend on Docker's own accounting.
+    echo ""
+    local after_total delta
+    if read -r _ _ _ after_total _ < <(_cleanup_eligible); then
+        delta=$(( ${total_b:-0} - ${after_total:-0} ))
+        [[ $delta -lt 0 ]] && delta=0
+        echo -e "  ${BOLD}Reclaimed:${NC} $(_human "$delta")"
+        echo -e "  ${BOLD}Still eligible:${NC} $(_human "$after_total")"
+    fi
+    echo ""
+    log_warning "Old kernels/orphans not removed (dpkg transaction)."
+    echo "    Run manually when the system is stable: apt-get autoremove --purge"
+
+    if [[ $failures -gt 0 ]]; then
+        log_warning "Cleanup finished with ${failures} failed step(s)."
+        return 1
+    fi
+    log_success "Cleanup complete."
 }
 
 # ── repair (doctor) ───────────────────────────────────────────────────────────

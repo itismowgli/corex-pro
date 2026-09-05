@@ -6,6 +6,61 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- **The Reclaim button freed nothing, and said it had worked.** Three
+  independent faults, each sufficient on its own, and all three silent.
+
+  The number and the action measured different things. The button offered
+  `docker system df`'s reclaimable figure, which has no notion of age, while
+  `corex manage cleanup` only removed images unused for seven days and build
+  cache older than three. On a box that rebuilds its own dashboard image the
+  cache is always recent, so the button advertised 3.7GB and removed 0B. It
+  now offers what the policy will actually take, and when that is nothing it
+  says so and names how much is being held back and for how long.
+
+  `docker image prune` without `-a` removes only dangling images, but every
+  figure anyone reads counts every unused image. And `--filter until=168h`
+  was doing the opposite of its intent: with the containerd image store an
+  unused 212-day-old image was absent from
+  `docker image ls --filter until=168h`, so the filtered prune reclaimed 0B
+  where the unfiltered one reclaimed 771MB. The filter is gone, because the
+  safety it was meant to add is already in `-a`, which never touches an image
+  any container references, stopped ones included.
+
+  `docker builder prune` is buildx on Docker 29. It renamed `--keep-storage`
+  to `--reserved-space`, and it has no `--dry-run` at all, so the preview
+  passed a flag that made the command exit 125 and report nothing for the
+  largest category on the box. Both corrected.
+
+  Every step was `2>/dev/null || true`, so a prune that rejected a flag
+  outright looked exactly like a prune with nothing to do. Each step now
+  reports what it reclaimed, from Docker's own output rather than a `df`
+  delta, and a failed step makes the command exit non-zero. The scheduled
+  weekly cleanup had been recording `rc: 0` and "Cleanup complete" for a run
+  that freed nothing, which is gotcha #43 one layer further down.
+
+- **Start and Stop reported success whatever happened.** In the branch for a
+  service with no CoreX compose file, `docker start` and `docker stop` were
+  `>/dev/null 2>&1 || true` followed by an unconditional "started" or
+  "stopped". A stop that failed was worse than a plain error: `state.json`
+  then recorded the stop as deliberate, so the resource watchdog would not
+  report the still-running container either.
+
+### Changed
+- **The dashboard populates in about a second instead of about four.** Opening
+  it asks `/api/services` and `/api/overview` at the same moment, and both ran
+  `corex manage status --plain` (0.7s measured) and `docker stats --no-stream`,
+  which costs a full sampling interval by design (2.1s measured). So the same
+  two commands ran twice per load, and `/api/overview` ran its three slow reads
+  in series. Those reads are independent and now run together, and the two
+  shared commands are cached for a window deliberately shorter than the poll
+  interval of anything that reads them: it collapses duplicate work inside one
+  page load and hides no state change.
+
+---
+
 ## [v3.24.0] - 2026-09-05
 
 ### Changed

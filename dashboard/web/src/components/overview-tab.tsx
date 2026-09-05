@@ -113,10 +113,10 @@ export function OverviewTab({
   const memTotal = vitals?.mem_total_mb ?? m?.memory.total_mb ?? 0
   const swapUsed = vitals?.swap_used_mb ?? m?.memory.swap_used_mb ?? 0
 
-  const reclaimable = Object.values(m?.docker ?? {}).reduce(
-    (a, d) => a + (d?.reclaimable_b ?? 0),
-    0
-  )
+  // The figure cleanup will actually free, not the one `docker system df`
+  // calls unused. Offering the second is what made the Reclaim button appear
+  // to do nothing.
+  const reclaimable = m?.purgeable?.total_b ?? 0
 
   const monitorsDown = (m?.monitors ?? []).filter((x) => x.active && x.status === "down")
   const shed = m?.thermal.shed ?? []

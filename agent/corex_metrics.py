@@ -24,6 +24,7 @@ EVERY READER FAILS SOFT
     piece or None, and the caller assembles whatever arrived.
 """
 
+import datetime
 import json
 import os
 import re
@@ -208,6 +209,103 @@ def docker_df():
             "reclaimable_b": _size_to_bytes(d.get("Reclaimable")),
         }
     return rows or None
+
+
+# The cleanup policy, and the one place it is written down. It has to match
+# `cmd_cleanup` in corex-manage.sh, because the whole point of this function
+# is that the number the dashboard offers is the number the button delivers.
+#
+# There is no age limit on images, and that is deliberate rather than an
+# oversight. `--filter until=168h` was measured on this hardware and excluded
+# exactly the images that should have been removed: with the containerd image
+# store, an unused 212-day-old image was absent from
+# `docker image ls --filter until=168h`, so the filtered prune reclaimed 0B
+# while the unfiltered one reclaimed 771MB. The safety the filter was supposed
+# to add is already there without it, because `-a` only removes an image that
+# no container references at all, stopped containers included: a disabled
+# service keeps its image, and a removed one does not.
+PURGE_CACHE_AGE_H = 72    # 3 days, and buildx does honour this one
+
+
+def _parse_docker_time(text):
+    """Docker prints times three ways. Return epoch seconds, or None.
+
+    `docker image ls` gives "2026-09-05 00:58:48 +0530 IST" and `buildx du`
+    gives "2026-09-03 07:23:22.935347418 +0000 UTC": an optional fractional
+    second and a trailing zone abbreviation that %z will not take.
+    """
+    if not text:
+        return None
+    parts = str(text).split()
+    if len(parts) < 3:
+        return None
+    stamp = " ".join(parts[:3])          # date, time, numeric offset
+    stamp = re.sub(r"\.\d+", "", stamp, count=1)
+    try:
+        return datetime.datetime.strptime(stamp, "%Y-%m-%d %H:%M:%S %z").timestamp()
+    except ValueError:
+        return None
+
+
+def docker_purgeable(df=None):
+    """What a cleanup will actually remove, and what its age limit holds back.
+
+    `docker system df` reports everything unused with no notion of age, and
+    `corex manage cleanup` will not touch build cache younger than three days.
+    On a box that builds its own dashboard image those two numbers disagree
+    completely: 3.7GB reported unused, 0B removable, because every byte of the
+    cache was made yesterday. Offering the first number as a button is the
+    bug, and it is why clicking it appeared to do nothing.
+
+    So this returns the second number, plus what is being held back and when
+    the oldest of it comes due, and the dashboard can say "809MB now, 2.9GB in
+    28 hours" rather than promising 3.7GB and delivering none of it.
+    """
+    now = time.time()
+    out = {
+        "images_b": 0,
+        "cache_b": 0, "cache_held_b": 0,
+        "total_b": 0, "held_b": 0,
+        "next_due_h": None,
+        "cache_age_h": PURGE_CACHE_AGE_H,
+    }
+
+    # Images come from `docker system df`, which is the same source the rest
+    # of the Storage tab reads and the only one that accounts for layers
+    # shared between images. Summing `Size` over `docker image ls` instead
+    # counts a shared base layer once per image that uses it: it made 771MB of
+    # real reclaimable space read as 809MB here and 1.97GB elsewhere.
+    rows = df if df is not None else docker_df()
+    if rows:
+        out["images_b"] = (rows.get("images") or {}).get("reclaimable_b", 0)
+
+    # Build cache. `Reclaimable` is buildkit's own answer to "is anything
+    # using this", so the age limit is the only thing left to apply.
+    rc, text = _run(["docker", "buildx", "du", "--format", "json"], timeout=60)
+    soonest = None
+    if rc == 0:
+        for line in text.splitlines():
+            try:
+                d = json.loads(line)
+            except ValueError:
+                continue
+            if not d.get("Reclaimable"):
+                continue
+            size = _size_to_bytes(d.get("Size"))
+            made = _parse_docker_time(d.get("CreatedAt"))
+            age_h = (now - made) / 3600 if made else PURGE_CACHE_AGE_H + 1
+            if age_h >= PURGE_CACHE_AGE_H:
+                out["cache_b"] += size
+            else:
+                out["cache_held_b"] += size
+                due = PURGE_CACHE_AGE_H - age_h
+                soonest = due if soonest is None else min(soonest, due)
+
+    out["total_b"] = out["images_b"] + out["cache_b"]
+    out["held_b"] = out["cache_held_b"]
+    if soonest is not None and out["held_b"] > 0:
+        out["next_due_h"] = round(soonest, 1)
+    return out
 
 
 _UNITS = {"b": 1, "kb": 10**3, "mb": 10**6, "gb": 10**9, "tb": 10**12,
@@ -590,6 +688,10 @@ def collect(want_sizes=True):
         shed = thermal.get("shed_c") or 88.0
         state = "hot" if temp >= shed else "warn" if temp >= warn else "ok"
 
+    # Read once and handed to both, because `docker system df` walks every
+    # image and container and the two callers want the same answer anyway.
+    _df = docker_df()
+
     return {
         "at": int(time.time()),
         "cpu": {
@@ -599,7 +701,8 @@ def collect(want_sizes=True):
         "memory": mem,
         "uptime_s": uptime_seconds(),
         "disks": disks(),
-        "docker": docker_df(),
+        "docker": _df,
+        "purgeable": docker_purgeable(_df),
         "service_sizes": service_sizes() if want_sizes else [],
         "series": series(),
         "watchdog": watchdog_findings(),

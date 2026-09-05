@@ -48,7 +48,16 @@ type containerRow struct {
 // One `docker stats --no-stream` call, not one per container: it takes a full
 // sampling interval per invocation, so asking sixteen times is sixteen times
 // the wait for the same answer.
+// dockerStats is cached for a moment: `docker stats --no-stream` costs a full
+// sampling interval by design, and the overview handler and the streaming
+// sampler both want it.
 func dockerStats() map[string]containerRow {
+	return dockerStatsCache.get(dockerStatsTTL, func() interface{} {
+		return dockerStatsUncached()
+	}).(map[string]containerRow)
+}
+
+func dockerStatsUncached() map[string]containerRow {
 	out := map[string]containerRow{}
 	text, err := runCmd("docker", "stats", "--no-stream", "--format",
 		"{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}")
@@ -226,23 +235,57 @@ func overviewHandler(w http.ResponseWriter, r *http.Request) {
 	out.Collected = time.Now().Format(time.RFC3339)
 	out.AgentOK, out.AgentErr = agentReachable()
 
+	// The three slow reads below do not depend on one another, and run in
+	// series they were most of the wait before this page showed anything: the
+	// agent's metrics (about a second, more on a cold `du`), the module status
+	// inside getServices (0.7s), and `docker stats`, which costs a full
+	// sampling interval by design (2.1s). Together the handler costs the
+	// slowest of the three rather than their sum.
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var services []ServiceInfo
+	var stats map[string]containerRow
+
 	if out.AgentOK {
-		// Sixty seconds: `du` is cached on the agent's side, but a cold cache
-		// still has to walk a photo library once.
-		res, err := agentCall(map[string]interface{}{
-			"action": "metrics", "sizes": true,
-		}, 60*time.Second)
-		if err != nil {
-			out.AgentOK = false
-			out.AgentErr = err.Error()
-		} else if !agentOK(res) {
-			out.AgentErr = agentString(res, "error")
-		} else if raw, err := json.Marshal(res["metrics"]); err == nil {
-			out.Metrics = raw
-		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// Sixty seconds: `du` is cached on the agent's side, but a cold
+			// cache still has to walk a photo library once.
+			res, err := agentCall(map[string]interface{}{
+				"action": "metrics", "sizes": true,
+			}, 60*time.Second)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				out.AgentOK = false
+				out.AgentErr = err.Error()
+			} else if !agentOK(res) {
+				out.AgentErr = agentString(res, "error")
+			} else if raw, err := json.Marshal(res["metrics"]); err == nil {
+				out.Metrics = raw
+			}
+		}()
 	}
 
-	for _, s := range getServices(loadState()) {
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		s := getServices(loadState())
+		mu.Lock()
+		services = s
+		mu.Unlock()
+	}()
+	go func() {
+		defer wg.Done()
+		d := dockerStats()
+		mu.Lock()
+		stats = d
+		mu.Unlock()
+	}()
+	wg.Wait()
+
+	for _, s := range services {
 		switch s.Status {
 		case "HEALTHY":
 			out.Services.Healthy++
@@ -255,7 +298,6 @@ func overviewHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	stats := dockerStats()
 	if text, err := runCmd("docker", "ps", "-a", "--format",
 		"{{.Names}}\t{{.State}}"); err == nil {
 		for _, line := range strings.Split(text, "\n") {
