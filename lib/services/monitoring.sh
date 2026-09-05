@@ -770,7 +770,7 @@ services:
     # Pinned, and not to :latest. That tag was last built in October 2025 and
     # is frozen on the 1.x line: upstream ships the current release as :2 and
     # :2.5.3, so a box tracking :latest sat ten months behind while every
-    # `corex manage update` reported success. A moving tag that stops moving is
+    # corex manage update reported success. A moving tag that stops moving is
     # the inverse of gotcha #19 and just as silent.
     image: louislam/uptime-kuma:2.5.3
     container_name: uptime-kuma
@@ -882,8 +882,8 @@ ${grafana_cold_labels}
     # delivered nothing. The cost is per-container filesystem walks, which
     # cAdvisor logs itself: "disk usage and inodes count on following dirs took
     # 51.9s" for a single container, repeated across all of them. On a box that
-    # thermal trips, that is a lot of disk and CPU for a number `docker system
-    # df` already answers.
+    # thermal trips, that is a lot of disk and CPU for a number that Docker's
+    # own disk-usage command already answers.
     command:
       # The expensive metrics are the filesystem ones. Everything else cAdvisor
       # collects is cheap and is the reason it is here.

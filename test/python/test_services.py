@@ -97,6 +97,8 @@ compose_up_enabled() { :; }
 monitoring_deploy
 ''')
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('command not found', result.stderr)
+        self.assertNotIn('Usage:  docker system COMMAND', result.stderr)
         compose = (self.base/'compose/monitoring/docker-compose.yml').read_text()
         self.validate_compose('monitoring')
         self.assertIn('middlewares=corex-lan@file,authelia@docker,grafana-cold"', compose)
