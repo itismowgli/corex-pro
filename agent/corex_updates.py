@@ -291,17 +291,20 @@ def check_image(ref):
     if not local:
         return {"image": ref, "state": "unknown",
                 "note": "not present locally, or built here rather than pulled"}
+    # Recorded on every answer below, so a cached verdict can be checked
+    # against the image it was made about without asking the registry again.
+    _base = local[0]
 
     remote, problem = remote_digest(host, repo, tag)
     if problem == "absent":
-        return {"image": ref, "state": "pinned",
+        return {"image": ref, "state": "pinned", "local": _base,
                 "note": "%s holds no %s, so this image is built here" % (host, repo)}
     if not remote:
         return {"image": ref, "state": "unknown",
                 "note": "could not ask %s about %s" % (host, tag)}
 
     if remote not in local:
-        return {"image": ref, "state": "update",
+        return {"image": ref, "state": "update", "local": local[0],
                 "note": "%s now points at %s" % (tag, remote[:19])}
 
     # Only worth asking about a tag that is meant to move.
@@ -311,10 +314,15 @@ def check_image(ref):
             age_days = int((time.time() - built) / 86400)
             if age_days >= STALE_TAG_DAYS:
                 return {"image": ref, "state": "stale-tag", "age_days": age_days,
+                        "local": _base,
                         "note": ("%s is current but has not been rebuilt in %d days, "
                                  "so check whether upstream has moved to another tag"
                                  % (tag, age_days))}
-    return {"image": ref, "state": "current", "note": "%s is current" % tag}
+    # "current" records it too, and that is the case that matters most: it is
+    # the verdict that hides the Update button, so an image replaced underneath
+    # it must not leave the button hidden on a stale claim.
+    return {"image": ref, "state": "current", "local": _base,
+            "note": "%s is current" % tag}
 
 
 # The order matters: the worst news about any image in a stack is the news
@@ -379,6 +387,43 @@ def _refresh(services):
             _refreshing["now"] = False
 
 
+def recheck(names):
+    """Re-ask the registry about these services now, and store the answer.
+
+    Called the moment an update finishes. Without it the cached answer stands
+    for up to a day, so a service that was just updated keeps its "Update
+    available" badge and keeps offering the button, which reads as the update
+    having silently failed. The check itself was never wrong: run fresh
+    against a service reporting an update, both digests matched exactly and
+    the state came back current. It was only ever answering an older question.
+
+    Synchronous on purpose, and cheap: one HEAD request per image against a
+    registry the update has just finished pulling from, so the connection and
+    the token are warm. A background refresh would race the dashboard's own
+    reload and leave the badge wrong for exactly as long as anyone was still
+    looking at it.
+    """
+    if isinstance(names, str):
+        names = [names]
+    names = [n for n in (names or []) if n]
+    if not names:
+        return {}
+    doc = _read_cache()
+    out = {}
+    for svc in names:
+        try:
+            row = check_service(svc)
+        except Exception:      # noqa: BLE001 - a lookup must never fail an update
+            continue
+        doc["services"][svc] = row
+        out[svc] = row
+    # checked_at describes the whole document, and most of it was not
+    # re-read, so it is deliberately left alone. Moving it forward here would
+    # claim every other service had just been checked too.
+    _write_cache(doc)
+    return out
+
+
 STATE_JSON = "/etc/corex/state.json"
 
 
@@ -397,6 +442,29 @@ def installed_services():
     return sorted(out)
 
 
+def _answer_is_about_a_different_image(row):
+    """Whether a cached verdict was made about an image that has since moved.
+
+    The cache holds an answer for a day, and the only thing that can make an
+    answer wrong before then is the local image changing. That happens whenever
+    anything pulls: this tool, a repair, the scheduled maintenance, or someone
+    at a shell. So the verdict records the digest it was made about, and a
+    cheap local comparison catches all of those without a registry round trip.
+
+    A stale "update" badge is the visible half of this. It reads as the update
+    button having done nothing, which is exactly the complaint that produced
+    this function.
+    """
+    for img in (row.get("images") or []):
+        base = img.get("local")
+        if not base:
+            continue
+        now = local_digests(img.get("image") or "")
+        if now and base not in now:
+            return True
+    return False
+
+
 def updates(services=None, refresh=False):
     """The cached answer, refreshing it in the background when it is old.
 
@@ -408,7 +476,27 @@ def updates(services=None, refresh=False):
         services = installed_services()
     doc = _read_cache()
     age = time.time() - doc["checked_at"]
-    stale = refresh or age > TTL
+
+    # An answer about an image that has since been replaced is not merely old,
+    # it is about something else. Report those as unknown, which keeps the
+    # Update button where it was rather than making a claim, and let the
+    # background refresh settle it.
+    moved = []
+    for name, row in list(doc["services"].items()):
+        if not isinstance(row, dict):
+            continue
+        try:
+            if _answer_is_about_a_different_image(row):
+                moved.append(name)
+        except Exception:      # noqa: BLE001 - never fail a poll over this
+            continue
+    for name in moved:
+        doc["services"][name] = {
+            "service": name, "state": "unknown", "images": [],
+            "note": "the local image changed since this was checked",
+        }
+
+    stale = refresh or age > TTL or bool(moved)
     if stale:
         with _lock:
             if not _refreshing["now"]:

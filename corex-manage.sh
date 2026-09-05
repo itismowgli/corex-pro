@@ -591,6 +591,26 @@ cmd_update() {
     fi
 }
 
+# Re-ask the registry about a service the moment its update finishes.
+#
+# Without this the cached answer stands for up to a day, so a service that was
+# just updated keeps its "Update available" badge and keeps offering the
+# button, which reads as the update having silently failed. It is the whole of
+# the reported fault: the check itself was never wrong, it was answering an
+# older question. Never fatal, and never noisy: an update that worked must not
+# be reported as failed because a registry lookup afterwards did not.
+_update_recheck() {
+    local lib="/usr/local/lib/corex"
+    [[ -f "${lib}/corex_updates.py" ]] || return 0
+    python3 - "$lib" "$@" >/dev/null 2>&1 <<'PYEOF' || true
+import sys
+sys.path.insert(0, sys.argv[1])
+import corex_updates as u
+u.recheck(sys.argv[2:])
+PYEOF
+    return 0
+}
+
 _update_single() {
     local svc="$1"
     local dir="${DOCKER_ROOT}/${svc}"
@@ -653,6 +673,7 @@ _update_single() {
     else
         log_info "${svc}: already current, no image changed."
     fi
+    _update_recheck "$svc"
     return 0
 }
 

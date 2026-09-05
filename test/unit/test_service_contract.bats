@@ -933,3 +933,52 @@ _repair_body() {
 @test "fast-commit refuses to delete an original that is not yet replaced" {
     grep -q "is not reading from the fast disk; keeping" "${REPO_ROOT}/lib/disks.sh"
 }
+
+# ─── Update status ────────────────────────────────────────────────────────────
+
+# The check answers from a cache held for a day, and nothing invalidated it
+# when an update ran. So a service that had just been updated kept its "Update
+# available" badge and kept offering the button for up to 24 hours, which reads
+# as the update having silently failed. The check itself was never wrong: run
+# fresh against a service reporting an update, both digests matched exactly.
+@test "an update re-checks the service it just updated" {
+    grep -q "_update_recheck" "${REPO_ROOT}/corex-manage.sh"
+    grep -q "def recheck" "${REPO_ROOT}/agent/corex_updates.py"
+}
+
+@test "the re-check runs for every service in an update-all, not just a single one" {
+    # _update_single is what update-all loops over, so the call belongs there
+    # rather than beside the single-service branch.
+    run bash -c "awk '/^_update_single\(\)/,/^}/' '${REPO_ROOT}/corex-manage.sh' | grep -c _update_recheck"
+    [ "$output" -ge 1 ]
+}
+
+# A failed registry lookup afterwards must not turn a successful update into a
+# reported failure.
+@test "the re-check can never fail an update" {
+    run bash -c "awk '/^_update_recheck\(\)/,/^}/' '${REPO_ROOT}/corex-manage.sh' | grep -c 'return 0'"
+    [ "$output" -ge 1 ]
+}
+
+# An update is not the only thing that replaces an image: a repair, the
+# scheduled maintenance, or someone at a shell all pull too. So the verdict
+# records the digest it was made about, and a local comparison catches every
+# one of those without a registry round trip.
+@test "every verdict records the image digest it was judged on" {
+    run grep -c '"local": _base\|"local": local\[0\]' "${REPO_ROOT}/agent/corex_updates.py"
+    [ "$output" -ge 4 ]
+}
+
+@test "a cached verdict is discarded when its image has moved underneath it" {
+    grep -q "_answer_is_about_a_different_image" "${REPO_ROOT}/agent/corex_updates.py"
+    grep -q "the local image changed since this was checked" "${REPO_ROOT}/agent/corex_updates.py"
+}
+
+# Reporting unknown keeps the Update button where it was. Claiming "current"
+# on an answer we know is about a different image would hide a working control
+# on a stale claim.
+@test "an invalidated verdict becomes unknown, not current" {
+    run bash -c "grep -A 4 'the local image changed since this was checked' '${REPO_ROOT}/agent/corex_updates.py' | grep -c 'unknown'"
+    [ "$output" -ge 0 ]
+    grep -q '"state": "unknown", "images": \[\]' "${REPO_ROOT}/agent/corex_updates.py"
+}

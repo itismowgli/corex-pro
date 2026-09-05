@@ -31,6 +31,31 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 
 ### Fixed
+- **The Update button worked, and then reported that it had not.** The check
+  answers from a cache held for a day, and nothing invalidated it when an
+  update ran, so a service that had just been updated kept its "Update
+  available" badge and kept offering the button for up to 24 hours. That reads
+  as the update having silently failed.
+
+  The check itself was never wrong. Run fresh against two services the cache
+  was reporting as needing an update, both came back current with the local and
+  remote digests matching exactly, character for character. It was only ever
+  answering an older question.
+
+  A successful update now re-checks the service it just updated, synchronously,
+  which is one HEAD request against a registry the pull has just finished
+  talking to. It fires per service, so `update --all` settles every one of
+  them, and it can never turn a successful update into a reported failure.
+
+  An update is not the only thing that replaces an image, though: a repair, the
+  scheduled maintenance, or someone at a shell all pull too. So every verdict
+  now records the digest it was made about, and a local comparison on each read
+  catches all of those with no registry round trip. A verdict about an image
+  that has since moved is reported as unknown rather than as either answer,
+  which leaves the Update button where it was instead of hiding a working
+  control on a stale claim, and a background refresh settles it within the
+  minute.
+
 - **The Reclaim button freed nothing, and said it had worked.** Three
   independent faults, each sufficient on its own, and all three silent.
 
