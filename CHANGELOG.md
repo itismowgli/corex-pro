@@ -6,6 +6,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.25.4] - 2026-09-06
+
+### Fixed
+- **Grafana opened on an empty welcome page.** The dashboard was provisioned
+  correctly and Prometheus was storing everything, but a provisioned dashboard
+  sitting in a folder is one nobody navigates to: the first thing anyone saw
+  was Grafana's default home screen, which reads as "monitoring is collecting
+  nothing" when it was collecting everything and showing it one click out of
+  sight. Grafana now opens on the CoreX dashboard.
+
+---
+
 ## [v3.25.3] - 2026-09-06
 
 ### Fixed

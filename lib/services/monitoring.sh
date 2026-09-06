@@ -836,6 +836,12 @@ services:
       - ${DOCKER_ROOT}/monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
     environment:
       GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASS}"
+      # Open on the CoreX dashboard rather than Grafana's welcome page.
+      # A provisioned dashboard sitting in a folder is a dashboard nobody
+      # navigates to: the first thing anyone saw was an empty home screen,
+      # which reads as "monitoring is collecting nothing" when in fact it was
+      # collecting everything and showing it one click out of sight.
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/corex-host.json
       GF_SERVER_ROOT_URL: "https://grafana.${DOMAIN}"
     networks: [proxy-net, monitoring-net]
     deploy:
