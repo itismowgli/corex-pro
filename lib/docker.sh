@@ -45,13 +45,22 @@ phase3_docker() {
     systemctl restart docker 2>/dev/null || true
     log_success "Docker running."
 
-    # Create the three isolated Docker networks
-    # proxy-net:      All web services + Traefik + Cloudflared
+    # Create the isolated Docker networks
+    # proxy-net:      Web-facing services + Traefik + Cloudflared
+    # backend-net:    Databases and caches, plus the one app that owns each
     # monitoring-net: Prometheus + Grafana + exporters
     # ai-net:         Ollama + Open WebUI + Browserless
+    #
+    # backend-net exists because a database on proxy-net is reachable by every
+    # other container on proxy-net, which is every web-facing service plus
+    # cloudflared. Postgres and Redis were sitting there, so anything that got
+    # into one web application could open the others' databases directly, and
+    # Redis in particular takes commands with no password at all. An app keeps
+    # a foot in both networks; its database keeps only the one.
     docker network create proxy-net      2>/dev/null || true
+    docker network create backend-net    2>/dev/null || true
     docker network create monitoring-net 2>/dev/null || true
     docker network create ai-net         2>/dev/null || true
 
-    log_success "Docker networks ready (proxy-net, monitoring-net, ai-net)"
+    log_success "Docker networks ready (proxy-net, backend-net, monitoring-net, ai-net)"
 }

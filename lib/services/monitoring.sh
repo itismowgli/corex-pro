@@ -20,7 +20,9 @@ SERVICE_DISK_GB=5
 # UFW rules this service opens, as full `ufw allow` specs. cmd_remove
 # revokes them, because leaving a port open with nothing behind it is all
 # of the exposure and none of the service.
-SERVICE_FIREWALL_SPECS=("3001/tcp" "3002/tcp" "9090/tcp")
+# 9090 is deliberately absent. Prometheus binds to loopback rather than to
+# every interface, so there is nothing on the LAN to allow.
+SERVICE_FIREWALL_SPECS=("3001/tcp" "3002/tcp")
 SERVICE_DESCRIPTION="Complete observability stack. Uptime Kuma for status pages, Grafana for dashboards, Prometheus for metrics collection. Monitor all services from one place."
 
 # Uptime Kuma check, seeded by lib/kuma.sh so it is recreated on a fresh
@@ -46,7 +48,15 @@ monitoring_dirs() {
 monitoring_firewall() {
     ufw allow 3001/tcp comment 'Uptime Kuma Status Page' 2>/dev/null || true
     ufw allow 3002/tcp comment 'Grafana Dashboards'      2>/dev/null || true
-    ufw allow 9090/tcp comment 'Prometheus (LAN only)'   2>/dev/null || true
+    # Prometheus is not opened. It has no authentication of any kind, its API
+    # will delete series and its console lists every target and label on the
+    # box, so "LAN only" was never a small exposure. Grafana reaches it by
+    # name over monitoring-net and never used the published port.
+    #
+    # Revoked rather than merely not added, because a box installed earlier
+    # has the rule and a rule nothing listens on is pure exposure. This is
+    # the same reasoning cmd_remove uses for SERVICE_FIREWALL_SPECS.
+    ufw delete allow 9090/tcp 2>/dev/null || true
 }
 
 
@@ -814,7 +824,18 @@ services:
     image: prom/prometheus:v3.14.0
     container_name: prometheus
     restart: unless-stopped
-    ports: ["9090:9090"]
+    # Loopback, not every interface. A published port bypasses UFW entirely:
+    # Docker writes its DNAT rules ahead of the filter chain UFW manages, so
+    # 9090 answered the whole LAN while ufw status listed no rule for it at
+    # all. Measured from another machine. Binding the host side to 127.0.0.1
+    # is what actually closes it, and it keeps host-local debugging working.
+    #
+    # Note the absence of backticks above. This heredoc is unquoted, so a
+    # backtick in a YAML comment is command substitution: writing the ufw
+    # command in backticks here ran it and pasted its output into the compose
+    # file, which then failed to parse. See the heredoc conventions in
+    # CLAUDE.md.
+    ports: ["127.0.0.1:9090:9090"]
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./alerts.yml:/etc/prometheus/alerts.yml:ro

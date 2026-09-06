@@ -641,7 +641,7 @@ services:
       POSTGRES_INITDB_ARGS: "--data-checksums"
     volumes:
       - ${DATA_ROOT}/calcom-db:/var/lib/postgresql/data
-    networks: [proxy-net]
+    networks: [backend-net]
     security_opt: ["no-new-privileges:true"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U calcom -d calcom"]
@@ -720,7 +720,8 @@ services:
       # OOMKilled false throughout, because Node killed itself rather than the
       # kernel killing the container, so nothing pointed at memory.
       NODE_OPTIONS: "--max-old-space-size=2048"
-    networks: [proxy-net]
+    # Traefik reaches it on proxy-net, its database on backend-net.
+    networks: [proxy-net, backend-net]
     security_opt: ["no-new-privileges:true"]
     healthcheck:
       # /api/version is unauthenticated and does no database work, so it
@@ -763,7 +764,11 @@ services:
       CALCOM_WEBHOOK_SECRET: "${CALCOM_WEBHOOK_SECRET}"
       TELEGRAM_BOT_TOKEN: "${CALCOM_TG_TOKEN}"
       TELEGRAM_CHAT_ID: "${CALCOM_TG_CHAT}"
-    networks: [proxy-net]
+    # The helper calls Cal.com's own cron endpoints over HTTP and sends
+    # Telegram messages, so it needs the app and the internet, not the
+    # database. It is on backend-net because that is where it reaches
+    # calcom by name without also being exposed to every web service.
+    networks: [backend-net]
     # No Traefik labels and no published port. It is reachable only from
     # inside proxy-net, which is where Cal.com posts from; a booking webhook
     # has no reason to be exposed to the internet.
@@ -785,6 +790,7 @@ services:
 
 networks:
   proxy-net: { external: true }
+  backend-net: { external: true }
 DCEOF
 
     chmod 600 "${dir}/docker-compose.yml"

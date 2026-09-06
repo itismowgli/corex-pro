@@ -22,6 +22,14 @@ import sys
 
 FORBIDDEN_CHARS = "—–“”‘’"
 
+# Addresses that identify nothing and are worth naming in release notes. A
+# loopback address is the same on every machine, so it discloses nothing, and
+# CoreX documents binding to it whenever a service has no login of its own.
+# Without this the IP check refuses every such release, and the workaround is
+# to write "loopback" instead of the literal, which makes the notes worse.
+# 0.0.0.0 is here for the same reason: it is what the notes contrast against.
+ALLOWED_ADDRESSES = {"127.0.0.1", "0.0.0.0", "255.255.255.255"}
+
 # Patterns that mean a real host, account or credential has reached the notes.
 FORBIDDEN_PATTERNS = [
     (r"[0-9]{8,10}:[A-Za-z0-9_-]{30,}", "a Telegram bot token"),
@@ -46,11 +54,17 @@ def check(body, version):
             "%s notes contain characters the project rules forbid: %r\n"
             "Fix them in CHANGELOG.md, not here." % (version, found))
     for pattern, what in FORBIDDEN_PATTERNS:
-        hit = re.search(pattern, body)
-        if hit:
+        # Every match, not the first: an allowed loopback literal early in the
+        # body must not shadow a real address further down. re.search would
+        # stop at the first hit and, once the allowlist skipped it, report the
+        # notes as clean.
+        for hit in re.finditer(pattern, body):
+            text = hit.group(0)
+            if what == "an IP address" and text in ALLOWED_ADDRESSES:
+                continue
             raise SystemExit(
                 "%s notes look like they contain %s (%r). Refusing to publish."
-                % (version, what, hit.group(0)[:40]))
+                % (version, what, text[:40]))
 
 
 def main(argv):

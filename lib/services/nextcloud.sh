@@ -210,7 +210,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    networks: [proxy-net]
+    networks: [backend-net]
 
   redis:
     image: redis:alpine
@@ -223,7 +223,9 @@ services:
       interval: 10s
       timeout: 3s
       retries: 3
-    networks: [proxy-net]
+    # Redis authenticates nothing here, so on proxy-net it took commands
+    # from every web-facing container on the box.
+    networks: [backend-net]
 
   app:
     image: nextcloud:34
@@ -261,7 +263,9 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    networks: [proxy-net]
+    # Both: Traefik and the whiteboard backend reach it on proxy-net, and
+    # it reaches MariaDB and Redis on backend-net.
+    networks: [proxy-net, backend-net]
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.nextcloud.rule=Host(\`nextcloud.${DOMAIN}\`)"
@@ -306,7 +310,9 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    networks: [proxy-net]
+    # cron.php runs against the database directly and serves nothing, so
+    # it has no reason to sit where the web-facing containers are.
+    networks: [backend-net]
 
   # ── Whiteboard real-time collaboration backend ──────────────────────
   # The Whiteboard app renders locally without this, but real-time
@@ -354,6 +360,7 @@ services:
 
 networks:
   proxy-net: { external: true }
+  backend-net: { external: true }
 DCEOF
 }
 

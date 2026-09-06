@@ -397,6 +397,78 @@ _repair_body() {
     }
 }
 
+# ─── Databases and caches stay off the web-facing network ────────────────────
+
+# proxy-net is shared by every web-facing container and by cloudflared, so a
+# database sitting on it is reachable by all of them. Postgres, MariaDB and
+# Redis were all there. Redis is the worst of the three because it
+# authenticates nothing: `occ config:system:get redis` shows an empty
+# password, so any container on proxy-net could issue commands to it.
+#
+# An application keeps a foot in both networks. Its database keeps only
+# backend-net.
+@test "no database or cache container sits on proxy-net" {
+    local f base offenders=""
+    for f in "${REPO_ROOT}"/lib/services/*.sh; do
+        base="$(basename "$f")"
+        # Track the most recent container_name, then check the networks line
+        # that belongs to the same service block.
+        offenders+="$(awk -v mod="$base" '
+            /container_name:/ {
+                name = $NF
+                gsub(/["\047]/, "", name)
+                next
+            }
+            /^[[:space:]]*networks:[[:space:]]*\[/ {
+                if (name ~ /(-db|-redis)$/ && $0 ~ /proxy-net/)
+                    printf "%s: %s -> %s\n", mod, name, $0
+            }
+        ' "$f")"
+    done
+    if [[ -n "${offenders//[[:space:]]/}" ]]; then
+        echo "These are reachable from every web-facing container:"
+        echo "$offenders"
+        echo "Put them on backend-net only. The app keeps both networks."
+        false
+    fi
+}
+
+@test "every module that names backend-net also declares it external" {
+    local f base
+    for f in "${REPO_ROOT}"/lib/services/*.sh; do
+        base="$(basename "$f")"
+        grep -q 'networks: \[.*backend-net' "$f" || continue
+        # A compose file that references a network it never declares fails
+        # with "network backend-net declared as external, but could not be
+        # found", or silently invents a project-scoped one, which is worse:
+        # the containers come up on a network the database is not on.
+        grep -qE '^[[:space:]]*backend-net:[[:space:]]*\{[[:space:]]*external:' "$f" \
+            || { echo "$base uses backend-net without declaring it external"; false; }
+    done
+}
+
+# The Traefik dashboard once had its publish changed to 127.0.0.1 in code
+# while deployed instances kept 0.0.0.0, which is what this file's header
+# describes. Prometheus had the same shape and worse consequences: it
+# authenticates nothing, its API can delete series, and a published port
+# bypasses UFW, so it answered the whole LAN while `ufw status` listed no rule
+# for it. Anything with no login of its own binds to loopback.
+@test "services with no authentication publish only on loopback" {
+    local f base offenders=""
+    for f in "${REPO_ROOT}"/lib/services/*.sh; do
+        base="$(basename "$f")"
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            offenders+="${base}: ${line}"$'\n'
+        done < <(grep -oE 'ports: \[?"(0\.0\.0\.0:)?(9090|8080):[0-9]+"' "$f" || true)
+    done
+    if [[ -n "${offenders//[[:space:]]/}" ]]; then
+        echo "Bind these to 127.0.0.1, they have no login:"
+        echo "$offenders"
+        false
+    fi
+}
+
 # ─── Credential loading must be identical everywhere ─────────────────────────
 
 @test "cred_get trims column padding and keeps internal spaces" {

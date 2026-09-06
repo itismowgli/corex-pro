@@ -70,7 +70,9 @@ services:
         condition: service_healthy
       immich-redis:
         condition: service_started
-    networks: [proxy-net]
+    # Both: Traefik reaches it on proxy-net, it reaches its database and cache
+    # on backend-net. The database keeps only the second.
+    networks: [proxy-net, backend-net]
     deploy:
       resources:
         limits:
@@ -91,7 +93,10 @@ services:
     container_name: immich-ml
     restart: unless-stopped
     volumes: ["model-cache:/cache"]
-    networks: [proxy-net]
+    # Not web-facing. It does need outbound internet on first use, because it
+    # downloads its models then, which is why backend-net is a normal bridge
+    # rather than internal.
+    networks: [backend-net]
     deploy:
       resources:
         limits:
@@ -104,7 +109,9 @@ services:
     image: redis:alpine
     container_name: immich-redis
     restart: unless-stopped
-    networks: [proxy-net]
+    # Redis takes commands with no password, so being reachable from every
+    # container on proxy-net was the worst of the three.
+    networks: [backend-net]
     deploy:
       resources:
         limits:
@@ -133,7 +140,7 @@ services:
       POSTGRES_INITDB_ARGS: "--data-checksums"
     volumes:
       - ${DATA_ROOT}/immich-db:/var/lib/postgresql/data
-    networks: [proxy-net]
+    networks: [backend-net]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       start_period: 30s
@@ -152,6 +159,7 @@ volumes:
   model-cache:
 networks:
   proxy-net: { external: true }
+  backend-net: { external: true }
 DCEOF
 
     docker compose -f "${dir}/docker-compose.yml" up -d \

@@ -2769,10 +2769,20 @@ What you need, and neither is on the server
 1. This bundle.
 2. Its passphrase.
 
-Read the bundle on any machine with GnuPG. Nothing else is required:
+Read the bundle on any machine with GnuPG:
 
     gpg -d corex-credentials-BUNDLE.gpg > bundle.tar
     tar xf bundle.tar
+
+GnuPG is not everywhere, which is worth knowing before you need it rather
+than after. macOS does not ship it: `brew install gnupg`. If all you have is
+a container runtime, that is enough:
+
+    docker run --rm -i -v "$PWD:/w" -w /w alpine \
+      sh -c 'apk add --no-cache gnupg >/dev/null && gpg -d corex-credentials-BUNDLE.gpg' \
+      | tar xf -
+
+Nothing here needs CoreX, restic, or the server.
 
 Order of recovery
 -----------------

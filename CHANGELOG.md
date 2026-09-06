@@ -6,6 +6,61 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.27.0] - 2026-09-06
+
+### Added
+- **A fourth Docker network, `backend-net`, and the databases moved onto it.**
+  proxy-net had 25 members, and six of them were databases and caches:
+  `nextcloud-db`, `nextcloud-redis`, `immich-db`, `immich-redis`, `immich-ml`
+  and `calcom-db`. Docker's embedded DNS resolves container names across a
+  shared network, so anything that got into any one web application could open
+  every other application's database directly, by name, with no routing to
+  arrange.
+
+  Redis was the worst of the engines, and the measurement is the argument:
+  `occ config:system:get redis` returns an empty password, because on a
+  private network it did not need one. That assumption was what was wrong.
+
+  Each database and cache now shares `backend-net` with only the application
+  that owns it. The application keeps both networks; the database keeps one.
+  proxy-net is down to 17 members. Verified by attaching a throwaway container
+  to each network in turn: proxy-net cannot reach any of them, backend-net
+  can, and Nextcloud, Immich and Cal.com all report healthy with their data
+  intact.
+
+  `nextcloud-whiteboard` deliberately stays on proxy-net, because it has a
+  Traefik router of its own and reaches the app by name there. `keeper`
+  bundles its PostgreSQL and Redis inside the application container, so it has
+  nothing to move.
+
+- **Three contract tests covering network placement and port binding**, each
+  confirmed by reintroducing the defect it exists to catch.
+
+### Fixed
+- **Prometheus answered the whole LAN, and `ufw status` listed no rule for
+  it.** Docker writes its own DNAT and forward rules for a published port, and
+  they are consulted before the filter chain UFW manages, so `ufw allow`
+  governs host services and says nothing about container ones. 9090 was tested
+  as reachable from a second machine while having no rule at all.
+
+  Prometheus authenticates nothing, its console enumerates every target and
+  label on the box, and its API can delete series, so "LAN only" was never a
+  small exposure. It binds to `127.0.0.1` now, which is what actually closes a
+  port, and `monitoring_firewall` deletes the 9090 rule rather than merely not
+  adding it, because a box installed earlier has that rule and a rule with
+  nothing behind it is all of the exposure and none of the service. Grafana
+  reaches Prometheus over `monitoring-net` and never used the published port,
+  so nothing was lost. Confirmed closed from off-box and still working on
+  loopback.
+
+### Changed
+- The recovery runbook no longer assumes GnuPG is installed. It is not on
+  macOS by default, which is the kind of thing worth knowing before a recovery
+  rather than during one, so the runbook now gives a container one-liner that
+  needs nothing but a container runtime.
+
+---
+
 ## [v3.26.0] - 2026-09-06
 
 ### Added

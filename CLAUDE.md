@@ -254,16 +254,24 @@ Local clients (with AdGuard DNS rewrites pointing `*.domain → SERVER_IP`) hit
 Traefik directly at HTTPS without going through Cloudflare. Traefik also handles
 HTTP→HTTPS redirects and Let's Encrypt certificate issuance.
 
-### Why three Docker networks?
+### Why four Docker networks?
 
 | Network | Members | Reason |
 |---------|---------|--------|
-| `proxy-net` | Traefik, Cloudflared, all web services | Web-facing; reachable from Traefik and tunnel |
+| `proxy-net` | Traefik, Cloudflared, web-facing services | Web-facing; reachable from Traefik and tunnel |
+| `backend-net` | Databases and caches, plus the one app that owns each | A database on proxy-net is reachable by every web service and by cloudflared |
 | `monitoring-net` | Prometheus, Grafana, Node Exporter, cAdvisor | Metrics isolated; Prometheus not web-accessible |
 | `ai-net` | Ollama, Open WebUI, Browserless | AI sandboxed from web services; extra isolation for code execution |
 
-Services needing web access AND metrics (Grafana, Open WebUI) are on BOTH their
-specialized network AND proxy-net. This is intentional.
+A service that needs two of these is on both, deliberately. Grafana and Open
+WebUI need web access and metrics. An application needs Traefik on proxy-net
+and its own database on backend-net; the database gets only the second, so it
+is reachable by its own application and by nothing else.
+
+`backend-net` is a normal bridge rather than `internal: true`, because
+`immich-ml` downloads its models on first use and a database that cannot reach
+the internet also cannot be told to fetch anything, so the isolation that
+matters here is inbound.
 
 ### Why `set -e`, `set -u`, `set -o pipefail`?
 
@@ -326,31 +334,40 @@ Sablier         <- internal wake controller; needs the Docker socket and the
 
 ### Network membership
 
-| Service | proxy-net | monitoring-net | ai-net |
-|---------|:---------:|:-------------:|:------:|
-| Traefik | YES | - | - |
-| Cloudflared | YES | - | - |
-| AdGuard | YES | - | - |
-| Portainer | YES | - | - |
-| Nextcloud | YES | - | - |
-| Immich | YES | - | - |
-| Vaultwarden | YES | - | - |
-| Authelia | YES | - | - |
-| n8n | YES | - | - |
-| Cal.com (web, helper, db) | YES | - | - |
-| Keeper | YES | - | - |
-| Stalwart | YES | - | - |
-| Uptime Kuma | YES | YES | - |
-| Grafana | YES | YES | - |
-| Prometheus | - | YES | - |
-| Node Exporter | - | YES | - |
-| cAdvisor | - | YES | - |
-| CrowdSec | YES | - | - |
-| Ollama | YES | - | YES |
-| Open WebUI | YES | - | YES |
-| Browserless | - | - | YES |
-| Time Machine | host networking | - | - |
-| Sablier | YES | - | - |
+| Service | proxy-net | backend-net | monitoring-net | ai-net |
+|---------|:---------:|:-----------:|:-------------:|:------:|
+| Traefik | YES | - | - | - |
+| Cloudflared | YES | - | - | - |
+| AdGuard | YES | - | - | - |
+| Portainer | YES | - | - | - |
+| Nextcloud (app) | YES | YES | - | - |
+| nextcloud-db, nextcloud-redis | - | YES | - | - |
+| nextcloud-cron | - | YES | - | - |
+| nextcloud-whiteboard | YES | - | - | - |
+| Immich (server) | YES | YES | - | - |
+| immich-db, immich-redis, immich-ml | - | YES | - | - |
+| Vaultwarden | YES | - | - | - |
+| Authelia | YES | - | - | - |
+| n8n | YES | - | - | - |
+| Cal.com (web) | YES | YES | - | - |
+| calcom-db, calcom-helper | - | YES | - | - |
+| Keeper | YES | - | - | - |
+| Stalwart | YES | - | - | - |
+| Uptime Kuma | YES | - | YES | - |
+| Grafana | YES | - | YES | - |
+| Prometheus | - | - | YES | - |
+| Node Exporter | - | - | YES | - |
+| cAdvisor | - | - | YES | - |
+| CrowdSec | YES | - | - | - |
+| Ollama | YES | - | - | YES |
+| Open WebUI | YES | - | - | YES |
+| Browserless | - | - | - | YES |
+| Sablier | YES | - | - | - |
+
+`nextcloud-whiteboard` stays on proxy-net and not backend-net on purpose: it
+has a Traefik router of its own, and it reaches Nextcloud by container name
+over proxy-net, which the app is still on. `keeper` bundles its PostgreSQL and
+Redis inside the application container, so it has nothing to move.
 
 ---
 
@@ -2192,6 +2209,85 @@ job in `prometheus.yml`.
 
 Note also that the image is `prom/prometheus:latest`, which is gotcha #26
 waiting to happen.
+
+### 56. A published port bypasses UFW, so ufw status is not the exposure list
+
+`ufw status` listed no rule for 9090 and Prometheus answered the whole LAN
+anyway. Tested from a second machine, not inferred:
+
+| Port | UFW rule | Reachable off-box |
+|---|---|---|
+| 9090 Prometheus | none | **yes** |
+| 3002 Grafana | allow | yes |
+| 3001 Uptime Kuma | allow | yes |
+
+Docker writes its own DNAT and forward rules for a published port, and they
+are consulted before the filter chain UFW manages, so `ufw allow` is what
+opens a **host** service and has nothing to say about a container one. The
+rule list therefore reads as an exposure inventory and is not one.
+
+Two rules follow.
+
+**Bind the host side, do not rely on a missing UFW rule.**
+`ports: ["127.0.0.1:9090:9090"]` is what actually closes a port; `ports:
+["9090:9090"]` with no UFW rule is open. Confirmed both ways from another
+machine. This is what `lib/services/traefik.sh` already does for the
+dashboard, and `test_service_contract.bats` has covered that one publish for
+a while. It now covers this class rather than that instance.
+
+**Anything with no login of its own gets loopback.** Prometheus authenticates
+nothing, its console enumerates every target and label on the box, and its
+API can delete series. "LAN only" was never a small exposure for it. Grafana
+reaches it as `http://prometheus:9090` over `monitoring-net` and never used
+the published port at all, so nothing was lost by closing it.
+
+The related trap is the reverse: `monitoring_firewall` **deletes** the 9090
+rule rather than merely not adding it, because a box installed earlier has
+that rule and a rule with nothing listening behind it is all of the exposure
+and none of the service. Same reasoning as `SERVICE_FIREWALL_SPECS` on
+removal.
+
+### 57. A database on proxy-net is reachable by every web service on it
+
+proxy-net had 25 members, including `nextcloud-db`, `nextcloud-redis`,
+`immich-db`, `immich-redis`, `immich-ml` and `calcom-db`. Docker's embedded
+DNS resolves container names across a shared network, so anything that got
+into any web application could open every other application's database
+directly, by name, with no routing to arrange.
+
+Redis was the worst of the three engines, and the measurement makes the point:
+
+```
+occ config:system:get redis
+host: nextcloud-redis
+password:            <- empty
+port: 6379
+```
+
+No password at all, because on a private network it did not need one. That
+assumption was the thing that was wrong.
+
+`backend-net` holds each database and cache with only the application that
+owns it. The application keeps both networks, the database keeps one. Verified
+by attaching a throwaway container to each network in turn, which is the only
+test that answers the actual question:
+
+```bash
+docker run --rm --network proxy-net   busybox nc -w 3 -z nextcloud-db 3306   # BLOCKED
+docker run --rm --network backend-net busybox nc -w 3 -z nextcloud-db 3306   # REACHABLE
+```
+
+**Do not test this from inside the application containers.** `/dev/tcp` is a
+bash feature and these images run busybox or dash, so the redirect fails and
+every target reads as blocked, including the ones that work. That reported
+perfect isolation on a stack that was still fully connected, and it is a
+convincing false negative rather than an obvious error.
+
+Two membership decisions worth keeping straight. `nextcloud-whiteboard` stays
+on proxy-net because it has a Traefik router of its own and reaches the app by
+name there. And `nextcloud-cron` moves to backend-net alone: it runs cron.php
+against the database and serves nothing, so it has no reason to sit where the
+web-facing containers are.
 
 ## What NOT to Do
 
