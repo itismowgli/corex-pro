@@ -230,6 +230,49 @@ LANEOF
 }
 
 # Regenerated unconditionally, because CoreX owns it (gotcha #22).
+
+# Every hostname a protected router can answer on, one per line, without the
+# domain.
+#
+# This used to be assumed to be the module's own name, which is right for all
+# but one module and wrong in a way that cannot be seen from Authelia's side.
+# n8n answers on two names, because a browser blocklist flagged the obvious
+# one, and its Traefik router carries a Host rule for both. Authelia's
+# access_control listed only the first, and `default_policy: deny` means an
+# unlisted hostname is not merely unprotected, it is refused: the second name
+# returned 403 to everything, its webhook bypass included, with no way to sign
+# in and nothing in any log to say the hostname was simply unknown.
+#
+# The module is the authority on its own hostnames, so it is asked. A module
+# that declares `<name>_hostnames` gets whatever that prints; everything else
+# keeps the old behaviour of one name equal to the module name. The comment on
+# `default_policy: deny` predicted exactly this failure and it still happened,
+# because the list was derived from service names rather than from what
+# Traefik actually routes.
+_authelia_hostnames_for() {
+    # Three statements, not one. A variable declared in the same `local` as
+    # the one that references it expands empty, so
+    #   local svc="$1" module=".../${svc}.sh"
+    # built ".../\.sh", the file did not exist, and the function fell back to
+    # the module name. That is precisely the behaviour this exists to replace,
+    # so the fix would have looked like it worked and changed nothing.
+    local svc="$1"
+    local module="${SCRIPT_DIR:-}/lib/services/${svc}.sh"
+    local out=""
+    if [[ -f "$module" ]]; then
+        # A subshell, so another module's SERVICE_NAME and functions cannot
+        # leak into this one. Same reason as _authelia_apply_to_services.
+        out=$(
+            # shellcheck source=/dev/null
+            source "$module" 2>/dev/null
+            if declare -f "${svc}_hostnames" >/dev/null 2>&1; then
+                "${svc}_hostnames" 2>/dev/null | tr ' ' '\n' | grep .
+            fi
+        )
+    fi
+    printf '%s\n' "${out:-$svc}" | grep .
+}
+
 _authelia_write_config() {
     local dir="${DOCKER_ROOT}/authelia"
     local policy="one_factor" have_smtp=false
@@ -242,9 +285,11 @@ _authelia_write_config() {
         have_smtp=true
     fi
 
-    local protect_hosts="" r
+    local protect_hosts="" r h
     for r in ${AUTHELIA_PROTECT:-$AUTHELIA_DEFAULT_PROTECT}; do
-        protect_hosts+="      - '${r}.${DOMAIN}'"$'\n'
+        for h in $(_authelia_hostnames_for "$r"); do
+            protect_hosts+="      - '${h}.${DOMAIN}'"$'\n'
+        done
     done
 
     # Paths that have to stay reachable without a sign-in, and the reason this
@@ -265,13 +310,18 @@ _authelia_write_config() {
     for r in ${AUTHELIA_PROTECT:-$AUTHELIA_DEFAULT_PROTECT}; do
         local paths; paths="$(_authelia_bypass_for "$r")"
         [[ -n "$paths" ]] || continue
-        bypass_block+="    - domain: '${r}.${DOMAIN}'"$'\n'
-        bypass_block+="      policy: bypass"$'\n'
-        bypass_block+="      resources:"$'\n'
-        while read -r path; do
-            [[ -n "$path" ]] || continue
-            bypass_block+="        - '${path}'"$'\n'
-        done <<< "$paths"
+        # Every hostname, for the same reason as above. A webhook posted to
+        # the second name was denied while the same path on the first name
+        # was bypassed.
+        for h in $(_authelia_hostnames_for "$r"); do
+            bypass_block+="    - domain: '${h}.${DOMAIN}'"$'\n'
+            bypass_block+="      policy: bypass"$'\n'
+            bypass_block+="      resources:"$'\n'
+            while read -r path; do
+                [[ -n "$path" ]] || continue
+                bypass_block+="        - '${path}'"$'\n'
+            done <<< "$paths"
+        done
     done
 
     cat > "${dir}/configuration.yml" << CFEOF

@@ -397,6 +397,61 @@ _repair_body() {
     }
 }
 
+# ─── The shared login must know every hostname it is put in front of ─────────
+
+# Authelia's access_control is deny by default, on purpose: a hostname carrying
+# the middleware but missing from the rules is refused rather than waved
+# through. The consequence is that a module answering on more than one
+# hostname must declare them all, or the undeclared ones return 403 to
+# everything including their bypassed paths, with no way to sign in.
+#
+# n8n is the module this happens to: it answers on a second name because a
+# browser blocklist flagged the first, and `flows.` was hard-denied while
+# `n8n.` worked.
+@test "a module with several hostnames declares them for the shared login" {
+    local f svc offenders=""
+    for f in "${REPO_ROOT}"/lib/services/*.sh; do
+        svc=$(basename "$f" .sh)
+        # The signal is ONE router answering on several names, not a module
+        # containing several routers. monitoring ships Grafana and Uptime
+        # Kuma, and nextcloud ships the app and the whiteboard; each has its
+        # own router with its own single hostname, and counting Host() per
+        # file flagged both of them wrongly.
+        #
+        # One router with several names takes one of two forms: a rule joining
+        # Host() clauses with ||, or a helper that builds the rule from a list.
+        if grep -qE '_host_rule\(\)' "$f" \
+        || grep -qE 'Host\(.*\)[[:space:]]*\|\|[[:space:]]*Host\(' "$f"; then
+            grep -q "^${svc}_hostnames()" "$f" \
+                || offenders+=" ${svc}"
+        fi
+    done
+    [ -z "$offenders" ] || {
+        echo "These answer on more than one hostname but declare no <svc>_hostnames():$offenders"
+        echo "Authelia would list only <svc>.DOMAIN and deny the rest with 403."
+        false
+    }
+}
+
+@test "authelia asks the module for its hostnames rather than assuming one" {
+    # The regression guarded here is subtle and silent: building the module
+    # path in the same `local` statement that declares the variable it
+    # references yields an empty expansion, the file is not found, and the
+    # helper falls back to the module name. That is the old broken behaviour,
+    # so the bug reappears looking exactly like a working fix.
+    local body
+    body=$(awk '/^_authelia_hostnames_for\(\)/,/^}/' "${REPO_ROOT}/lib/services/authelia.sh")
+    [ -n "$body" ] || { echo "_authelia_hostnames_for is gone"; false; }
+    echo "$body" | grep -qE 'local svc="\$1"[[:space:]]*$' \
+        || { echo "svc must be declared on its own line, or \${svc} in the module path expands empty"; false; }
+    echo "$body" | grep -q '_hostnames' \
+        || { echo "it no longer asks the module for its hostnames"; false; }
+    # And the writer must use it for both the protected list and the bypasses.
+    local cfg="${REPO_ROOT}/lib/services/authelia.sh"
+    [ "$(grep -c '_authelia_hostnames_for "\$r"' "$cfg")" -ge 2 ] \
+        || { echo "the protected list and the bypass block must both expand every hostname"; false; }
+}
+
 # ─── Databases and caches stay off the web-facing network ────────────────────
 
 # proxy-net is shared by every web-facing container and by cloudflared, so a

@@ -2289,6 +2289,102 @@ name there. And `nextcloud-cron` moves to backend-net alone: it runs cron.php
 against the database and serves nothing, so it has no reason to sit where the
 web-facing containers are.
 
+### 58. Deny by default means an unlisted hostname is refused, not unprotected
+
+Authelia's `access_control` has `default_policy: deny`, and the comment above
+it says adding a hostname to the middleware without adding it there refuses
+the request rather than waving it through. That comment was correct and the
+failure happened anyway.
+
+n8n answers on two hostnames, because a browser blocklist flagged the obvious
+one, so `_n8n_host_rule` builds `Host(a) || Host(b)` and one Traefik router
+serves both. Authelia's list was built as `<module-name>.${DOMAIN}`, one entry
+per protected service, so it knew the first name and had never heard of the
+second. Measured:
+
+| Request | Before | After |
+|---|---|---|
+| `n8n.DOMAIN/` | 302 to the portal | 302 |
+| `flows.DOMAIN/` | **403, permanently** | 302 |
+| `flows.DOMAIN/webhook/x` | **403** | 404 from n8n |
+| `flows.DOMAIN/healthz` | **403** | 200 |
+
+A 403 from a deny-by-default policy has no remedy from the client side: there
+is no sign-in that fixes it, because the hostname is not in any rule. The
+webhook bypass was scoped to the first hostname too, so an integration posting
+to the second name failed with nothing reaching n8n to be logged.
+
+**The module is the authority on its own hostnames, so ask it.**
+`_authelia_hostnames_for` calls `<svc>_hostnames` when the module declares it
+and falls back to the module name otherwise, and both the protected list and
+the bypass block expand every hostname. A module answering on several names
+must declare them; `test_service_contract.bats` fails when one does not.
+
+Two things worth carrying elsewhere.
+
+**A list derived from service names is not a list of what Traefik routes.**
+Anything that has to agree with a router's Host rule should be built from the
+same source the rule is, not from the name of the module that owns it.
+
+**And a variable referenced in the same `local` statement that declares it
+expands empty.** This is what the first version of the fix did:
+
+```bash
+local svc="$1" module="${SCRIPT_DIR:-}/lib/services/${svc}.sh"   # -> ".../.sh"
+```
+
+`bash -x` shows `svc=n8n module=/.../lib/services/.sh` on one line. The file
+does not exist, the helper falls back to the module name, and that is exactly
+the behaviour being replaced, so the fix looks like it works and changes
+nothing. Declare each on its own line. The test asserts the shape for this
+reason rather than the result, because the result is indistinguishable from
+the bug.
+
+### 59. The other half of the restore, and two probes that lied
+
+Gotcha #52 covered the file restore and one Postgres dump. The rest, measured
+2026-09-06, with the dump directory alone restored in **1 second** rather than
+the whole 42 GiB:
+
+**MariaDB.** `nextcloud-db.sql.gz` into a throwaway engine of the same image:
+254 tables on both sides, 249 row counts identical, 5 higher on live, none
+lower, none missing, none extra. The five are append-only (`oc_activity`,
+`oc_calendarchanges`, `oc_calendarobjects`, `oc_calendarobjects_props`,
+`oc_job_runs`), so growth since the dump is the only acceptable direction and
+the only one seen.
+
+**SQLite under the real application.** `PRAGMA integrity_check` says a file
+parses; it does not say the application will accept the schema and serve. So
+the restored `vaultwarden.db` was put in a scratch `/data` and Vaultwarden
+started against it: `/alive` 200, `/api/config` serving, zero error lines, 598
+ciphers before and after, matching live exactly. `uptime-kuma.db` checked the
+same way: 18 monitors, 34,730 heartbeats.
+
+Three traps, and all three produced a **passing** result that meant nothing.
+
+**A comparison of two empty results is not a match.** The first MariaDB run
+printed "IDENTICAL: every table holds the same number of rows" because both
+queries had returned nothing and `diff` compared two empty files. Assert every
+query result non-empty before comparing anything, and never send a probe's
+stderr to `/dev/null` while it is being written.
+
+**An `--all-databases` dump replaces the grant tables part way through the
+load**, so which root password works afterwards depends on whether they were
+reloaded and flushed. Assuming one gives `Access denied`, which reads as a bad
+dump. Run `FLUSH PRIVILEGES`, then try both.
+
+**Do not probe a container with a tool the image may not contain.** `wget`
+inside `vaultwarden/server` does not exist, so a health check built on it
+reported failure while the log said `Rocket has launched`. Publish on loopback
+and probe from the host, the way gotcha #57 says to test networks from a
+throwaway container rather than from inside the application.
+
+**And a fix that ships is not a fix that runs.** The Vaultwarden dump fix was
+released in v3.26.0 and this box was still executing the previous
+`/usr/local/bin/corex-backup.sh`, so the vault had no dump and the snapshot
+had no `vaultwarden.db` in it. `corex manage maintenance setup` regenerates
+the generated scripts, which is gotcha #22 in the one place it costs the most.
+
 ## What NOT to Do
 
 These are firm constraints. Violating them breaks existing installations.

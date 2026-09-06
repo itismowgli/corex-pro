@@ -6,6 +6,72 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.28.0] - 2026-09-06
+
+### Fixed
+- **One of n8n's two hostnames was hard-denied by the shared login, webhooks
+  included.** n8n answers on a second hostname because a browser blocklist
+  flagged the obvious one, so its Traefik router carries a rule for both.
+  Authelia's protected list was built as one entry per service, named after
+  the module, so it knew the first hostname and had never heard of the second.
+  With `default_policy: deny` that is not "unprotected", it is refused: the
+  second name returned 403 to everything, its webhook bypass included, with no
+  sign-in that could fix it and nothing reaching n8n to be logged.
+
+  Measured before and after on the second hostname: the root was 403 and is
+  now a 302 to the portal, `/webhook/<id>` was 403 and now reaches n8n, and
+  `/healthz` was 403 and now answers 200.
+
+  The module is the authority on its own hostnames, so it is asked.
+  `_authelia_hostnames_for` calls `<svc>_hostnames` where a module declares it
+  and falls back to the module name otherwise, and both the protected list and
+  the bypass block expand every hostname. Two contract tests cover it, each
+  confirmed by reintroducing the defect: one fails when a multi-hostname
+  module declares no `<svc>_hostnames`, the other asserts the helper's shape,
+  because the first version of the fix built its module path in the same
+  `local` statement that declared the variable it referenced, which expands
+  empty, so it fell back to the module name and looked exactly like a working
+  fix while changing nothing.
+
+- **The v3.26.0 Vaultwarden dump fix had never run.** It shipped in the
+  release and the box was still executing the previously generated
+  `/usr/local/bin/corex-backup.sh`, so the vault still had no consistent dump
+  and no snapshot contained `vaultwarden.db`. `corex manage maintenance setup`
+  regenerates the generated scripts and the next run produced it. This is
+  gotcha #22 in the place it costs the most: a released fix to a generated
+  script reaches nothing until the script is regenerated.
+
+- **`release-notes.py` checked only the first match of each forbidden
+  pattern.** With the loopback allowlist added in v3.27.0, an allowed literal
+  early in the body would stop the scan and a real address further down would
+  publish. It iterates every match now, and both cases are covered.
+
+### Verified
+- **The other half of the restore.** Gotcha #52 covered the file restore and
+  one Postgres dump; this covers MariaDB and SQLite. Restoring the dump
+  directory alone takes 1 second rather than the whole 42 GiB.
+
+  `nextcloud-db.sql.gz` into a throwaway engine of the same image: 254 tables
+  on both sides, 249 row counts identical, 5 higher on live, none lower, none
+  missing, none extra. All five are append-only, so growth since the dump is
+  the only acceptable direction and the only one seen.
+
+  For SQLite, an integrity check says a file parses, not that the application
+  will accept it, so the restored vault was put in a scratch data directory
+  and Vaultwarden was started against it: `/alive` 200, configuration serving,
+  zero error lines, 598 entries before and after and matching live exactly.
+  The Uptime Kuma dump checked the same way at 18 monitors and 34,730
+  heartbeats.
+
+  Three of these checks passed while measuring nothing before they were
+  fixed, which is recorded in gotcha #59: a diff of two empty query results
+  reported every table as matching, an `--all-databases` load moves the root
+  credential part way through so assuming either password gives a misleading
+  "Access denied", and a health probe built on `wget` reported failure from an
+  image that has no `wget` while the application had in fact started.
+
+---
+
 ## [v3.27.0] - 2026-09-06
 
 ### Added

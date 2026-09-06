@@ -84,6 +84,15 @@ _n8n_subdomain() {
     printf '%s' "${subs%% *}"
 }
 
+# The service-module contract's answer to "which hostnames does this router
+# answer on". Authelia reads this rather than assuming one name equal to the
+# module name, because its access_control is deny by default: a hostname the
+# router serves but Authelia has never heard of is refused outright, not
+# waved through. See _authelia_hostnames_for.
+n8n_hostnames() {
+    _n8n_subdomains
+}
+
 # The Traefik router rule covering every configured hostname.
 _n8n_host_rule() {
     local sub rule=""
