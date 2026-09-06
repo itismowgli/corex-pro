@@ -709,6 +709,17 @@ scrape_configs:
     scrape_timeout: 20s
     static_configs:
       - targets: ["cadvisor:8080"]
+  - job_name: prometheus
+    # Prometheus scraping itself is not vanity. Without it, nothing anywhere
+    # can see prometheus_tsdb_blocks_loaded or
+    # prometheus_tsdb_wal_truncations_failed_total, and this instance spent
+    # days answering /-/ready with 200, reporting up=1 for every target, and
+    # retaining no history at all, because a corrupt WAL segment stopped
+    # checkpointing and the WAL then exceeded the size retention budget by
+    # itself. A monitoring system that does not monitor itself cannot report
+    # its own failure. See CLAUDE.md gotcha #55.
+    static_configs:
+      - targets: ["localhost:9090"]
 PEOF
 
     _monitoring_write_grafana_provisioning "$dir"
@@ -798,7 +809,9 @@ services:
       - "traefik.http.services.uptime.loadbalancer.server.port=3001"
 
   prometheus:
-    image: prom/prometheus:latest
+    # Pinned, not :latest. A moving tag carries a major upgrade in unannounced
+    # (gotcha #19) and can also stop moving without saying so (gotcha #26).
+    image: prom/prometheus:v3.14.0
     container_name: prometheus
     restart: unless-stopped
     ports: ["9090:9090"]
@@ -810,8 +823,23 @@ services:
       - "--config.file=/etc/prometheus/prometheus.yml"
       # Time alone lets a busy month fill the disk, and the disk filling is
       # what stops the services. Whichever limit is reached first wins.
+      #
+      # The size figure is NOT a budget for blocks. In Prometheus 3.x
+      # db.Size() includes head.Size(), which is the write-ahead log plus the
+      # head chunks, so the WAL is spent against this number before a single
+      # block is counted. Set it near the WAL's own size and the result is not
+      # a smaller retention window, it is no retention at all: every
+      # compaction writes a block and immediately deletes it as beyond size
+      # retention, and the only symptom is empty panels for anything older
+      # than the head.
+      #
+      # This box reached exactly that. An unclean shutdown corrupted a WAL
+      # segment, checkpointing failed so the WAL never truncated, it grew to
+      # 13GB against an 8GB figure, and 1,181 compactions produced 1,182
+      # deletions and zero retained blocks. Unclean shutdowns are expected
+      # here rather than rare (gotcha #16), so the headroom is deliberate.
       - "--storage.tsdb.retention.time=30d"
-      - "--storage.tsdb.retention.size=8GB"
+      - "--storage.tsdb.retention.size=40GB"
       - "--web.enable-lifecycle"
     networks: [monitoring-net]
     deploy:

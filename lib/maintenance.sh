@@ -142,6 +142,11 @@ _maintenance_refresh_backup_scripts() {
     # shellcheck source=/dev/null
     source "$lib"
     declare -f backup_write_scripts >/dev/null 2>&1 || return 0
+    # The location file first, because the scripts about to be written read
+    # it. A box installed before it existed has all three scripts carrying the
+    # path as a constant, so there was nothing to change when moving the
+    # repository. An existing BACKUP_ROOT in it is kept.
+    declare -f backup_write_conf >/dev/null 2>&1 && backup_write_conf
     backup_write_scripts
     log_info "Rewrote /usr/local/bin/corex-backup.sh and corex-restore.sh"
 }

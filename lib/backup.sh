@@ -18,6 +18,7 @@ phase6_backup() {
     fi
 
     backup_install_restic
+    backup_write_conf
     backup_init_repo || return 1
     backup_write_scripts
     backup_schedule_cron
@@ -29,6 +30,44 @@ backup_install_restic() {
         log_info "Installing restic..."
         apt-get install -y -qq restic || log_error "Failed to install restic."
     fi
+}
+
+# Where the repository lives, as a file rather than as a constant repeated in
+# three generated scripts. Every script that touches the repository sources
+# this, so moving the repository is one edit.
+#
+# It is written unconditionally, for the reason in gotcha #22: anything CoreX
+# generates is not user state. A BACKUP_ROOT already in the file wins, because
+# an operator who moved the repository must not have it moved back by a
+# repair, and that is the whole point of the file existing.
+backup_write_conf() {
+    local conf=/etc/corex/backup.conf
+    local root="${BACKUP_ROOT:-/mnt/corex-data/backups}"
+
+    # An existing setting is the operator's, not ours.
+    if [[ -r "$conf" ]]; then
+        local existing
+        existing="$(. "$conf" >/dev/null 2>&1; echo "${BACKUP_ROOT:-}")"
+        [[ -n "$existing" ]] && root="$existing"
+    fi
+
+    mkdir -p /etc/corex
+    install_script "$conf" 644 << CONFEOF
+# CoreX Pro backup location.
+#
+# Read by corex-backup.sh, corex-restore.sh and the maintenance runner. The
+# repository is BACKUP_ROOT/restic-repo.
+#
+# Moving it: stop the maintenance timer, move the directory, change the line
+# below, then confirm with
+#   sudo corex manage credentials verify <your bundle>
+# which opens the repository at whatever this file now points at.
+#
+# Do NOT change the Restic password. It cannot be changed after the repository
+# is created without abandoning every snapshot in it.
+BACKUP_ROOT="${root}"
+CONFEOF
+    log_success "Backup location recorded in ${conf} (${root})"
 }
 
 # The repository, created once. The password comes from cred_get, which is the
