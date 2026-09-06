@@ -2718,6 +2718,362 @@ DUEOF
     esac
 }
 
+# ── credentials ───────────────────────────────────────────────────────────────
+#
+# Everything else CoreX protects lives in the Restic repository. The
+# credentials file cannot, and the reason is circular rather than an
+# oversight: opening that repository needs the Restic password, and the only
+# copy of the Restic password is the file itself. A backup that can only be
+# read by someone who already has the thing it contains protects nothing.
+#
+# So the credentials leave the box by a second path: one encrypted bundle the
+# operator keeps somewhere else. GnuPG symmetric rather than `openssl enc`
+# because the parameters travel inside the file. A bundle is opened years
+# later, on a machine that does not have CoreX on it, by someone who does not
+# remember which cipher and which KDF iteration count were used, and
+# `gpg -d` needs none of that told to it.
+#
+# The bundle also carries the runbook, because a recovery procedure stored on
+# the machine being recovered is not a recovery procedure.
+_CRED_EXPORT_FILES=(
+    /root/corex-credentials.txt
+    /root/CoreX_Dashboard_Credentials.md
+    /etc/corex/state.json
+    /etc/corex/dashboard-users.json
+    /etc/corex/smtp.conf
+    /etc/corex/agent.token
+    /etc/corex/agent.conf
+    /etc/corex/telegram.conf
+    /etc/corex/authelia.conf
+    /etc/fstab
+)
+
+# The per-service secrets are discovered, not listed. A hardcoded list is how
+# a service added later ends up with its secret in no bundle at all, which is
+# the same failure this whole command exists to fix.
+_cred_export_secrets() {
+    local root="${DOCKER_ROOT:-/mnt/corex-data/docker-configs}"
+    [[ -d "$root" ]] || return 0
+    find "$root" -maxdepth 2 -type f \
+        \( -name '.secrets' -o -name '.secrets.env' -o -name '.*token*' \
+           -o -name '.*secret*' -o -name '.*password*' \) 2>/dev/null | sort
+}
+
+_cred_runbook() {
+    cat << 'RBEOF'
+CoreX Pro recovery runbook
+==========================
+
+What you need, and neither is on the server
+-------------------------------------------
+1. This bundle.
+2. Its passphrase.
+
+Read the bundle on any machine with GnuPG. Nothing else is required:
+
+    gpg -d corex-credentials-BUNDLE.gpg > bundle.tar
+    tar xf bundle.tar
+
+Order of recovery
+-----------------
+The order matters. Restoring data before the configuration that describes it
+gives you services started against empty directories.
+
+1. Install Ubuntu 24.04 on the OS disk. Attach the data disk but do not
+   format it. If the data disk survived, skip to step 4.
+
+2. Put the credentials file back FIRST, before running the installer:
+
+       install -m 600 root/corex-credentials.txt /root/corex-credentials.txt
+
+   The installer loads passwords from that file when it is present and
+   generates new ones when it is not. New passwords do not open the existing
+   databases, and they do not open the Restic repository either.
+
+3. Install CoreX:
+
+       curl -fsSL https://raw.githubusercontent.com/itismowgli/corex-pro/main/corex.sh | sudo bash
+
+4. Restore fstab before the data, so the mounts and the NVMe database bind
+   mounts exist:
+
+       cp etc/fstab /etc/fstab
+       systemctl daemon-reload && mount -a
+
+5. Restore from the repository. The password is the "Restic Backup" line in
+   the credentials file:
+
+       export RESTIC_REPOSITORY=/mnt/corex-data/backups/restic-repo
+       export RESTIC_PASSWORD='<the Restic Backup line>'
+       restic snapshots
+       restic restore latest --target /
+
+   Measured on the reference machine: 42 GiB, 186,821 files, 2 minutes to
+   restore and 1 minute to verify.
+
+6. Put /etc/corex back if the restore did not cover it. It carries state.json,
+   the dashboard accounts, the agent token, the SMTP relay and the thermal,
+   power and maintenance settings. Data without it is data nothing knows what
+   to do with.
+
+7. Load the database dumps in preference to the restored files. The dumps are
+   consistent by construction; the files were copied while the engines were
+   writing. They are in service-data/.db-dumps:
+
+       gunzip -c immich-db.sql.gz    | docker exec -i immich-db    psql -U postgres
+       gunzip -c nextcloud-db.sql.gz | docker exec -i nextcloud-db mysql -uroot -p<pass>
+       gunzip -c calcom-db.sql.gz    | docker exec -i calcom-db    psql -U calcom
+
+   The SQLite dumps (vaultwarden.db, uptime-kuma.db) are whole database files.
+   Stop the service, put the file in place of its live database, remove any
+   -wal and -shm beside it, then start the service.
+
+8. Bring services up and check them:
+
+       corex manage repair traefik
+       corex manage status
+       corex doctor
+
+What the backup does not contain
+--------------------------------
+- The Prometheus time series, excluded on purpose. Monitoring history is not
+  worth 13 GB of a disaster recovery window.
+- Docker images. They are pulled again on first start.
+- This bundle. Keep it somewhere the server is not.
+
+Traps that will cost you an hour each
+-------------------------------------
+- Nextcloud can come back in maintenance mode and answer 503 to everything,
+  including Traefik. Every occ config command fails while it is set, and a
+  configuration run during it looks exactly like success. Check
+  `occ config:system:get maintenance` and clear it only after any pending
+  schema upgrade has finished.
+- A router naming a middleware that does not exist answers 404 rather than
+  falling back. If four unrelated services 404 at once, look at whether
+  Authelia is running, not at the four.
+- Traefik needs CLOUDFLARE_DNS_API_TOKEN to issue certificates here, because
+  TLS-ALPN-01 cannot work behind a residential connection. It is in
+  docker-configs/traefik/.cf-dns-token in this bundle.
+- Restore onto a cold machine, not a hot one. This class of hardware trips at
+  TjMax with no log entry, and a restore is a sustained compressing read.
+
+Rotate the bundle whenever a password changes
+---------------------------------------------
+    sudo corex manage credentials export
+
+RBEOF
+}
+
+cmd_credentials() {
+    local sub="${1:-}"; shift || true
+
+    case "$sub" in
+        export)
+            check_root
+            command -v gpg >/dev/null 2>&1 \
+                || log_error "gpg is not installed. Run: apt-get install -y gnupg"
+
+            local out="${1:-}"
+            [[ -z "$out" ]] && out="/root/corex-credentials-$(date +%Y%m%d).tar.gpg"
+
+            # Writing the bundle onto the disk it is meant to survive is the
+            # one placement that guarantees it is useless. The repository
+            # directory is refused outright rather than warned about.
+            local backup_root="/mnt/corex-data/backups"
+            [[ -r /etc/corex/backup.conf ]] && . /etc/corex/backup.conf
+            case "$(readlink -m "$out")" in
+                "$(readlink -m "${BACKUP_ROOT:-$backup_root}")"/*)
+                    log_error "Refusing to write the bundle inside the backup repository. The repository cannot be opened without what is in this bundle." ;;
+            esac
+
+            local staged missing=() present=() f
+            staged="$(mktemp -d)"
+            chmod 700 "$staged"
+            # A bundle assembled in /tmp with the wrong umask is a credential
+            # leak in its own right.
+            trap 'rm -rf "${staged:-}"' RETURN
+
+            mkdir -p "${staged}/bundle"
+            for f in "${_CRED_EXPORT_FILES[@]}"; do
+                if [[ -r "$f" ]]; then
+                    install -D -m 600 "$f" "${staged}/bundle/${f#/}"
+                    present+=("$f")
+                else
+                    missing+=("$f")
+                fi
+            done
+            while read -r f; do
+                [[ -z "$f" ]] && continue
+                install -D -m 600 "$f" "${staged}/bundle/${f#/}"
+                present+=("$f")
+            done < <(_cred_export_secrets)
+
+            _cred_runbook > "${staged}/bundle/RECOVERY.md"
+            chmod 600 "${staged}/bundle/RECOVERY.md"
+
+            {
+                echo "CoreX Pro credential bundle"
+                echo "created: $(date -Is)"
+                echo "host:    $(hostname)"
+                echo "version: ${_COREX_VERSION:-unknown}"
+                echo ""
+                echo "contents:"
+                printf '  %s\n' "${present[@]}"
+                if (( ${#missing[@]} )); then
+                    echo ""
+                    echo "absent on this host (not necessarily a problem):"
+                    printf '  %s\n' "${missing[@]}"
+                fi
+            } > "${staged}/bundle/MANIFEST.txt"
+            chmod 600 "${staged}/bundle/MANIFEST.txt"
+
+            log_info "Staged ${#present[@]} files, plus the runbook and a manifest."
+            echo ""
+            echo "  The passphrase is not stored anywhere and cannot be recovered."
+            echo "  Choose one you keep with the bundle, in a password manager that"
+            echo "  is not the Vaultwarden on this machine."
+            echo ""
+
+            local pass=""
+            if [[ -n "${COREX_EXPORT_PASSPHRASE:-}" ]]; then
+                pass="$COREX_EXPORT_PASSPHRASE"
+            elif [[ -t 0 ]]; then
+                local pass2=""
+                read -rsp "  Passphrase: " pass; echo
+                read -rsp "  Again:      " pass2; echo
+                [[ "$pass" == "$pass2" ]] || log_error "The two passphrases differ. Nothing was written."
+                [[ ${#pass} -ge 12 ]] || log_error "Use at least 12 characters. This is the only thing standing in front of every password on the box."
+            else
+                log_error "No terminal and no COREX_EXPORT_PASSPHRASE set. Nothing was written."
+            fi
+
+            # --batch with the passphrase on a file descriptor, so it is never
+            # an argument and never reaches the process table.
+            umask 077
+            if tar -C "${staged}" -cf - bundle \
+                 | gpg --batch --yes --symmetric --cipher-algo AES256 \
+                       --s2k-mode 3 --s2k-count 65011712 \
+                       --passphrase-fd 3 --output "$out" 3<<< "$pass"
+            then
+                chmod 600 "$out"
+                echo ""
+                log_success "Wrote ${out} ($(du -h "$out" | cut -f1))"
+                echo ""
+                echo "  Move it off this machine. A copy that only exists here is not a copy."
+                echo ""
+                echo "  Check it before you trust it:"
+                echo "    sudo corex manage credentials verify ${out}"
+                echo ""
+                echo "  Open it anywhere, with no CoreX present:"
+                echo "    gpg -d ${out##*/} | tar xf -"
+            else
+                rm -f "$out"
+                log_error "Encryption failed. Nothing was written."
+            fi
+            ;;
+
+        verify)
+            check_root
+            local file="${1:-}"
+            [[ -n "$file" ]] || log_error "Usage: corex manage credentials verify <bundle.tar.gpg>"
+            [[ -r "$file" ]] || log_error "Cannot read ${file}"
+
+            local work
+            work="$(mktemp -d)"; chmod 700 "$work"
+            trap 'rm -rf "${work:-}"' RETURN
+
+            local pass=""
+            if [[ -n "${COREX_EXPORT_PASSPHRASE:-}" ]]; then
+                pass="$COREX_EXPORT_PASSPHRASE"
+            elif [[ -t 0 ]]; then
+                read -rsp "  Passphrase: " pass; echo
+            else
+                log_error "No terminal and no COREX_EXPORT_PASSPHRASE set."
+            fi
+
+            # tar's own complaint is suppressed: on a wrong passphrase gpg
+            # emits nothing usable and tar reports "this does not look like a
+            # tar archive", which sends the reader after a corrupt file when
+            # the passphrase is what was wrong.
+            gpg --batch --quiet --decrypt --passphrase-fd 3 "$file" 3<<< "$pass" 2>/dev/null \
+                | tar -C "$work" -xf - 2>/dev/null \
+                || log_error "Could not decrypt or unpack. Wrong passphrase, or a damaged file."
+
+            echo ""
+            log_success "Decrypted and unpacked."
+            echo ""
+            echo "  Manifest:"
+            sed 's/^/    /' "${work}/bundle/MANIFEST.txt" 2>/dev/null | head -40
+            echo ""
+
+            # The check that matters. A bundle that unpacks proves only that
+            # gpg and tar agree with each other. Whether the Restic password
+            # inside it opens the repository is the question a recovery
+            # actually asks, and it is answerable now rather than during a
+            # disaster.
+            local cred="${work}/bundle/root/corex-credentials.txt"
+            if [[ -r "$cred" ]]; then
+                local rp
+                rp="$(cred_get "Restic Backup:" "$cred")"
+                if [[ -z "$rp" ]]; then
+                    log_warning "No Restic password in the bundled credentials file, so it cannot open the repository."
+                else
+                    local repo="${BACKUP_ROOT:-/mnt/corex-data/backups}/restic-repo"
+                    [[ -r /etc/corex/backup.conf ]] && . /etc/corex/backup.conf \
+                        && repo="${BACKUP_ROOT}/restic-repo"
+                    if [[ -d "$repo" ]]; then
+                        if RESTIC_REPOSITORY="$repo" RESTIC_PASSWORD="$rp" \
+                           HOME=/var/lib/corex restic snapshots --latest 1 >/dev/null 2>&1
+                        then
+                            log_success "The Restic password in this bundle opens the repository."
+                        else
+                            log_error "The Restic password in this bundle does NOT open the repository. This bundle cannot recover the box."
+                        fi
+                    else
+                        log_warning "No repository at ${repo} on this host, so the password could not be checked against it."
+                    fi
+                fi
+            else
+                log_error "The bundle has no credentials file in it, which is the one thing it exists to carry."
+            fi
+            ;;
+
+        *)
+            cat << CREOF
+
+  Credentials that cannot live in the backup
+
+    The Restic repository holds everything else. It cannot hold the
+    credentials file, because opening the repository needs the Restic
+    password and the only copy of that password is in the file. So the
+    credentials leave by a second path: one encrypted bundle you keep
+    somewhere the server is not.
+
+    The bundle carries the credentials file, the dashboard guide,
+    /etc/corex, /etc/fstab, every per-service secret found beside its
+    compose file, and the recovery runbook.
+
+  Usage
+
+    corex manage credentials export [path]
+        Write an encrypted bundle. Defaults to
+        /root/corex-credentials-YYYYMMDD.tar.gpg
+
+    corex manage credentials verify <path>
+        Decrypt it, list what is in it, and check that the Restic password
+        inside actually opens the repository.
+
+  Notes
+
+    Rotate it whenever a password changes.
+    COREX_EXPORT_PASSPHRASE works for both, for automation.
+    Opening it needs nothing but gpg:  gpg -d bundle.tar.gpg | tar xf -
+
+CREOF
+            ;;
+    esac
+}
+
 cmd_help() {
     echo ""
     echo -e "${BOLD}CoreX Pro v2 — Service Manager${NC}"
@@ -2787,6 +3143,10 @@ Commands:
                         dashboard-user totp-reset <user>
                         dashboard-user enable-auth    use the app login
                         dashboard-user disable-auth   restore Traefik basic auth
+  credentials [sub]   The one thing the backup cannot hold, because opening
+                      the repository needs the password that is in it
+                        credentials export [path]  write an encrypted bundle
+                        credentials verify <path>  check it opens the repository
   route               Traefik routes for containers CoreX did not deploy:
                         route list
                         route add <hostname> <backend-url>
@@ -2865,6 +3225,7 @@ main() {
         lan-only)     cmd_lan_only "$@" ;;
         dashboard-user) cmd_dashboard_user "$@" ;;
         route)        cmd_route "$@" ;;
+        credentials)  cmd_credentials "$@" ;;
         help|--help|-h) cmd_help ;;
         *) echo "Unknown command: ${cmd}"; cmd_help; exit 1 ;;
     esac

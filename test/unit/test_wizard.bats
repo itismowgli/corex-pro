@@ -155,6 +155,56 @@ setup() {
     done < <(all_service_names)
 }
 
+# The preset test below iterates all_service_names, which sources each module
+# with stderr discarded and emits nothing when SERVICE_NAME comes back empty.
+# A module that cannot be read is therefore absent from that list, and every
+# test built on the list passes while saying nothing at all. These two count
+# the files on disk instead, so an unreadable module is a failure.
+#
+# What actually hides a module, measured rather than assumed: a syntax error
+# positioned before the SERVICE_NAME assignment, and a file of binary
+# rubbish. A syntax error after the assignment hides nothing, because bash
+# executes a sourced file a command at a time and the name is already set by
+# the time the parse fails.
+@test "every service module file declares a name when sourced" {
+    local dir f base name
+    dir="${REPO_DIR}/lib/services"
+    for f in "${dir}"/*.sh; do
+        [[ -f "$f" ]] || continue
+        base="$(basename "$f")"
+        name=$(bash -c "source '$f' 2>/dev/null; echo \"\${SERVICE_NAME:-}\"")
+        [[ -n "$name" ]] \
+            || { echo "$base sets no SERVICE_NAME, so discovery cannot see it at all"; return 1; }
+    done
+}
+
+@test "discovery finds every module file that is not hidden" {
+    local dir f base hidden on_disk=0 discovered
+    dir="${REPO_DIR}/lib/services"
+    for f in "${dir}"/*.sh; do
+        [[ -f "$f" ]] || continue
+        hidden=$(bash -c "source '$f' 2>/dev/null; echo \"\${SERVICE_HIDDEN:-false}\"")
+        [[ "$hidden" == "true" ]] && continue
+        on_disk=$(( on_disk + 1 ))
+    done
+    discovered=$(all_service_names | grep -c .)
+    [[ "$discovered" -eq "$on_disk" ]] \
+        || { echo "$on_disk visible module files on disk, $discovered discovered: one fails to source"; return 1; }
+}
+
+# A macOS tar or SMB share leaves ._name.sh beside the real module, and it is
+# binary. Bash never sees it, because *.sh does not match a leading dot, so
+# the loops above cannot check for one and neither can the wizard. The agent
+# reads the same directory from Python, where iterdir and listdir do return
+# it, and one of these killed service discovery with a UnicodeDecodeError. So
+# the check has to name dotfiles explicitly to exist at all.
+@test "no AppleDouble sidecar sits beside a service module" {
+    local found
+    found=$(find "${REPO_DIR}/lib/services" -maxdepth 1 -name '._*' -print)
+    [[ -z "$found" ]] \
+        || { echo "AppleDouble sidecars present, invisible to bash and binary to Python:"; echo "$found"; return 1; }
+}
+
 @test "every service module appears in at least one preset" {
     local name p found
     while read -r name; do

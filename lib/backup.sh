@@ -120,7 +120,6 @@ echo "$(date '+%Y-%m-%d %H:%M:%S') -- Backup starting..." >> "$LOG"
 # Never fatal: a database that cannot be dumped must not stop the rest of the
 # backup, it must be reported and the file copy taken anyway.
 dump_rc=0
-dumped=""          # names whose files may safely be excluded below
 mkdir -p "$DUMP_DIR"
 chmod 700 "$DUMP_DIR"
 
@@ -189,14 +188,64 @@ if docker ps --format '{{.Names}}' | grep -qx keeper; then
 fi
 
 # SQLite is a single file and its own tool takes a consistent copy of it while
-# the application is still writing. cp does not.
-for pair in "vaultwarden:/data/db.sqlite3" "uptime-kuma:/app/data/kuma.db"; do
-    c="${pair%%:*}"; f="${pair##*:}"
+# the application is still writing. cp does not: restic walks the directory
+# over seconds, so it can read db.sqlite3 at one instant and its -wal at
+# another and store a pair that do not belong together.
+#
+# The tool has to be found rather than assumed, and found in two places. The
+# previous version only probed inside the container and moved on in silence
+# when the probe failed, which is what happened to Vaultwarden: its image
+# carries no sqlite3, so the password vault was the one database on the box
+# with no consistent dump, and nothing in any log said so. Uptime Kuma's
+# image does carry one, so a single probe looked like it worked.
+#
+# Order is container first, then the host against the same file through its
+# bind mount, which is why sqlite3 is installed by lib/security.sh. Failing
+# to dump is reported and is a failed run, never a silence.
+#
+# Each entry is container, path inside the container, path under DATA_ROOT.
+for triple in \
+    "vaultwarden:/data/db.sqlite3:vaultwarden/db.sqlite3" \
+    "uptime-kuma:/app/data/kuma.db:uptime-kuma/kuma.db"
+do
+    c="${triple%%:*}"; rest="${triple#*:}"
+    f="${rest%%:*}"; hostrel="${rest#*:}"
     docker ps --format '{{.Names}}' | grep -qx "$c" || continue
-    if docker exec "$c" sh -c "command -v sqlite3 >/dev/null 2>&1"; then
-        docker exec "$c" sqlite3 "$f" ".backup /tmp/corex-dump.db" 2>>"$LOG" \
-            && docker cp "$c:/tmp/corex-dump.db" "${DUMP_DIR}/${c}.db" 2>>"$LOG" \
-            && docker exec "$c" rm -f /tmp/corex-dump.db 2>/dev/null
+    out="${DUMP_DIR}/${c}.db"
+
+    if docker exec "$c" sh -c 'command -v sqlite3 >/dev/null 2>&1'; then
+        if docker exec "$c" sqlite3 "$f" ".backup /tmp/corex-dump.db" 2>>"$LOG" \
+           && docker cp "$c:/tmp/corex-dump.db" "$out" 2>>"$LOG"; then
+            docker exec "$c" rm -f /tmp/corex-dump.db 2>/dev/null
+        else
+            echo "$(date '+%Y-%m-%d %H:%M:%S') -- WARNING: sqlite3 .backup failed inside ${c}" >> "$LOG"
+            rm -f "$out"
+            dump_rc=1
+        fi
+    elif command -v sqlite3 >/dev/null 2>&1 && [[ -f "${DATA_ROOT}/${hostrel}" ]]; then
+        # .backup against a live WAL database is the supported path: sqlite
+        # takes its own lock and produces a consistent file.
+        if sqlite3 "${DATA_ROOT}/${hostrel}" ".backup ${out}" 2>>"$LOG"; then
+            :
+        else
+            echo "$(date '+%Y-%m-%d %H:%M:%S') -- WARNING: sqlite3 .backup failed on ${DATA_ROOT}/${hostrel}" >> "$LOG"
+            rm -f "$out"
+            dump_rc=1
+        fi
+    else
+        echo "$(date '+%Y-%m-%d %H:%M:%S') -- WARNING: no sqlite3 in ${c} and none on the host, so ${c} has only a file copy of its database, which restic may capture mid-write. Install sqlite3." >> "$LOG"
+        dump_rc=1
+    fi
+
+    # A dump that exists but is unreadable is worse than none, because it is
+    # the copy a restore will reach for first.
+    if [[ -f "$out" ]]; then
+        if command -v sqlite3 >/dev/null 2>&1; then
+            sqlite3 "$out" "PRAGMA integrity_check;" 2>>"$LOG" | grep -qx ok \
+                || { echo "$(date '+%Y-%m-%d %H:%M:%S') -- WARNING: ${c} dump fails integrity_check" >> "$LOG"
+                     rm -f "$out"; dump_rc=1; }
+        fi
+        chmod 600 "$out" 2>/dev/null
     fi
 done
 (( dump_rc != 0 )) && echo "$(date '+%Y-%m-%d %H:%M:%S') -- one or more dumps failed, see above" >> "$LOG"
@@ -206,14 +255,14 @@ done
 # script could not even open reported a successful backup every night for
 # months.
 rc=0
-# Exclude a database's files only where a dump actually replaced them. A
-# blanket "*-db" pattern drops the files of any database that was stopped at
-# backup time, and a stopped database is exactly what a disabled service has,
-# so a service switched off for a week would quietly lose its only copy.
-db_excludes=()
-for name in $dumped; do
-    db_excludes+=(--exclude="${DATA_ROOT}/${name}")
-done
+# Both a dump and the raw files are kept for every database, deliberately.
+# The dump is consistent and is what a restore should reach for first; the
+# files carry everything a dump does not. Excluding the files wherever a dump
+# succeeded was tried and removed: the variable holding the list of dumped
+# names was never appended to, so the exclusion never once happened, and the
+# behaviour it described is the wrong one anyway. A blanket "*-db" pattern is
+# worse still, because it drops the files of a database that was stopped at
+# backup time, which is exactly what a disabled service has.
 
 # /etc/corex is the difference between a backup and a restorable box. It holds
 # state.json, the thermal, maintenance and power settings, the SSO and SMTP
@@ -229,7 +278,6 @@ restic backup "${DATA_ROOT}" "${DOCKER_ROOT}" /etc/corex /etc/fstab /var/lib/cor
     --exclude="*.log" \
     --exclude="*/cache/*" \
     --exclude="${DATA_ROOT}/prometheus" \
-    "${db_excludes[@]}" \
     >> "$LOG" 2>&1 || rc=$?
 
 if (( rc != 0 )); then

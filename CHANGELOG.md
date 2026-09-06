@@ -6,6 +6,95 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.26.0] - 2026-09-06
+
+### Added
+- **The credentials file can now leave the box, because the backup cannot
+  carry it.** The Restic repository holds everything else. It cannot hold
+  `/root/corex-credentials.txt`, and the reason is circular rather than an
+  oversight: opening the repository needs the Restic password, and the only
+  copy of that password is in that file. A backup readable only by someone who
+  already has what it contains protects nothing.
+
+  `corex manage credentials export` writes one GnuPG symmetric bundle holding
+  the credentials file, the dashboard guide, `/etc/corex`, `/etc/fstab`, every
+  per-service secret found beside its compose file, and a recovery runbook.
+  The per-service secrets are discovered rather than listed, so a service
+  added later cannot end up with its secret in no bundle at all.
+
+  GnuPG rather than `openssl enc` because the cipher and the KDF parameters
+  travel inside the file. A bundle gets opened years later, on a machine with
+  no CoreX on it, by someone who does not remember which flags were used, and
+  `gpg -d` needs none of them told to it.
+
+  `corex manage credentials verify` does the check that matters: it decrypts
+  the bundle and confirms the Restic password inside actually opens the
+  repository. A bundle that merely unpacks proves only that gpg and tar agree
+  with each other. Verified against a deliberately corrupted bundle, which is
+  refused with the reason.
+
+  Writing the bundle inside the backup repository is refused outright. It is
+  the one placement that guarantees the bundle is useless.
+
+- **A recovery runbook, inside the bundle.** A procedure stored on the machine
+  being recovered is not a procedure. It carries the order that matters, which
+  is credentials file before installer and fstab before data, and the traps
+  that cost an hour each: Nextcloud coming back in maintenance mode and
+  answering 503 to everything, a router naming an absent middleware returning
+  404 rather than falling back, and the Cloudflare DNS token without which
+  Traefik cannot issue a certificate here.
+
+### Fixed
+- **The password vault was the one database with no consistent dump, and
+  nothing said so.** The SQLite dump loop probed for `sqlite3` inside each
+  container and moved on in silence when the probe failed. Uptime Kuma's image
+  carries one, so a single probe looked like it worked. Vaultwarden's does
+  not, so the vault had only a file copy, and restic walks a directory over
+  seconds: it can read `db.sqlite3` at one instant and its `-wal` at another
+  and store a pair that do not belong together.
+
+  The tool is looked for in the container and then on the host, `sqlite3` is
+  installed by `lib/security.sh`, every dump is checked with
+  `PRAGMA integrity_check` before it is kept, and a database that cannot be
+  dumped is now a failed run with a warning naming it. Measured on a running
+  box: the vault dumps at 598 entries, matching the live database exactly.
+
+- **Dead code claimed to exclude database files and never once did.** `dumped`
+  was initialised empty and never appended to, so the `--exclude` list built
+  from it was always empty. Both a dump and the raw files were being kept for
+  every database, which is the behaviour worth having. The loop and the
+  comment describing an exclusion that never happened are gone.
+
+### Changed
+- **Two unit tests count the service module files on disk against what
+  discovery returns.** `all_service_names` sources each module with stderr
+  discarded and prints nothing when `SERVICE_NAME` comes back empty, so a
+  module that cannot be read was absent from the list, and every test built on
+  that list passed while saying nothing. Confirmed by putting the defect back:
+  a syntax error before the name assignment and a file of binary rubbish both
+  fail now, and the preset test still passes on both, which is the gap.
+
+  Two things measured while writing it. A syntax error after the assignment
+  hides nothing, because bash runs a sourced file one command at a time and
+  the name is set before the parse fails. And bash never sees an AppleDouble
+  sidecar at all, since `*.sh` does not match a leading dot, so the skip for
+  one inside `all_service_names` cannot fire and the check for one has to name
+  dotfiles explicitly. That path matters because the agent reads the same
+  directory from Python, where `iterdir` does return them.
+
+### Verified
+- **The backup restores.** Nothing had ever been restored from this
+  repository, which made every fix to it a hypothesis. A full snapshot was
+  restored to a scratch directory: 186,821 files and 42.013 GiB in 2 minutes 7
+  seconds, verified in a further 1 minute 3, peaking at 74.2C from a 59.5C
+  start and never entering the thermal warn band. `/etc/corex` came back
+  byte-identical to live with modes and ownership intact, and `/etc/fstab`
+  matched, so the NVMe database bind mounts survive. One dump was loaded into
+  a throwaway Postgres and compared against the running database: 66 tables,
+  every row count identical.
+
+---
+
 ## [v3.25.4] - 2026-09-06
 
 ### Fixed

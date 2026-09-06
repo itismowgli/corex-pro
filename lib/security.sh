@@ -25,7 +25,7 @@ phase2_security() {
         logrotate rsync cron \
         lm-sensors smartmontools \
         apparmor apparmor-utils \
-        restic \
+        restic sqlite3 \
         || log_warning "Some package installs failed — continuing..."
 
     # ── SSH Hardening ────────────────────────────────────────────────────────

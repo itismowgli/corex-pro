@@ -1288,10 +1288,18 @@ Two smaller traps from the same work. `agent setup` used
 `systemctl enable --now`, which leaves an already-running unit alone, so it
 installed new code and carried on executing the old one, which is gotcha #22
 again in a different costume. And a macOS `tar` had left an AppleDouble
-sidecar, `lib/services/._dashboard.sh`, which matches the service-module glob
-and is binary, so service discovery died on a `UnicodeDecodeError` before the
-agent could start. Any code that globs a directory written by other machines
-wants `errors="replace"` and a `._*` skip.
+sidecar, `lib/services/._dashboard.sh`, which is binary, so service discovery
+died on a `UnicodeDecodeError` before the agent could start. Any code that
+reads a directory written by other machines wants `errors="replace"` and a
+`._*` skip.
+
+Which side of the codebase that applies to is worth being exact about,
+because it was measured and the obvious reading is wrong. Bash never sees
+such a file: `*.sh` does not match a leading dot, so the `._*` skip inside
+`all_service_names` cannot fire and no bats test looping over that glob can
+check for one. Python's `iterdir` and `listdir` do return it, which is where
+the crash happened. A check for a stray sidecar therefore has to name
+dotfiles explicitly, which `test_wizard.bats` now does with `find`.
 
 ### 31. Compiling from source is the hottest thing this project does
 
@@ -2065,6 +2073,125 @@ each caller start its own, because the case that matters here is two handlers
 hitting a two-second command in the same instant.
 
 ---
+
+### 52. The backup restores, and here is what that cost to find out
+
+Gotcha #45 ends by saying a backup that has never been restored is a
+hypothesis. It has been restored now, so the numbers are worth keeping rather
+than re-measuring under pressure.
+
+A full snapshot into a scratch directory: 186,821 files, 42.013 GiB, **2
+minutes 7 seconds** to restore and **1 minute 3** to verify, peaking at
+**74.2C** from a 59.5C start, which never reaches `THERMAL_WARN_C`. Loading
+one Postgres dump into a throwaway container and comparing every table against
+the running database took a further 35 seconds: 66 tables, identical counts.
+So the whole rehearsal is under four minutes and is cheap enough to repeat
+after any change to `lib/backup.sh`.
+
+Two things the rehearsal proved that a snapshot listing cannot.
+`/etc/corex` comes back **byte-identical with modes and ownership intact**,
+including `dashboard-users.json` and `smtp.conf` at 0600, so the box comes
+back knowing what to do with its data. And `/etc/fstab` matches, so the NVMe
+database bind mounts survive rather than leaving services started against
+empty directories on the OS disk.
+
+Run it on a scratch target with `restic restore latest --target <dir>
+--verify`, under `GOMAXPROCS=2` and `nice -n 19` for the reason in gotcha #47,
+and delete the tree afterwards: it is the same size as the data.
+
+### 53. Probe for a binary in every place it might be, not the first one
+
+Gotcha #19's corollary says never assume a binary exists in an upstream image.
+The SQLite dump loop did probe, correctly, with `command -v sqlite3` inside
+each container. It still lost the most valuable database on the box.
+
+Uptime Kuma's image carries `sqlite3`. Vaultwarden's does not. The loop's
+`if` had no `else`, so the vault fell through in silence and had **only a file
+copy** of `db.sqlite3`, which is what the same script's own comment warns
+against: restic walks a directory over seconds and can read the database at
+one instant and its `-wal` at another. One probe that succeeds for one of two
+services reads exactly like a probe that works.
+
+Three rules, and the third is the general one:
+
+- **Look in the container, then on the host.** `sqlite3` is in `lib/security.sh`'s
+  package list for this, alongside `lm-sensors` and `smartmontools`, and a
+  `.backup` from the host against a live WAL database is the supported path:
+  sqlite takes its own lock.
+- **Check the dump, not just the exit code.** Every SQLite dump gets
+  `PRAGMA integrity_check` before it is kept. A dump that exists and is
+  unreadable is worse than none, because it is what a restore reaches for
+  first.
+- **A tool that is missing is a failed run.** Not a `continue`. The vault had
+  no consistent dump for the life of the installation and no log line
+  anywhere said so, which is gotcha #50's shape again: a step that cannot fail
+  cannot report.
+
+### 54. The one file the backup cannot hold, and why it is circular
+
+`/root/corex-credentials.txt` is in no snapshot, and it cannot be: opening the
+Restic repository needs the Restic password, and the only copy of that
+password is in that file. A backup readable only by someone who already has
+its contents protects nothing.
+
+So the credentials leave by a second path. `corex manage credentials export`
+writes one GnuPG symmetric bundle, and three details in it are load bearing:
+
+- **GnuPG, not `openssl enc`.** The cipher and the KDF parameters travel
+  inside the file. This artifact gets opened years later on a machine with no
+  CoreX on it, by someone who does not remember which flags were used.
+- **`verify` checks that the bundled password opens the repository.** A bundle
+  that unpacks proves only that gpg and tar agree with each other. Whether it
+  can actually recover the box is answerable now rather than during a
+  disaster, and it is refused with the reason when it cannot.
+- **Writing it inside the backup repository is refused outright**, being the
+  one placement that guarantees it is useless.
+
+The per-service secrets in it are discovered by glob rather than listed, for
+the reason in gotcha #45's dump loop: a hardcoded list is how a service added
+later ends up with its secret in no bundle at all.
+
+### 55. Prometheus retention counts the WAL, so a corrupt segment deletes all history
+
+Three faults on this box interlocked into a loop that kept **no history at
+all** while reporting itself ready and scraping correctly.
+
+| Measured | Value |
+|---|---|
+| `blocks_loaded` | 0 |
+| WAL | 13GB, 1,252 segments |
+| `wal_truncations_total` | 0 |
+| `compactions_total` / obsolete block deletions | 1,181 / 1,182 |
+| Queryable window | under 3 hours, on `retention.time=30d` |
+| WAL replay at startup | 19m 28s |
+
+Segment `00000211` is corrupt at offset 9239 (`unexpected full record`), so
+checkpointing fails and the WAL is never truncated. In Prometheus 3.x
+`db.Size()` includes `head.Size()`, which is the WAL plus head chunks, so
+`--storage.tsdb.retention.size=8GB` is already blown by the 13GB WAL alone:
+every block compaction writes a block and immediately deletes it as beyond
+size retention. And because the WAL cannot truncate, the replay gets longer at
+every restart, returning 503 to Grafana for twenty minutes while it runs.
+
+Three lessons worth more than the incident.
+
+**A size retention limit is not a limit on blocks.** Setting it below the WAL's
+size silently converts the instance into one that stores nothing, and the only
+symptom is empty panels for anything older than the head.
+
+**"Ready and scraping" is not "retaining".** `/-/ready` answered 200,
+`up` was 1 for every target, and fresh samples were arriving, all while the
+database held nothing older than the head. Read `blocks_loaded` and
+`prometheus_tsdb_wal_truncations_total`, not the readiness endpoint.
+
+**Prometheus does not scrape itself here**, so none of the numbers above are
+visible in Grafana or to any alert. A monitoring system that does not monitor
+itself cannot report its own failure, which is how this ran unnoticed. Read
+them from `curl http://127.0.0.1:9090/metrics` until there is a `prometheus`
+job in `prometheus.yml`.
+
+Note also that the image is `prom/prometheus:latest`, which is gotcha #26
+waiting to happen.
 
 ## What NOT to Do
 
