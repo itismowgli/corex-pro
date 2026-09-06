@@ -982,3 +982,19 @@ _repair_body() {
     [ "$output" -ge 0 ]
     grep -q '"state": "unknown", "images": \[\]' "${REPO_ROOT}/agent/corex_updates.py"
 }
+
+# A cold container stopped on purpose is asleep, not broken. Requiring exit 0
+# reported every correctly sleeping Portainer as UNHEALTHY, because measured on
+# that image a clean `docker stop` leaves exit code 2, not 0 and not 143.
+# doctor would then "repair" it by starting it, defeating cold mode.
+@test "the cold-mode check accepts the exit codes a clean stop really produces" {
+    run bash -c "awk '/^portainer_status\(\)/,/^}/' '${REPO_ROOT}/lib/services/portainer.sh' | grep -c '== 2'"
+    [ "$output" -ge 1 ]
+}
+
+# OOMKilled stays true until the container is recreated (gotcha #29), so a
+# container killed for memory must never read as a deliberate stop.
+@test "a cold container killed for memory is not reported as sleeping" {
+    run bash -c "awk '/^portainer_status\(\)/,/^}/' '${REPO_ROOT}/lib/services/portainer.sh' | grep -c 'OOMKilled'"
+    [ "$output" -ge 1 ]
+}

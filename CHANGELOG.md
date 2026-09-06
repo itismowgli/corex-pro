@@ -6,6 +6,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.25.3] - 2026-09-06
+
+### Fixed
+- **Every correctly sleeping Portainer reported itself unhealthy.** Cold mode
+  stops a container when nothing is using it, and the check for "stopped on
+  purpose" required an exit code of 0. Measured on this image, a clean
+  `docker stop` on a healthy, fully started Portainer leaves exit code 2, not 0
+  and not 143, because it exits on SIGTERM through its own path. So the status
+  read UNHEALTHY every time cold mode did exactly what it was asked to, and
+  `corex doctor` would have "repaired" it by starting it again, defeating the
+  feature and teaching the reader to ignore an unhealthy service.
+
+  The check accepts the codes a graceful stop actually produces, and tests
+  OOMKilled separately: that flag stays true until the container is recreated,
+  so a container killed for memory must never be read as a deliberate stop.
+
+---
+
 ## [v3.25.2] - 2026-09-06
 
 ### Fixed

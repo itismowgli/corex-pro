@@ -136,8 +136,24 @@ portainer_destroy() {
 portainer_status() {
     if container_running "portainer"; then echo "HEALTHY"
     elif container_exists "portainer"; then
+        # A cold container that was stopped on purpose is asleep, not broken.
+        #
+        # The exit code has to be a set rather than 0. Measured on this image:
+        # `docker stop portainer` on a healthy, fully started Portainer leaves
+        # exit code 2, not 0 and not 143, because it exits on SIGTERM through
+        # its own path. Requiring 0 therefore reported every correctly sleeping
+        # Portainer as UNHEALTHY, which doctor would then "repair" by starting
+        # it, defeating cold mode and training the reader to ignore the status.
+        #
+        # OOMKilled is checked separately because it stays true until the
+        # container is recreated (gotcha #29), so a container killed for memory
+        # must never be read as a deliberate stop.
+        local code oom
+        code=$(docker inspect -f '{{.State.ExitCode}}' portainer 2>/dev/null)
+        oom=$(docker inspect -f '{{.State.OOMKilled}}' portainer 2>/dev/null)
         if declare -f state_get >/dev/null && [[ "$(state_get cold_portainer 2>/dev/null)" == true ]] &&
-            [[ "$(docker inspect -f '{{.State.ExitCode}}' portainer 2>/dev/null)" == 0 ]]; then echo "SLEEPING"
+            [[ "$oom" != "true" ]] &&
+            [[ "$code" == 0 || "$code" == 2 || "$code" == 143 ]]; then echo "SLEEPING"
         else echo "UNHEALTHY"; fi
     else echo "MISSING"; fi
 }
