@@ -6,9 +6,37 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
-## [Unreleased]
+## [v3.25.2] - 2026-09-06
 
-No changes yet.
+### Fixed
+- **A database belonging to a newly added service had no backup of any kind.**
+  The backup dumps databases through their engine and excludes the raw data
+  directories, because a file copy taken while Postgres is still writing is not
+  a backup of that database. But the dump list was three hardcoded names while
+  the exclusion was a blanket `*-db` pattern, so the two disagreed the moment
+  anyone added a service. Keeper arrived with a `keeper-db` Postgres directory:
+  excluded from the file backup, absent from the dump list, and backed up
+  nowhere at all, with nothing to report it.
+
+  Databases are discovered now, and by which dump client is actually present in
+  the image rather than by the container's name or its tag, because neither is
+  reliable. A container that looks like a database and carries no dump tool
+  fails the run instead of being passed over in silence.
+
+- **A disabled service would have lost its database copy.** The same mismatch
+  had a second victim: a stopped database is not in `docker ps`, so it could not
+  be dumped, while the blanket pattern still dropped its files from the
+  snapshot. A stopped database is exactly what a disabled service has, so a
+  service switched off for a week would quietly have lost its only copy. The
+  exclusion list is built from the dumps that actually succeeded, so a database
+  that was not dumped keeps its files.
+
+- **The Python suite would not run on a newer interpreter.** `run-tests.sh`
+  calls `unittest discover` against an absolute path, which Python 3.14 refuses
+  with "Start directory is not importable" while 3.12 accepts it. Nothing was
+  broken on Ubuntu 24.04, which is what CoreX targets, so the failure was
+  reserved for anyone contributing from a newer machine. An `__init__.py` makes
+  the start directory importable on both.
 
 ## [v3.25.1] - 2026-09-06
 
