@@ -896,13 +896,24 @@ cmd_cleanup() {
         echo "    docker reports ${freed:-0B} removed"
     fi
 
-    echo -e "  ${BOLD}Pruning build cache older than 3 days...${NC}"
+    echo -e "  ${BOLD}Pruning build cache...${NC}"
     # --reserved-space, not --keep-storage. Docker 29 routes `builder prune`
     # to buildx, which renamed the flag; the old name still parses but prints
     # a deprecation warning, and the older `--dry-run` this command used to
     # pass in preview mode is not a buildx flag at all, so the preview
     # silently reported nothing for the largest category on the box.
-    out=$(docker builder prune --filter "until=72h" --reserved-space 0 --force 2>&1); rc=$?
+    #
+    # No `--filter until=`. Gotcha #50 removed that filter from the image
+    # prune for taking nothing, and left it here, where it does the same:
+    # measured on Docker 29.8.0, `--filter until=72h` removed 0B twice while
+    # the unfiltered prune removed 8.477GB and gave the root filesystem 8GB
+    # back. So the cache grew without bound and the button that offered to
+    # clear it delivered none of it, which is the whole of gotcha #50 again.
+    #
+    # Taking all of it is the right policy anyway. Build cache is regenerable
+    # by definition; the cost of removing it is one slower build, and this box
+    # builds one image. An age limit only made sense while the filter worked.
+    out=$(docker builder prune --reserved-space 0 --force 2>&1); rc=$?
     freed=$(_reclaimed_from "$out")
     if [[ $rc -ne 0 ]]; then
         log_warning "    build cache prune failed: $(echo "$out" | tail -1)"

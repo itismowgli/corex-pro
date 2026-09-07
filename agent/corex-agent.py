@@ -695,6 +695,31 @@ class Handler(socketserver.StreamRequestHandler):
             raw = self.rfile.readline(65536)
         except (socket.timeout, OSError):
             return
+
+        # A peer that connects and closes without sending anything is asking
+        # whether the socket is there, not asking for an action. The dashboard
+        # does exactly that on every poll, in agentReachable(), to answer "can
+        # the buttons work" without performing anything.
+        #
+        # It used to fall through to the token check, where an empty payload
+        # has no token and no action, and was logged as
+        # "refused None None: unauthorised". At the dashboard's poll and
+        # stream intervals that is about sixteen lines a minute: 10,000 of
+        # them accumulated in four days, and the one genuine refusal in that
+        # window, a "stop traefik" with a bad token, was indistinguishable
+        # from the noise. Same failure as the UFW BLOCK flood in gotcha #15,
+        # where self-inflicted volume buried the events worth seeing.
+        #
+        # Answered, and deliberately not logged. Nothing is authorised by
+        # this path: the reply carries no capability, and any payload at all
+        # goes through the token check below.
+        if not raw.strip():
+            try:
+                self.wfile.write(b'{"ok": false, "error": "empty request"}\n')
+            except OSError:
+                pass
+            return
+
         try:
             req = json.loads(raw.decode("utf-8", "replace") or "{}")
             if not isinstance(req, dict):

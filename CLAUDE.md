@@ -2445,6 +2445,75 @@ and `remote_ip` gives the hop, which here was cloudflared, meaning the request
 came from the internet rather than the LAN. Read the proxy's log before
 theorising about the browser.
 
+### 61. The same prune filter, in the one place it was not removed
+
+Gotcha #50 found that `--filter until=` reclaims nothing on this Docker and
+took it off `docker image prune`. It stayed on `docker builder prune`, where it
+did exactly the same thing, and the Reclaim button went on offering space it
+could not free. Measured on Docker 29.8.0, overlayfs store:
+
+| Command | Removed |
+|---|---|
+| `docker builder prune --filter until=72h --reserved-space 0 --force` | **0B** |
+| the same without `--reserved-space` | **0B** |
+| `docker builder prune --force` | **8.477GB** |
+
+The root filesystem went from 68G free to 76G on that one command. The cache
+had never once been pruned, because every run took nothing.
+
+The cleanup takes all reclaimable cache now, and the age limit is gone rather
+than corrected: build cache is regenerable by definition, so the cost of
+removing it is one slower build, and an age policy only ever made sense while
+the filter worked. `docker_purgeable` stopped splitting the cache by age at the
+same time, because its whole purpose is that the button's number and the
+command's behaviour come from one place, and a number modelling a policy that
+does not run is the bug gotcha #50 was written about.
+
+**What made this survive a fix aimed straight at it.** The cleanup was already
+honest: it printed `docker reports 0B removed` and then `Still eligible: 3.0GiB`
+on the same run. Those two lines together say the filter is not doing its job,
+and they were both on screen. Reading a command's own output for the
+*disagreement between two of its numbers*, rather than for an error, is the
+skill this needed; there was never an error to find.
+
+**And do not conclude a timestamp mismatch from a parse that failed.** The
+first theory here was that `docker_purgeable` reads `CreatedAt` while the
+filter matches last-used, and a script comparing the two appeared to confirm
+that every record was old by both. It was wrong: the script parsed with
+`datetime.fromisoformat`, which rejects Docker's `2026-09-03 07:23:22.9 +0000
+UTC` outright, so every record fell to the "unparseable, treat as old" branch
+and both totals came out identical by construction. `_parse_docker_time`
+handles that format correctly with `%z`. The evidence that settled it was the
+prune's own behaviour, measured, not the timestamps.
+
+### 62. A liveness probe that dials and closes reads as an unauthorised request
+
+`agentReachable` in the dashboard answers "can the buttons work" by dialling
+the agent socket and closing it, sending nothing. Its comment says that is
+safe to call on every poll, and functionally it is. On the agent side an empty
+read becomes `{}`, which has no token and no action, so it went through the
+token check and was logged:
+
+```
+agent: refused None None: unauthorised
+```
+
+At the overview poll and the vitals stream intervals that is roughly sixteen
+lines a minute. **About 10,000 accumulated in four days**, and the one genuine
+refusal in that window, a `stop traefik` carrying a bad token, was
+indistinguishable from the noise. That is gotcha #15's lesson again: the volume
+is self-inflicted, and it buries the events worth seeing.
+
+The agent answers an empty payload without logging it now. Nothing is
+authorised by that path, the reply carries no capability, and any payload at
+all still goes through the token check. Verified both ways: an empty probe adds
+no log line, and a request with an action and a wrong token still logs
+`refused stop traefik: unauthorised`.
+
+The general shape: a health check that deliberately does less than a real
+request will take a code path built for real requests, and the log is where
+that shows up. Read the log's *rate* as well as its content.
+
 ## What NOT to Do
 
 These are firm constraints. Violating them breaks existing installations.

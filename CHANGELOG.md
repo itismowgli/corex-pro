@@ -6,6 +6,56 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.29.0] - 2026-09-07
+
+### Fixed
+- **Reclaim offered space it could not free, and the build cache had never once
+  been pruned.** `--filter until=` reclaims nothing on this Docker. Gotcha #50
+  established that for `docker image prune` and removed it there; it stayed on
+  `docker builder prune`, where it did the same thing. Measured on Docker
+  29.8.0: the filtered prune removed 0B twice, the unfiltered one removed
+  8.477GB, and the root filesystem went from 68G free to 76G on that single
+  command. So the cache grew without bound while the button reported 2.92GB
+  available and delivered none of it, which is exactly the fault gotcha #50 was
+  written about.
+
+  The cleanup takes all reclaimable cache now, and the age limit is gone rather
+  than corrected: build cache is regenerable, so removing it costs one slower
+  build, and an age policy only made sense while the filter worked.
+  `docker_purgeable` stopped splitting the cache by age at the same time,
+  because its entire purpose is that the button's number and the command's
+  behaviour come from one place. Verified end to end on a throwaway build: it
+  offered 363.9MiB, reclaimed 363.9MiB, and left 0B eligible.
+
+  What let this survive a fix aimed at it: the cleanup was already printing
+  `docker reports 0B removed` and `Still eligible: 3.0GiB` on the same run.
+  Those two lines together say the filter is not working, and there was never
+  an error to find, only a disagreement between two of the command's own
+  numbers.
+
+- **The agent logged about 10,000 unauthorised requests in four days, all of
+  them its own health check.** The dashboard answers "can the buttons work" by
+  dialling the agent socket and closing it without sending anything. On the
+  agent side an empty read becomes an empty object, which has no token and no
+  action, so it went through the token check and was logged as
+  `refused None None: unauthorised` at roughly sixteen lines a minute. The one
+  genuine refusal in that window, a `stop traefik` with a bad token, was
+  indistinguishable from the noise, which is gotcha #15's lesson repeated.
+
+  An empty payload is answered without being logged. Nothing is authorised by
+  that path and any payload at all still goes through the token check. Verified
+  both ways: an empty probe adds no line, and a real bad-token request still
+  logs.
+
+### Changed
+- Two contract tests, each confirmed by reintroducing the defect: one fails if
+  any prune regains an `until=` filter, the other if `docker_purgeable` starts
+  modelling an age limit the cleanup does not apply. The second one initially
+  could not fail at all, because its pattern omitted a quote and so matched
+  nothing.
+
+---
+
 ## [v3.28.1] - 2026-09-07
 
 ### Fixed

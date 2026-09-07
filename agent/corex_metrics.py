@@ -346,44 +346,29 @@ def docker_df():
 # to add is already there without it, because `-a` only removes an image that
 # no container references at all, stopped containers included: a disabled
 # service keeps its image, and a removed one does not.
-PURGE_CACHE_AGE_H = 72    # 3 days, and buildx does honour this one
-
-
-def _parse_docker_time(text):
-    """Docker prints times three ways. Return epoch seconds, or None.
-
-    `docker image ls` gives "2026-09-05 00:58:48 +0530 IST" and `buildx du`
-    gives "2026-09-03 07:23:22.935347418 +0000 UTC": an optional fractional
-    second and a trailing zone abbreviation that %z will not take.
-    """
-    if not text:
-        return None
-    parts = str(text).split()
-    if len(parts) < 3:
-        return None
-    stamp = " ".join(parts[:3])          # date, time, numeric offset
-    stamp = re.sub(r"\.\d+", "", stamp, count=1)
-    try:
-        return datetime.datetime.strptime(stamp, "%Y-%m-%d %H:%M:%S %z").timestamp()
-    except ValueError:
-        return None
+# Kept only so the shape the dashboard reads does not change. There is no
+# age limit on the build cache any more: `--filter until=` removes nothing
+# on Docker 29, measured at 0B against 8.477GB unfiltered, so the cleanup
+# takes all reclaimable cache and nothing is held back by age.
+PURGE_CACHE_AGE_H = 0
 
 
 def docker_purgeable(df=None):
-    """What a cleanup will actually remove, and what its age limit holds back.
+    """What a cleanup will actually remove.
 
-    `docker system df` reports everything unused with no notion of age, and
-    `corex manage cleanup` will not touch build cache younger than three days.
-    On a box that builds its own dashboard image those two numbers disagree
-    completely: 3.7GB reported unused, 0B removable, because every byte of the
-    cache was made yesterday. Offering the first number as a button is the
-    bug, and it is why clicking it appeared to do nothing.
+    The point of this function is that the button's number and the command's
+    behaviour come from one place. `docker system df` is not that number: it
+    reports everything unused, and the cleanup applies a policy.
 
-    So this returns the second number, plus what is being held back and when
-    the oldest of it comes due, and the dashboard can say "809MB now, 2.9GB in
-    28 hours" rather than promising 3.7GB and delivering none of it.
+    The policy was once "build cache older than three days", so this split the
+    cache by age and reported the eligible half. That was wrong twice over.
+    `--filter until=` removes nothing on Docker 29, measured at 0B against
+    8.477GB unfiltered, so the eligible half was never delivered either; and
+    an age limit on regenerable cache buys nothing but a slower next build.
+    The cleanup takes all reclaimable cache now, so that is what this offers,
+    and `held_b` stays at zero rather than being removed from the shape the
+    dashboard already reads.
     """
-    now = time.time()
     out = {
         "images_b": 0,
         "cache_b": 0, "cache_held_b": 0,
@@ -402,9 +387,17 @@ def docker_purgeable(df=None):
         out["images_b"] = (rows.get("images") or {}).get("reclaimable_b", 0)
 
     # Build cache. `Reclaimable` is buildkit's own answer to "is anything
-    # using this", so the age limit is the only thing left to apply.
+    # using this", and nothing is held back any more, so that is the whole
+    # answer.
+    #
+    # This used to split the cache by age, because the cleanup passed
+    # `--filter until=72h`. That filter takes nothing on Docker 29: measured
+    # at 0B removed twice against 8.477GB removed unfiltered. So the split
+    # described a policy that never ran, and the eligible half was offered
+    # and never delivered, which is gotcha #50's shape a second time. The
+    # filter is gone from the cleanup, so the age arithmetic goes with it
+    # rather than being corrected: there is no age limit left to model.
     rc, text = _run(["docker", "buildx", "du", "--format", "json"], timeout=60)
-    soonest = None
     if rc == 0:
         for line in text.splitlines():
             try:
@@ -413,20 +406,10 @@ def docker_purgeable(df=None):
                 continue
             if not d.get("Reclaimable"):
                 continue
-            size = _size_to_bytes(d.get("Size"))
-            made = _parse_docker_time(d.get("CreatedAt"))
-            age_h = (now - made) / 3600 if made else PURGE_CACHE_AGE_H + 1
-            if age_h >= PURGE_CACHE_AGE_H:
-                out["cache_b"] += size
-            else:
-                out["cache_held_b"] += size
-                due = PURGE_CACHE_AGE_H - age_h
-                soonest = due if soonest is None else min(soonest, due)
+            out["cache_b"] += _size_to_bytes(d.get("Size"))
 
     out["total_b"] = out["images_b"] + out["cache_b"]
-    out["held_b"] = out["cache_held_b"]
-    if soonest is not None and out["held_b"] > 0:
-        out["next_due_h"] = round(soonest, 1)
+    out["held_b"] = out["cache_held_b"]      # nothing is held back now
     return out
 
 

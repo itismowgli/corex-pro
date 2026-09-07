@@ -397,6 +397,55 @@ _repair_body() {
     }
 }
 
+# ─── A prune filter that takes nothing ───────────────────────────────────────
+
+# `--filter until=` removes nothing on Docker 29. Gotcha #50 established that
+# for `docker image prune` and removed it there; it stayed on
+# `docker builder prune`, where it did the same thing for months. Measured:
+# 0B removed with the filter, 8.477GB without it, on a build cache that had
+# grown unbounded while the Reclaim button offered 2.92GB and delivered none
+# of it.
+#
+# The offered figure and the command have to agree, which is the whole point
+# of docker_purgeable, so a reintroduced age filter breaks that agreement
+# silently: the button goes back to promising space it cannot free.
+@test "no prune passes an until filter, which removes nothing on Docker 29" {
+    local offenders=""
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        offenders+="  ${line}"$'\n'
+    done < <(grep -nE "(image|builder|system|container) prune[^|;]*--filter[^|;]*until=" \
+                  "${REPO_ROOT}/corex-manage.sh" || true)
+    [ -z "${offenders//[[:space:]]/}" ] || {
+        echo "These prunes carry an until filter and will remove nothing:"
+        echo "$offenders"
+        echo "Measured on Docker 29.8.0: filtered 0B, unfiltered 8.477GB."
+        false
+    }
+}
+
+@test "the purgeable figure models no age limit, matching the cleanup" {
+    local f="${REPO_ROOT}/agent/corex_metrics.py"
+    # docker_purgeable exists so the button's number and the command's
+    # behaviour come from one place. While the cleanup had an age policy this
+    # split the cache by age; with the policy gone the split must go too, or
+    # the number describes a policy that does not run.
+    # A flag, not a range: /^def x/,/^def / closes on the start line itself,
+    # because the start line also matches the end pattern. That left the body
+    # as one line and the test passed or failed on nothing.
+    local body
+    body=$(awk '/^def docker_purgeable/{f=1;next} f&&/^def /{exit} f' "$f")
+    [ -n "${body//[[:space:]]/}" ] || { echo "docker_purgeable is gone or empty"; false; }
+    # The pattern has to include the quote: the line reads
+    # out["cache_held_b"] += ..., and a pattern of cache_held_b] += matches
+    # nothing, so the check passed on a reintroduced split.
+    echo "$body" | grep -qE 'cache_held_b"\]\s*\+=' \
+        && { echo "it still holds part of the cache back by age, but the cleanup takes all of it"; false; }
+    echo "$body" | grep -q "Reclaimable" \
+        || { echo "it must read buildkit's own Reclaimable flag"; false; }
+    :
+}
+
 # ─── The shared login must know every hostname it is put in front of ─────────
 
 # Authelia's access_control is deny by default, on purpose: a hostname carrying
