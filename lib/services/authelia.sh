@@ -334,6 +334,32 @@ server:
   buffers:
     read: 8192
     write: 8192
+  endpoints:
+    authz:
+      forward-auth:
+        implementation: 'ForwardAuth'
+        # Cookie sessions only. The default strategy list also includes
+        # HeaderAuthorization, which makes Authelia inspect an incoming
+        # Authorization header and, when it cannot authenticate it, answer
+        # 401 with WWW-Authenticate: Basic.
+        #
+        # A browser that has ever cached a basic-auth credential for one of
+        # these hostnames then sends it on every request forever. Authelia
+        # rejects it and challenges; the browser shows its native sign-in
+        # dialog; the single-page app retries; the dialog returns. Measured on
+        # n8n: 325 challenges in thirty minutes, peaking at 113 a minute, with
+        # "failed to find the password in the decoded basic value as it was
+        # empty" once per challenge in Authelia's log. There is nothing the
+        # operator can type into that dialog that helps, because Authelia is
+        # not offering its own credentials there.
+        #
+        # Nothing here authenticates to Authelia by header: the portal uses a
+        # cookie and the paths that must work without a session are bypassed
+        # by resource pattern instead. So the strategy is removed rather than
+        # reordered, which also stops the Authorization header being consumed
+        # at the proxy when it was meant for the application behind it.
+        authn_strategies:
+          - name: 'CookieSession'
 
 log:
   level: info

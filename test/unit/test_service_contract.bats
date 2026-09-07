@@ -433,6 +433,28 @@ _repair_body() {
     }
 }
 
+# A browser that has ever cached a basic-auth credential for a protected
+# hostname sends it on every request afterwards. With the default forward-auth
+# strategy list Authelia inspects that header, fails to authenticate it, and
+# answers 401 with WWW-Authenticate: Basic, which is what makes a browser show
+# its own sign-in dialog. The single-page app retries and the dialog returns:
+# 325 challenges in thirty minutes on n8n, and nothing the operator types into
+# it can help, because Authelia is not offering its own credentials there.
+@test "the shared login never challenges for basic auth" {
+    local cfg="${REPO_ROOT}/lib/services/authelia.sh"
+    grep -q "authn_strategies:" "$cfg" \
+        || { echo "forward-auth has no authn_strategies, so it defaults to inspecting the Authorization header and will challenge Basic"; false; }
+    # Cookie sessions only. Naming HeaderAuthorization or BasicAuth puts the
+    # challenge back.
+    local block
+    block=$(awk '/authn_strategies:/,/^[a-z]/' "$cfg")
+    echo "$block" | grep -q "CookieSession" \
+        || { echo "CookieSession must be among the strategies or nothing can sign in"; false; }
+    echo "$block" | grep -qiE "HeaderAuthorization|name: .BasicAuth" \
+        && { echo "a header strategy is listed, which re-enables the WWW-Authenticate: Basic challenge"; false; }
+    :
+}
+
 @test "authelia asks the module for its hostnames rather than assuming one" {
     # The regression guarded here is subtle and silent: building the module
     # path in the same `local` statement that declares the variable it

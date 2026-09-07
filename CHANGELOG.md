@@ -6,6 +6,35 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.28.1] - 2026-09-07
+
+### Fixed
+- **A browser sign-in dialog reappeared endlessly over any service behind the
+  shared login.** The trigger is an `Authorization` header on the request.
+  Authelia's forward-auth endpoint defaults to a strategy list that inspects
+  that header, and when it cannot authenticate it the reply is 401 with
+  `WWW-Authenticate: Basic`, which is what makes a browser show its own
+  dialog. A browser that has ever cached a basic credential for the hostname
+  resends it on every request, so the dialog returns as fast as the page
+  retries: measured at 325 challenges in thirty minutes on n8n, peaking at 113
+  a minute, each one logged as "failed to find the password in the decoded
+  basic value as it was empty".
+
+  Nothing the operator types into that dialog can help, because Authelia is
+  not offering its own credentials there. The forward-auth endpoint is now
+  pinned to cookie sessions only, so the header is never inspected and the
+  challenge is never sent. Removed rather than reordered: nothing here
+  authenticates to Authelia by header, and a proxy that consumes an
+  `Authorization` header is taking one that may have been meant for the
+  application behind it. Grafana and AdGuard were affected identically and are
+  fixed by the same change.
+
+  A contract test fails if the strategy list is absent, and also if a header
+  strategy is added back alongside the cookie one. Both were confirmed by
+  reintroducing them.
+
+---
+
 ## [v3.28.0] - 2026-09-06
 
 ### Fixed

@@ -2385,6 +2385,66 @@ released in v3.26.0 and this box was still executing the previous
 had no `vaultwarden.db` in it. `corex manage maintenance setup` regenerates
 the generated scripts, which is gotcha #22 in the one place it costs the most.
 
+### 60. Authelia challenges Basic, and a browser answers with a dialog forever
+
+A native browser sign-in dialog kept appearing over a loaded n8n canvas, naming
+`n8n.DOMAIN`. n8n has no basic auth, no Traefik router carried a basicauth
+middleware, and no path returned `WWW-Authenticate` when probed with curl. The
+dialog was real anyway, at roughly 100 a minute.
+
+The condition is an `Authorization` header on the request. Authelia's
+forward-auth endpoint defaults to a strategy list that includes
+`HeaderAuthorization`, so it tries to authenticate that header, and when it
+cannot it answers **401 with `WWW-Authenticate: Basic realm="Authorization
+Required"`**. A browser that has ever cached a basic credential for the
+hostname resends it on every request, so:
+
+```
+browser sends stale Authorization  ->  Authelia 401 + WWW-Authenticate: Basic
+  ->  browser shows its own dialog  ->  cancelled  ->  SPA retries  ->  repeat
+```
+
+Measured in `docker logs authelia`: **325 challenges in thirty minutes**,
+peaking at 113 a minute, each one
+`failed to find the password in the decoded basic value as it was empty`, all
+arriving from the cloudflared container's IP. Nothing the operator types into
+that dialog helps, because Authelia is not offering its own credentials there.
+
+The fix is to stop inspecting the header at all:
+
+```yaml
+server:
+  endpoints:
+    authz:
+      forward-auth:
+        implementation: 'ForwardAuth'
+        authn_strategies:
+          - name: 'CookieSession'
+```
+
+Removed rather than reordered, for two reasons. Nothing here authenticates to
+Authelia by header, since the portal uses a cookie and the paths that must work
+without a session are bypassed by resource pattern. And a proxy that consumes
+an `Authorization` header is taking one that may have been meant for the
+application behind it.
+
+Three things worth carrying.
+
+**Reproduce with the header the client is actually sending.** Probing the same
+URL without an `Authorization` header returns a clean 401 and no challenge, so
+the header is invisible until it is sent. The curl that finally reproduced it
+was the one that copied what the log said the browser was doing.
+
+**A 401 alone does not open that dialog; `WWW-Authenticate` does.** Chasing
+"why is there a 401" leads nowhere, because Authelia answers 401 to every
+unauthenticated XHR by design and always has. The question is which response
+carries the challenge header.
+
+**The log named the cause and the client.** The error text gives the mechanism
+and `remote_ip` gives the hop, which here was cloudflared, meaning the request
+came from the internet rather than the LAN. Read the proxy's log before
+theorising about the browser.
+
 ## What NOT to Do
 
 These are firm constraints. Violating them breaks existing installations.
