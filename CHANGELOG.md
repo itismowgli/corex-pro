@@ -6,6 +6,90 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.30.0] - 2026-09-15
+
+### Added
+- **Jellyfin, for watching long video that already lives in Nextcloud.**
+  Nextcloud serves a video file correctly and has no notion of a library: no
+  resume across devices, no per-person progress, no scrub preview, no playback
+  speed. On a three hour lecture, resume is the whole feature. The module reads
+  the Nextcloud data directory in place, so nothing is copied, moved or
+  duplicated, and a file uploaded through Nextcloud appears in the library.
+
+  The design target is Direct Play for everything, and it is worth being exact
+  about why rather than treating it as a preference. Measured on the library
+  this was built for: 8 files, 25 GB, H.264 High at 1920x1080 in yuv420p with
+  AAC-LC stereo, 2.77 Mbps, 11,866 seconds each. Every one of them is a
+  fragmented MP4 whose atom order is `ftyp moov moof mdat`, so the index is at
+  the front and both start and seek are immediate. iPhone, iPad, Safari and
+  Swiftfin hardware-decode that exact combination, which means the server reads
+  bytes off the disk and sends them and the CPU stays near idle.
+
+  That matters because transcoding is the one workload that can take this class
+  of hardware down. A local build already reached 96.4C and shed twelve
+  containers (gotcha #31), and a thermal trip leaves no kernel log at all
+  (gotcha #17). Compressing video on sixteen cores is the same shape of load. So
+  two guards ship with it: `/dev/dri` is passed through when the host has it, so
+  anything that does need converting lands on the integrated GPU rather than the
+  cores, and the CPU limit is a quarter of the machine, which keeps a runaway
+  software transcode inside the thermal guardian's shed band rather than past
+  it.
+
+  Pinned to `jellyfin/jellyfin:12.0`. The 10.11 line was last rebuilt on
+  2026-06-06 while 12.x continued, which is gotcha #26 exactly: a tag that
+  stops moving is quieter than one that moves too fast, and tracking it would
+  have frozen the server three months behind while every check reported success.
+
+  The container runs as uid 33 rather than root. Nextcloud's data root is 0770
+  www-data, so nothing outside uid or gid 33 can traverse into it at all, and
+  matching the uid is what makes a read-only mount of that tree readable without
+  handing the container root. Read-only is not a nicety either: Nextcloud tracks
+  every file it owns in its own database, so a second process writing there
+  produces files the web UI cannot see until someone runs a scan by hand. The
+  supplementary groups for `/dev/dri` are read from the host rather than
+  hardcoded, because render is 993 on one box and 104 on another, and a wrong
+  number is not an error, it is a device the container can see and cannot open.
+
+  Not behind the shared login, and deliberately absent from
+  `AUTHELIA_DEFAULT_PROTECT`. Authelia answers an unauthenticated request with a
+  browser redirect, and Swiftfin, Infuse and the Apple TV client cannot follow
+  one, so the middleware would break every native app while adding nothing:
+  Jellyfin has its own accounts. The same reasoning already excludes Nextcloud
+  and Vaultwarden (gotcha #44).
+
+  The LAN allowlist is wired up instead, and a fresh install needs it. The first
+  visit to a new server is an unauthenticated setup wizard that claims it, and
+  issuing the certificate publishes the hostname to the Certificate Transparency
+  logs (gotcha #28), so "nobody knows the name" stops being true within minutes
+  of deploying. `corex manage lan-only add jellyfin` refuses the request from
+  the tunnel while leaving it reachable from home. Verified both ways on a live
+  box: 403 arriving through Cloudflare, 200 at 130ms direct on the LAN, against
+  a Let's Encrypt certificate issued over DNS-01 for the new hostname with no
+  Cloudflare configuration of any kind, because the tunnel already points a
+  wildcard at Traefik (gotcha #27).
+
+### Fixed
+- **A generated block lost its trailing newline and welded the next key onto
+  it.** Command substitution strips every trailing newline, so a helper that
+  ended with one could not be followed by another key on the next heredoc line:
+  the newline was gone by the time it was interpolated. The compose file came
+  out holding `- "44"    volumes:` on a single line, and Docker reported
+  `did not find expected key` against a line number rather than a cause.
+
+  Every block is complete on its own now, including its own key, and the heredoc
+  gives each one a line of its own, so an empty block leaves a blank line that
+  YAML ignores rather than eating the key after it. This is the shape
+  `sso_label_for` already relies on.
+
+  What makes it worth a test rather than a fix: five assertions over that file
+  passed with the bug present, because grep finds a string just as well on a
+  joined line. The compose file has to be parsed, and parsed both with the
+  optional block present and with it absent, since the empty case is where a
+  stripped newline eats the key after it. Confirmed by putting the bug back and
+  watching only the new check fail.
+
+---
+
 ## [v3.29.0] - 2026-09-07
 
 ### Fixed

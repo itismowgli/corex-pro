@@ -115,6 +115,35 @@ assert_compose_contains() {
     }
 }
 
+# Parse a compose file rather than grep it. A YAML parser is the only thing
+# that notices two keys joined onto one line, which is what a stripped trailing
+# newline produces when a generated block is interpolated into a heredoc.
+_assert_yaml() {
+    python3 - "$1" <<'PYEOF'
+import re, sys
+
+path = sys.argv[1]
+lines = open(path).read().splitlines()
+
+# The precise shape of the bug, and the one a grep for any single string
+# cannot see: a sequence entry with a mapping key welded onto its end. A
+# volume mount is full of legitimate colons, so the signal is the run of
+# spaces before a trailing bare identifier, not the colon itself.
+joined = [l for l in lines if re.match(r"^\s+- .*\s{2,}[a-z_]+:\s*$", l)]
+assert not joined, "a key was joined onto a sequence entry: %r" % joined
+
+# Parse it properly too where the image has a parser.
+try:
+    import yaml
+except ImportError:
+    sys.exit(0)
+svc = yaml.safe_load(open(path))["services"]["jellyfin"]
+assert isinstance(svc["volumes"], list), "volumes did not parse as a list"
+assert "environment" in svc, "environment was swallowed by the block above it"
+assert isinstance(svc.get("group_add", []), list), "group_add is not a list"
+PYEOF
+}
+
 # ─── Traefik ──────────────────────────────────────────────────────────────────
 
 @test "traefik: deploy generates docker-compose.yml" {
@@ -216,6 +245,114 @@ assert_compose_contains() {
     vaultwarden_dirs
     vaultwarden_deploy
     [ -f "${DOCKER_ROOT}/vaultwarden/docker-compose.yml" ]
+}
+
+# ─── Jellyfin ─────────────────────────────────────────────────────────────────
+
+@test "jellyfin: deploy generates docker-compose.yml" {
+    source_service "jellyfin"
+    jellyfin_dirs
+    jellyfin_deploy
+    [ -f "${DOCKER_ROOT}/jellyfin/docker-compose.yml" ]
+}
+
+# Direct Play is the whole design (see the module header): this hardware trips
+# at TjMax with no kernel log, so a software transcode is the one workload that
+# can take the box down. The limit caps a runaway one at a quarter of the
+# machine, which keeps it inside the thermal guardian's shed band.
+@test "jellyfin: a runaway transcode cannot take the whole machine" {
+    source_service "jellyfin"
+    jellyfin_dirs
+    jellyfin_deploy
+    assert_compose_contains "jellyfin" 'cpus: "4.0"'
+}
+
+# Nextcloud is the authority on every file it owns, and it tracks them in its
+# own database. A second process writing into that tree produces files the web
+# UI cannot see until someone runs a scan by hand.
+@test "jellyfin: every media mount is read-only" {
+    source_service "jellyfin"
+    mkdir -p "${DATA_ROOT}/nextcloud-html/data"
+    jellyfin_dirs
+    jellyfin_deploy
+    local compose="${DOCKER_ROOT}/jellyfin/docker-compose.yml"
+    grep -q "nextcloud-html/data:/media/nextcloud:ro" "$compose"
+    grep -q "jellyfin-media:/media/library:ro" "$compose"
+    # No mount under /media may be writable.
+    ! grep -E "^ *- .*:/media/[^:]+$" "$compose"
+}
+
+# Accounts are created long after this module is written, so the mount is the
+# data root and the libraries point inside it. Naming one account here is how a
+# second person ends up invisible with nothing reporting it.
+@test "jellyfin: the media mount does not name an account" {
+    source_service "jellyfin"
+    mkdir -p "${DATA_ROOT}/nextcloud-html/data/someone/files"
+    jellyfin_dirs
+    jellyfin_deploy
+    ! grep -q "/media/nextcloud/" "${DOCKER_ROOT}/jellyfin/docker-compose.yml"
+}
+
+# Swiftfin, Infuse and the Apple TV client cannot follow a browser redirect, so
+# an Authelia middleware on this router breaks every native app while adding
+# nothing: Jellyfin has its own accounts (gotcha #44).
+#
+# Asserted against the default list rather than against the generated file,
+# because the file only carries the label on a box that has Authelia running,
+# which no test host does. The default list is what actually decides it.
+@test "jellyfin: the shared login is not in front of it by default" {
+    run grep -E '^AUTHELIA_DEFAULT_PROTECT=' "${REPO_DIR}/lib/services/authelia.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *jellyfin* ]]
+}
+
+# The LAN allowlist is a different question and must stay reachable, because a
+# fresh install answers an unauthenticated setup wizard that claims the server,
+# and issuing the certificate publishes the hostname to the Certificate
+# Transparency logs within minutes (gotcha #28).
+@test "jellyfin: the LAN allowlist can be put in front of it" {
+    grep -q "sso_label_for jellyfin" "${REPO_DIR}/lib/services/jellyfin.sh"
+}
+
+# The compose file is assembled from blocks held in variables, and command
+# substitution strips every trailing newline. A block that ended with one lost
+# it on the way in, so the key meant for the following line landed on the end
+# of the block's last entry: `- "44"    volumes:`. Compose reported a parser
+# error naming a line rather than a cause, and every other assertion here still
+# passed, because grep finds a string just as well on a joined line.
+#
+# So the file has to be parsed, not grepped, and with both blocks present and
+# absent: the empty case is where a stripped newline eats the key after it.
+@test "jellyfin: the compose file is valid YAML with and without the GPU block" {
+    if ! command -v python3 &>/dev/null; then
+        skip "python3 not available"
+    fi
+    source_service "jellyfin"
+    mkdir -p "${DATA_ROOT}/nextcloud-html/data"
+
+    jellyfin_dirs
+    jellyfin_deploy
+    _assert_yaml "${DOCKER_ROOT}/jellyfin/docker-compose.yml"
+
+    # No render or video group on this host: the block disappears entirely.
+    _jellyfin_gpu_groups() { :; }
+    jellyfin_deploy
+    _assert_yaml "${DOCKER_ROOT}/jellyfin/docker-compose.yml"
+    ! grep -q "group_add:" "${DOCKER_ROOT}/jellyfin/docker-compose.yml"
+}
+
+# A missing device is a hard container start failure rather than a degraded
+# one, so a host without an integrated GPU must not get the passthrough.
+@test "jellyfin: the GPU device is only passed through when the host has one" {
+    source_service "jellyfin"
+    jellyfin_dirs
+    jellyfin_deploy
+    local compose="${DOCKER_ROOT}/jellyfin/docker-compose.yml"
+    if [ -e /dev/dri ]; then
+        grep -q "/dev/dri:/dev/dri" "$compose"
+    else
+        ! grep -q "/dev/dri" "$compose"
+    fi
 }
 
 # ─── n8n ──────────────────────────────────────────────────────────────────────

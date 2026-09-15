@@ -20,7 +20,6 @@
 #   - Traefik middleware → CalDAV/CardDAV + HSTS headers
 #   - max_chunk_size 10MB → Cloudflare compatibility (before-starting hook)
 #   - Apache streaming headers → byte-range + proxy bypass for file transfers
-#   - Memories → HEVC video transcoding (internal go-vod + ffmpeg)
 
 # ── Metadata ──────────────────────────────────────────────────────────────────
 SERVICE_NAME="nextcloud"
@@ -503,6 +502,7 @@ nextcloud_credentials() {
     echo "    LAN access works via the AdGuard wildcard + Traefik already."
     echo "  DB user: nextcloud / pass: ${NEXTCLOUD_DB_PASS}"
     echo "  MySQL root: ${MYSQL_ROOT_PASS}"
-    echo "  Video streaming: Memories app (internal go-vod + ffmpeg transcoding)"
-    echo "    iPhone .mov (HEVC) files play in all browsers via on-demand HLS transcoding"
+    echo "  Video: files stream and seek from the Files app, and nothing transcodes."
+    echo "    For a library with resume and per-person progress, install Jellyfin:"
+    echo "      sudo corex manage add jellyfin"
 }

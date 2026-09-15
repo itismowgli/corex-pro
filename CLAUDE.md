@@ -28,12 +28,12 @@ learning nginx, SSL, Docker networking, or Linux hardening.
 - Re-run on existing server = health-check + repair broken services only
 - No live server required for testing (Docker-in-Docker + bats)
 
-**Current version:** v3.25.1
-**Current service modules:** 20 (Traefik, AdGuard, Portainer, Nextcloud,
+**Current version:** v3.30.0
+**Current service modules:** 21 (Traefik, AdGuard, Portainer, Nextcloud,
 Immich, Vaultwarden, Stalwart Mail, Coolify, n8n, Cal.com, Time Machine,
 Uptime Kuma + Grafana + Prometheus (monitoring), Ollama + OpenWebUI +
 Browserless (ai), CrowdSec, Cloudflared, Dashboard, UPS, Authelia, Keeper,
-and the internal Sablier wake controller)
+Jellyfin, and the internal Sablier wake controller)
 
 Note the count is service *modules* in `lib/services/`, not containers, a
 single module can deploy several containers (`monitoring` and `ai` each deploy
@@ -327,6 +327,10 @@ Ollama          <- standalone (model downloads on first use)
 Open WebUI      <- depends on Ollama (OLLAMA_BASE_URL env var)
 Browserless     <- standalone; shares WEBUI_SECRET_KEY for auth token
 
+Jellyfin        <- standalone; reads the Nextcloud data directory read-only, so
+                   it is more useful with Nextcloud and works without it. Needs
+                   a domain. Never behind Authelia: native clients cannot
+                   follow a browser redirect
 Time Machine    <- host networking; depends on avahi-daemon on host
 Sablier         <- internal wake controller; needs the Docker socket and the
                    Traefik plugin; installed only when cold mode is enabled
@@ -352,6 +356,7 @@ Sablier         <- internal wake controller; needs the Docker socket and the
 | Cal.com (web) | YES | YES | - | - |
 | calcom-db, calcom-helper | - | YES | - | - |
 | Keeper | YES | - | - | - |
+| Jellyfin | YES | - | - | - |
 | Stalwart | YES | - | - | - |
 | Uptime Kuma | YES | - | YES | - |
 | Grafana | YES | - | YES | - |
@@ -2513,6 +2518,91 @@ no log line, and a request with an action and a wrong token still logs
 The general shape: a health check that deliberately does less than a real
 request will take a code path built for real requests, and the log is where
 that shows up. Read the log's *rate* as well as its content.
+
+### 63. A refactor took the feature and left the documentation behind
+
+`lib/services/nextcloud.sh` described HEVC transcoding through Memories and
+go-vod in its header, and `nextcloud_credentials` told the operator that
+"iPhone .mov (HEVC) files play in all browsers via on-demand HLS transcoding".
+Neither was true. `occ app:list` on a live install returned `photos` and no
+`memories`, and the only occurrences of the word left in the entire repository
+were those two pieces of prose.
+
+The history is exact and is the interesting part, because nobody deleted a
+feature on purpose. Memories was added, reverted, restored, and then commit
+`affbd9a`, "apply Nextcloud occ settings from the host, not a container hook",
+moved the occ work out of the before-starting hook and did not carry four lines
+across:
+
+```
+occ app:install memories
+occ app:enable  memories
+occ config:system:set memories.vod.disable  --value false --type bool
+occ config:system:set memories.vod.external --value false --type bool
+```
+
+A refactor that moves work from one place to another is exactly where a line
+goes missing, because the diff is large, the lines are similar, and nothing
+fails. What made it survive for two weeks is that the credentials file kept
+saying it worked, so the one artifact an operator reads to find out what the
+box does was the artifact asserting the feature existed.
+
+Two rules follow. **Prose is not covered by any test, so it is the part of a
+refactor that has to be re-read rather than re-run.** And **a `_credentials()`
+function is a claim about the running system**, not a description of intent: it
+is printed into `/root/CoreX_Dashboard_Credentials.md` and read later by
+someone trying to work out what is installed, so a stale line there is worse
+than no line.
+
+The cheapest check is the one that found it, and it takes a second:
+
+```bash
+docker exec -u 33 nextcloud php occ app:list | grep -i memories
+```
+
+Ask the running system whether a documented feature is there, rather than
+asking the document.
+
+### 64. Command substitution strips the newline your heredoc was relying on
+
+Generated compose files are assembled from blocks held in variables, and
+`$(...)` removes **every** trailing newline. A helper ending in one therefore
+cannot be followed by another key on the next heredoc line: the newline is gone
+by the time it is interpolated, and the key lands on the end of the block's
+last entry.
+
+```yaml
+    group_add:
+      - "993"
+      - "44"    volumes:          # <- two keys, one line
+      - /mnt/corex-data/...:/config
+```
+
+Docker answered `did not find expected key` at `L9.C9-C17`, which names the
+line the damage appears on and says nothing about the cause, the same way an
+unquoted heredoc blames the redirect rather than the backtick.
+
+The fix is not to add the newline back, because it will be stripped again. Each
+generated block carries **its own key** and is complete on its own, and the
+heredoc gives it a line of its own:
+
+```bash
+    user: "33:33"
+${gpu_groups}
+    volumes:
+```
+
+An empty block then leaves a blank line, which YAML ignores, and a block that
+is present brings its key with it. `sso_label_for` already documents this
+property for the middleware label, where an empty `middlewares` label would be
+rejected outright; it is the same requirement for any optional block.
+
+**The part worth carrying: five assertions over that file passed with the bug
+present.** `grep` finds a string just as well on a joined line, so every check
+that asked whether a value was in the file was satisfied by a file Docker would
+not load. A generated config has to be **parsed**, and parsed in both states,
+with the optional block and without it, because the empty case is the one where
+a stripped newline eats the key after it.
 
 ## What NOT to Do
 

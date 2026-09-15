@@ -120,6 +120,7 @@ more than one container: `monitoring`, `ai` and `calcom` each start three.
 | `adguard` | Network-wide DNS with ad and tracker blocking | Pi-hole |
 | `nextcloud` | Files, calendar, contacts, photo albums, collaborative docs | Dropbox, Google Drive |
 | `immich` | Photo and video library with search and face grouping | Google Photos |
+| `jellyfin` | Watch your own video library, remembers where each person stopped | Plex, Netflix |
 | `vaultwarden` | Password manager, works with every Bitwarden client | 1Password, LastPass |
 | `stalwart` | Mail server with SMTP, IMAP, and JMAP | see the email section first |
 | `n8n` | Workflow automation with several hundred integrations | Zapier |
@@ -154,6 +155,7 @@ only works if a Traefik Host rule declares it. The rules live in
 |---|---|---|
 | `nextcloud` | `https://nextcloud.DOMAIN` | Let's Encrypt |
 | `immich` | `https://photos.DOMAIN` | Let's Encrypt |
+| `jellyfin` | `https://jellyfin.DOMAIN` | Let's Encrypt |
 | `vaultwarden` | `https://vault.DOMAIN` | Let's Encrypt |
 | `stalwart` | `https://mail.DOMAIN` | Let's Encrypt |
 | `n8n` | `https://n8n.DOMAIN` | Let's Encrypt |
@@ -396,6 +398,75 @@ faces stop being detected in new photos.
 The database image is pinned deliberately. Immich changes its vector extension
 between major versions and the wrong image leaves a database the server cannot
 read, so this is not a place to track a moving tag.
+
+### jellyfin
+
+A library for video you already have, at `https://jellyfin.DOMAIN`. It reads
+the Nextcloud data directory read-only and in place, so nothing is copied or
+moved, and a file uploaded through Nextcloud shows up in the library on the
+next scan.
+
+The reason to run it is not playback, which Nextcloud does correctly on its
+own. It is everything around playback: where each person stopped, separate
+progress per account, scrub previews, playback speed, and offline download in
+the phone apps. On a three hour recording, resume is the whole feature.
+
+Nothing transcodes, and that is a design target rather than a happy accident.
+iPhone, iPad, Safari and Swiftfin hardware-decode H.264 at 1080p with AAC
+audio, which is what phone cameras and screen recorders already produce, so
+the server reads bytes off the disk and sends them. Converting video is the
+one workload that can overheat this class of hardware badly enough to cut the
+power (see the thermal section), so the module caps Jellyfin at a quarter of
+the machine and passes `/dev/dri` through when the host has it, which puts any
+conversion that does happen on the integrated GPU rather than on the cores.
+
+Check whether a file will play as it is before adding it, because this is the
+difference between no CPU and all of it:
+
+```bash
+docker run --rm -v /path/to/folder:/m:ro --entrypoint ffprobe \
+  jellyfin/jellyfin:12.0 -v error \
+  -show_entries stream=codec_name,width,height,pix_fmt \
+  -show_entries format=duration,bit_rate \
+  -of default=noprint_wrappers=1 "/m/file.mp4"
+```
+
+`h264` with `yuv420p` and `aac` plays everywhere untouched. `hevc` plays on
+Apple devices and not in Chrome or Firefox. `yuv420p10le` is 10-bit and will
+be converted for most clients. A `.mov` or `.mp4` whose `moov` atom sits at the
+end of the file starts slowly no matter what else is true, because the player
+cannot find the index without reading to the end; `ffmpeg -c copy -movflags
++faststart` moves it to the front without re-encoding anything.
+
+**Claim the server before it is reachable from outside.** The first visit to a
+new install is a setup wizard with no password on it, and whoever completes it
+becomes the administrator. Issuing the certificate also publishes the hostname
+to the public Certificate Transparency logs, so an unclaimed wizard is
+discoverable within minutes of deploying. Keep it on the LAN until an account
+exists:
+
+```bash
+sudo corex manage lan-only add jellyfin
+sudo corex manage repair jellyfin
+# claim it from home at https://jellyfin.DOMAIN, then open it up if you want to
+sudo corex manage lan-only remove jellyfin
+sudo corex manage repair jellyfin
+```
+
+Libraries point at `/media/nextcloud/<account>/files/<folder>`. Give each
+person their own account under Dashboard, Users, and untick the libraries they
+should not see; that per-library tick is the only thing separating one
+account's files from another's inside Jellyfin, so set it when you create the
+user rather than later.
+
+It is deliberately not behind the shared login. Authelia answers with a browser
+redirect, and Swiftfin, Infuse and the Apple TV app cannot follow one, so the
+middleware would break every native client while adding nothing: Jellyfin has
+its own accounts.
+
+On iPhone and iPad, install Swiftfin and give it `https://jellyfin.DOMAIN`.
+The browser works too, and Swiftfin is better for long video because it
+downloads for offline viewing and keeps playing with the screen locked.
 
 ### vaultwarden
 
