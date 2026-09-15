@@ -6,6 +6,50 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.31.0] - 2026-09-15
+
+### Added
+- **Video thumbnails in Nextcloud, so a file list of recordings is browsable.**
+  The upstream image carries no ffmpeg and Nextcloud's default provider list
+  has no Movie entry, so every video showed the same generic icon whatever
+  else was configured. Both are fixed, and the cost is close to nothing:
+  extracting one frame 60 seconds into a 3.5 GB recording moved the CPU from
+  59.5C to 60.0C, because seeking to a timestamp decodes a fraction of a
+  second rather than the file.
+
+  A static ffmpeg is fetched and mounted rather than baked into a derived
+  image. Nextcloud then keeps tracking its pinned tag and repair stays a pull,
+  which matters because building is the hottest thing this project does and
+  the one workload that has actually tripped this hardware (gotcha #31). A
+  feature worth a thumbnail is not worth a compile on every repair.
+
+  Setting the provider list at all replaces the default rather than adding to
+  it, so the image and PDF providers are named again alongside Movie. Without
+  that, turning on video thumbnails turns off every other kind.
+
+### Fixed
+- **A bind mount whose source file is absent becomes a directory.** Naming one
+  does not fail: Docker creates a directory at that path, so the container
+  gets a directory where it expects an executable and every preview fails with
+  an error pointing at Nextcloud rather than at the mount. The mount is now
+  emitted only when the binary is present and runs, which is the same rule the
+  Jellyfin module applies to `/dev/dri`. A failed fetch leaves no mount and
+  says so.
+
+- **Eight preview providers were stored with doubled backslashes.** In bash,
+  `'OC\\Preview\\PNG'` inside single quotes is a literal string with two
+  backslashes in each position, so occ stored a class name that resolves to
+  nothing. The check that looks right is what makes this expensive: reading
+  the setting back shows eight providers configured, `occ` exits 0 for every
+  one, and no preview is ever generated for any file type, including the ones
+  that worked before the list was set.
+
+  Single quotes are what made it look safe, since they usually mean what is
+  written is what is stored. A backslash is the exception worth remembering,
+  because `\\` is two characters there and one almost everywhere else.
+
+---
+
 ## [v3.30.0] - 2026-09-15
 
 ### Added

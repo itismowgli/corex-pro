@@ -28,7 +28,7 @@ learning nginx, SSL, Docker networking, or Linux hardening.
 - Re-run on existing server = health-check + repair broken services only
 - No live server required for testing (Docker-in-Docker + bats)
 
-**Current version:** v3.30.0
+**Current version:** v3.31.0
 **Current service modules:** 21 (Traefik, AdGuard, Portainer, Nextcloud,
 Immich, Vaultwarden, Stalwart Mail, Coolify, n8n, Cal.com, Time Machine,
 Uptime Kuma + Grafana + Prometheus (monitoring), Ollama + OpenWebUI +
@@ -2603,6 +2603,40 @@ that asked whether a value was in the file was satisfied by a file Docker would
 not load. A generated config has to be **parsed**, and parsed in both states,
 with the optional block and without it, because the empty case is the one where
 a stripped newline eats the key after it.
+
+### 65. A backslash in single quotes is the one character that is not literal enough
+
+Nextcloud's preview providers are PHP class names, so they carry backslashes.
+They were written as `'OC\\Preview\\PNG'`, and single quotes are exactly
+what makes that look safe: inside them bash does no expansion, so what is
+written is normally what is stored. Two backslashes are still two characters,
+so occ stored `OC\\Preview\\PNG`, which resolves to no class at all.
+
+The reason it cost a whole round trip is that every available check passes:
+
+```
+$ occ config:system:get enabledPreviewProviders
+OC\\Preview\\PNG          <- eight entries, all present
+OC\\Preview\\JPEG
+...
+```
+
+`occ` exits 0 for each one, the setting reads back as configured, and the
+count is right. What breaks is silent and wider than the feature being added:
+setting the list **replaces** Nextcloud's default rather than extending it, so
+eight bad class names turn off image and PDF previews too. The symptom is not
+"video thumbnails did not appear", it is "thumbnails stopped appearing", on
+files that were fine before.
+
+Two rules. **Read a stored value back and compare it to the string you meant,
+not to whether the command succeeded.** A config write that exits 0 has told
+you nothing about the value. And **when a value is a class name, a path or a
+regex, write it through a file or a variable rather than through a quoted
+shell argument**, so there is one layer of quoting instead of three.
+
+The general shape is gotcha #50's: the number came from one place and the
+action from another, and nobody compared them. Here the comparison is a single
+`diff` between what was intended and what `config:system:get` returns.
 
 ## What NOT to Do
 

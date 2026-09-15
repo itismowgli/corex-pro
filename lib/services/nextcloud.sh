@@ -142,6 +142,61 @@ APEOF
 
 # ── Functions ─────────────────────────────────────────────────────────────────
 
+# Video thumbnails need ffmpeg, which the upstream image does not carry.
+#
+# A static build is fetched and mounted rather than baked into a derived image,
+# so Nextcloud keeps tracking the published tag and repair stays a pull rather
+# than a build. Building is the hottest thing this project does and the one
+# workload that has actually tripped this hardware (gotcha #31), so a feature
+# worth a thumbnail is not worth a compile on every repair.
+#
+# Idempotent, and it checks the binary runs rather than merely exists: a
+# truncated download leaves a file of the right name that fails later, at the
+# moment a preview is generated, rather than here where it can be reported.
+_nextcloud_fetch_ffmpeg() {
+    local dir="${DATA_ROOT}/ffmpeg-shared"
+    if [[ -x "${dir}/ffmpeg" ]] && "${dir}/ffmpeg" -version >/dev/null 2>&1; then
+        return 0
+    fi
+    log_info "Fetching a static ffmpeg for Nextcloud video thumbnails..."
+    mkdir -p "$dir"
+    local tmp
+    tmp="$(mktemp -d)" || return 1
+    local url="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz"
+    if ! curl -fsSL --max-time 600 -o "${tmp}/f.tar.xz" "$url"; then
+        rm -rf "$tmp"
+        log_warning "Could not fetch ffmpeg, so Nextcloud video thumbnails stay off"
+        return 1
+    fi
+    tar xJf "${tmp}/f.tar.xz" -C "$tmp" --strip-components=1 2>/dev/null
+    if [[ ! -f "${tmp}/bin/ffmpeg" ]]; then
+        rm -rf "$tmp"
+        log_warning "The ffmpeg archive held no binary, so thumbnails stay off"
+        return 1
+    fi
+    install -m 0755 "${tmp}/bin/ffmpeg"  "${dir}/ffmpeg"
+    install -m 0755 "${tmp}/bin/ffprobe" "${dir}/ffprobe"
+    rm -rf "$tmp"
+    "${dir}/ffmpeg" -version >/dev/null 2>&1 \
+        || { log_warning "The fetched ffmpeg does not run here, so thumbnails stay off"; return 1; }
+    log_success "Static ffmpeg installed for video thumbnails"
+}
+
+# The ffmpeg mount lines, or nothing at all.
+#
+# Naming a bind mount whose source file is absent does not fail: Docker creates
+# a directory at that path, so the container gets a directory where it expects
+# an executable, and every preview then fails with an error that points at
+# Nextcloud rather than at the mount. A failed or skipped fetch therefore has
+# to produce no mount rather than a broken one, which is the same rule the
+# Jellyfin module applies to /dev/dri.
+_nextcloud_ffmpeg_mounts() {
+    local dir="${DATA_ROOT}/ffmpeg-shared"
+    [[ -x "${dir}/ffmpeg" && -x "${dir}/ffprobe" ]] || return 0
+    printf '      - %s/ffmpeg:/usr/local/bin/ffmpeg:ro\n' "$dir"
+    printf '      - %s/ffprobe:/usr/local/bin/ffprobe:ro' "$dir"
+}
+
 nextcloud_dirs() {
     mkdir -p "${DOCKER_ROOT}/nextcloud"
     mkdir -p "${DATA_ROOT}/nextcloud-html" "${DATA_ROOT}/nextcloud-db"
@@ -178,6 +233,13 @@ _nextcloud_whiteboard_secret() {
 _nextcloud_write_compose() {
     local dir="${DOCKER_ROOT}/nextcloud"
     _nextcloud_whiteboard_secret
+
+    # Fetch before the mounts are computed, so a first run gets the binary and
+    # the mount in the same pass rather than needing a second repair. A failure
+    # is not fatal: thumbnails are worth less than the file server.
+    _nextcloud_fetch_ffmpeg || true
+    local ffmpeg_mounts
+    ffmpeg_mounts="$(_nextcloud_ffmpeg_mounts)"
 
     cat > "${dir}/docker-compose.yml" << DCEOF
 services:
@@ -234,6 +296,7 @@ services:
       - ${DATA_ROOT}/nextcloud-html:/var/www/html
       - ./zzz-corex-performance.ini:/usr/local/etc/php/conf.d/zzz-corex-performance.ini:ro
       - ./corex-apache-perf.conf:/etc/apache2/conf-enabled/corex-perf.conf:ro
+${ffmpeg_mounts}
     environment:
       MYSQL_PASSWORD: "${NEXTCLOUD_DB_PASS}"
       MYSQL_DATABASE: nextcloud
@@ -438,6 +501,24 @@ _nextcloud_apply_occ() {
     # nextcloud.log is written by PHP, so Docker's json-file rotation never
     # applies to it and it grows unbounded — 91MB observed in the field.
     _set config:system:set log_rotate_size --type=integer --value=10485760
+    # Video thumbnails. Nextcloud's default provider list has no Movie entry,
+    # so a video shows a generic icon however many previews are generated.
+    # Setting the list at all means it replaces the default, so the image and
+    # PDF providers have to be named again or they stop working.
+    _set config:system:set enabledPreviewProviders 0 --value 'OC\Preview\PNG'
+    _set config:system:set enabledPreviewProviders 1 --value 'OC\Preview\JPEG'
+    _set config:system:set enabledPreviewProviders 2 --value 'OC\Preview\GIF'
+    _set config:system:set enabledPreviewProviders 3 --value 'OC\Preview\BMP'
+    _set config:system:set enabledPreviewProviders 4 --value 'OC\Preview\HEIC'
+    _set config:system:set enabledPreviewProviders 5 --value 'OC\Preview\TIFF'
+    _set config:system:set enabledPreviewProviders 6 --value 'OC\Preview\PDF'
+    _set config:system:set enabledPreviewProviders 7 --value 'OC\Preview\Movie'
+    _set config:system:set preview_ffmpeg_path --value '/usr/local/bin/ffmpeg'
+    # Take the thumbnail a few seconds in. The first frame of a screen
+    # recording is usually a blank desktop, which is a thumbnail that tells
+    # the reader nothing about which file they are looking at.
+    _set config:system:set movie_preview_first_frame --type=boolean --value=false
+
     # Idempotent; a no-op when nothing is missing.
     "${_o[@]}" db:add-missing-indices >/dev/null 2>&1 || true
 
