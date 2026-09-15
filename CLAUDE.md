@@ -28,7 +28,7 @@ learning nginx, SSL, Docker networking, or Linux hardening.
 - Re-run on existing server = health-check + repair broken services only
 - No live server required for testing (Docker-in-Docker + bats)
 
-**Current version:** v3.32.0
+**Current version:** v3.33.0
 **Current service modules:** 21 (Traefik, AdGuard, Portainer, Nextcloud,
 Immich, Vaultwarden, Stalwart Mail, Coolify, n8n, Cal.com, Time Machine,
 Uptime Kuma + Grafana + Prometheus (monitoring), Ollama + OpenWebUI +
@@ -2714,6 +2714,87 @@ prepare the filesystem.
 suite, and the service works without it: the mount is simply not written. A
 `--connect-timeout` matters for the same reason, so a dead network fails
 instead of hanging.
+
+### 68. The container is not the codec, and the size is never the problem
+
+A video in Nextcloud would not play in the app or in any browser. It was
+reported as a size problem, because the files that failed were the big ones,
+and size has nothing to do with it.
+
+Everything measured said the server was fine. The mimetype in `oc_filecache`
+was right, WebDAV answered `206` to a ranged request, a seek three gigabytes
+into a 3.8GB file returned its first byte in 68ms, a sustained pull ran at
+105MB/s on the LAN, and `nextcloud.log` held no error of any level. The file
+was intact and the delivery was correct.
+
+The first four bytes of the file say what is wrong:
+
+```
+ftyp qt      <- QuickTime. HTML5 video will not play this.
+ftyp isom    <- MP4. Plays everywhere.
+```
+
+Every video an iPhone records is a `.mov` whose container is QuickTime. The
+streams inside are H.264 and AAC, which every device decodes in hardware, so
+the media is fine and only the wrapper is refused. Nextcloud reports
+`video/quicktime` correctly, the browser refuses `video/quicktime` correctly,
+and nothing is broken at any layer. It just does not work.
+
+**The atom order is not the brand, and that is the mistake to avoid.** Reading
+`ftyp moov moof mdat` and concluding "fragmented MP4" is wrong: the layout is
+fMP4-shaped and the brand at offset 8 is still `qt  `. Read the brand.
+
+The fix is a rewrap, not a conversion. `-c copy` moves the streams into an MP4
+container untouched: no decode, no re-encode, no quality change. Measured on a
+3.8GB three hour recording, 17 seconds, 58.9C to 66.4C. Re-encoding the same
+file would take hours at full load and is the workload that actually trips this
+hardware (gotcha #31), so `corex manage video-fix` will never do it: a file
+whose streams MP4 cannot legally hold is reported and left alone.
+
+Two details in the implementation matter more than they look.
+
+**Decide from the file, not the extension.** Plenty of `.mov` files are already
+MP4 inside, and rewrapping those is pointless work on gigabytes.
+
+**Every index that points at the old path has to be told.** Nextcloud needs
+`occ files:scan` or the library shows an entry whose file is gone. Jellyfin
+watches the filesystem and still missed some: after rewrapping eight files, six
+were updated and two were left under their old names, which a viewer meets as
+an item that will not open. A rename is a change to every system that indexed
+by path, and the watcher catching most of them is what makes the rest easy to
+miss.
+
+### 69. The tunnel refuses any upload over 100MB, and the app calls it a failure
+
+Gotcha #12 set Nextcloud's chunk size to 10MB because Cloudflare rejects a
+request body over 100MB with HTTP 413. That reasoning applies to everything
+published through the tunnel, and Immich was never given it.
+
+Immich sends each photo or video as a single request body, so a 1GB clip is one
+1GB body. Measured with a 150MB upload to the same hostname:
+
+| Path | Result |
+|---|---|
+| Direct to the LAN address | `201 Created`, 112MB/s |
+| Through the Cloudflare tunnel | **`413`**, aborted after 3.2MB |
+
+Nothing in `docker logs immich-server` records it, because the request never
+reaches Immich: Cloudflare refuses it at the edge. From the phone it is a
+failed upload with no reason, and it only happens away from home, which makes
+it read as a flaky network.
+
+There is no server-side fix. The limit belongs to the CDN, the paid plans raise
+it to 500MB rather than removing it, and an application that does not chunk
+cannot be made to. What works is not sending large uploads through the tunnel
+at all: on the home wifi the LAN fast path already avoids it, and away from
+home a VPN back to the box (Tailscale, WireGuard) puts the phone on the same
+direct path.
+
+**The general shape: a limit enforced by something in front of the service
+produces a symptom the service cannot log.** When an operation fails only from
+outside, measure the same operation from inside before reading the application
+log, because a clean log is evidence about where the refusal happened rather
+than evidence that nothing was refused.
 
 ## What NOT to Do
 

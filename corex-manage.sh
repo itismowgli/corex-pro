@@ -35,6 +35,7 @@ source "${SCRIPT_DIR}/lib/wizard.sh"
 # each module's own SERVICE_MONITORS. Defines functions only, so sourcing it
 # here costs nothing.
 source "${SCRIPT_DIR}/lib/kuma.sh"
+source "${SCRIPT_DIR}/lib/video.sh"
 
 # ── v1 → v2 migration ────────────────────────────────────────────────────────
 # Called automatically when state.json is missing but CoreX appears to be installed
@@ -1969,6 +1970,59 @@ _network_speed_tips() {
 # Tests HTTPS reachability, SSL cert validity, and DNS resolution for every
 # installed service. Read-only diagnostic — safe to run at any time.
 
+# Make QuickTime recordings playable where people actually watch them.
+#
+# Reports by default and changes nothing. --apply is a separate word because
+# this rewrites files in the operator's own library, and the reason to be
+# careful is not the risk of loss (the original is kept until the output
+# verifies) but that a scan is cheap and a surprise is not.
+cmd_video_fix() {
+    local apply=false root=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --apply) apply=true; shift ;;
+            --scan)  apply=false; shift ;;
+            -h|--help)
+                cat << 'VFEOF'
+Usage: corex manage video-fix [--apply] [path]
+
+Finds videos stored in a QuickTime container and rewraps them as MP4.
+
+Every video an iPhone records is a .mov whose container is QuickTime. The
+H.264 and AAC inside play on everything, but browsers and the Nextcloud app
+refuse the QuickTime wrapper itself, so the file looks broken while being
+perfectly intact. Size has nothing to do with it, which is why this usually
+gets reported as "the big one will not play".
+
+Rewrapping copies the streams across untouched. Nothing is decoded, nothing
+is re-encoded, no quality changes, and a three hour recording takes about
+twenty seconds.
+
+  corex manage video-fix                 report on every Nextcloud account
+  corex manage video-fix --apply         rewrap them
+  corex manage video-fix --apply /path   rewrap one folder
+
+The original is kept until the new file is verified to hold the same
+duration, and Nextcloud is told to rescan afterwards so the library matches
+what is on disk.
+VFEOF
+                return 0 ;;
+            *) root="$1"; shift ;;
+        esac
+    done
+
+    if [[ -z "$root" ]]; then
+        root="${DATA_ROOT}/nextcloud-html/data"
+        [[ -d "$root" ]] || { log_error "No Nextcloud data directory. Give a path to scan."; return 1; }
+    fi
+
+    if [[ "$apply" == true ]]; then
+        video_fix "$root"
+    else
+        video_scan "$root"
+    fi
+}
+
 cmd_network_check() {
     local domain server_ip
     domain=$(state_get "domain" 2>/dev/null || echo "")
@@ -3125,6 +3179,7 @@ Commands:
   lan-setup           Configure LAN fast-path for direct local network access
   network-tune        Diagnose and optimize network for high-speed file transfers
   network-check       Test HTTPS reachability, SSL expiry, and DNS for all services
+  video-fix           Rewrap QuickTime video as MP4 so browsers and apps can play it
   agent [sub]         Action agent behind the dashboard buttons and Telegram bot
                         agent          show state and what it will run
                         agent setup    install the agent and the Telegram bot
@@ -3237,6 +3292,7 @@ main() {
         lan-setup)    cmd_lan_setup ;;
         network-tune)  cmd_network_tune ;;
         network-check) cmd_network_check ;;
+        video-fix)    cmd_video_fix "$@" ;;
         restart)      cmd_restart "$@" ;;
         watchdog)     cmd_watchdog "$@" ;;
         kuma-seed)    kuma_seed_http_monitors ;;

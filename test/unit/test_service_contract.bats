@@ -1302,3 +1302,53 @@ _repair_body() {
     [ -n "$gate_line" ] && [ -n "$poll_line" ] && [ "$gate_line" -lt "$poll_line" ] \
         || { echo "the gate is after the wait, so the wait still happens"; false; }
 }
+
+# ─── Video containers, and the LAN mask ──────────────────────────────────────
+
+# A rewrap copies streams; a conversion decodes and re-encodes them. On this
+# hardware that is the difference between 17 seconds at 66C and hours at full
+# load, which is the workload that has actually tripped the machine. The copy
+# flag is the whole safety property of this module.
+@test "the video fix rewraps and never re-encodes" {
+    local f="${REPO_ROOT}/lib/video.sh"
+    grep -q '\-c copy' "$f" || { echo "the rewrap does not stream-copy"; false; }
+    # Any codec selection means a re-encode.
+    grep -qE '\-c:v +(libx|h264_|hevc_)|\-c:a +(aac|libmp3)' "$f" \
+        && { echo "a re-encode has appeared in the rewrap path"; false; }
+    :
+}
+
+# The original is the only copy, and a file that exists is not a file that
+# plays. The new one is checked for the same duration before anything is
+# removed.
+@test "the video fix verifies before it replaces" {
+    local body
+    body=$(awk '/^_video_rewrap_one\(\)/,/^}/' "${REPO_ROOT}/lib/video.sh")
+    echo "$body" | grep -q 'show_entries format=duration' \
+        || { echo "nothing verifies the output before the original goes"; false; }
+    local verify_line remove_line
+    verify_line=$(echo "$body" | grep -n 'show_entries format=duration' | head -1 | cut -d: -f1)
+    remove_line=$(echo "$body" | grep -n 'rm -f "\$src"' | head -1 | cut -d: -f1)
+    [ -z "$remove_line" ] || [ "$verify_line" -lt "$remove_line" ] \
+        || { echo "the original is removed before the check"; false; }
+}
+
+# Decided by the file's own bytes, not its extension. Plenty of .mov files are
+# already MP4 inside, and rewrapping those is pointless work on gigabytes.
+@test "the video fix reads the container brand, not the extension" {
+    grep -q 'head -c 12' "${REPO_ROOT}/lib/video.sh" \
+        || { echo "the container brand is not read from the file"; false; }
+}
+
+# A /24 is right in most houses and silently wrong everywhere else: on the /22
+# a mesh system hands out, most of the wifi lands outside the allowlist and a
+# LAN-only service answers 403 to devices in the same room, with no remedy from
+# the client side.
+@test "the LAN allowlist takes its mask from the interface" {
+    local body
+    body=$(awk '/_authelia_write_lan_middleware\(\)/,/^}/' "${REPO_ROOT}/lib/services/authelia.sh")
+    echo "$body" | grep -q 'ip -o -4 addr show' \
+        || { echo "the netmask is assumed rather than read"; false; }
+    echo "$body" | grep -q 'ip_network' \
+        || { echo "the network address is not computed from the real prefix"; false; }
+}

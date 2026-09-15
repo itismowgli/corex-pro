@@ -6,6 +6,64 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.33.0] - 2026-09-15
+
+### Added
+- **`corex manage video-fix`, because iPhone video does not play in the
+  Nextcloud app and never has.** Every video an iPhone records is a `.mov`
+  whose container is QuickTime, and HTML5 video will not play a QuickTime
+  container. The H.264 and AAC inside decode in hardware on every device, so
+  the file is intact and only the wrapper is refused. Nextcloud reports the
+  mimetype correctly, the browser refuses it correctly, and nothing is broken
+  at any layer.
+
+  This gets reported as a size problem, because the files people notice are the
+  big ones, and size has nothing to do with it. Everything measurable said the
+  server was healthy: correct mimetype in the database, `206` to a ranged
+  request, a seek three gigabytes into a 3.8GB file answering in 68ms, 105MB/s
+  sustained on the LAN, and not one error in the log.
+
+  The command reports by default and changes nothing. `--apply` rewraps the
+  streams into an MP4 container with `-c copy`: no decode, no re-encode, no
+  quality change. Eight files, 24.7GB, took 128 seconds and peaked at 73.9C,
+  which is below the warn threshold and nowhere near the shed one. A re-encode
+  of the same library would take hours at full load, so it will never do one: a
+  file whose streams MP4 cannot legally hold is reported and left alone.
+
+  It decides from the file's own bytes rather than its extension, since plenty
+  of `.mov` files are already MP4 inside. The original is kept until the new
+  file is verified to hold the same duration, and Nextcloud is told to rescan
+  so its library matches what is on disk.
+
+### Fixed
+- **The LAN allowlist assumed a /24 and did not say so.** It derived the
+  allowed range from `SERVER_IP` by zeroing the last octet, which is right in
+  most houses and silently wrong everywhere else. On the /22 a mesh system
+  hands out, most of the wifi falls outside the range, so a LAN-only service
+  answers 403 to a device sitting in the same room. There is no remedy from the
+  client side for that and nothing reported which range had been chosen, so it
+  reads as the service being broken. The mask now comes from the interface that
+  actually holds `SERVER_IP`, found by address rather than by name so a Docker
+  bridge cannot be mistaken for the LAN, with the old behaviour as a fallback
+  that says it is guessing.
+
+- **Immich could not upload large video away from home, and said nothing
+  useful.** Gotcha #12 set Nextcloud's chunk size to 10MB because Cloudflare
+  refuses a request body over 100MB. The same limit applies to everything
+  published through the tunnel, and Immich sends each photo or video as one
+  body, so a 1GB clip is one 1GB body. Measured with a 150MB upload to the same
+  hostname: `201 Created` at 112MB/s direct to the LAN address, and `413`
+  through the tunnel, aborted after 3.2MB.
+
+  Nothing appears in the Immich log, because the request never reaches Immich.
+  From the phone it is a failed upload with no reason, and it only happens away
+  from home, which makes it read as a flaky network. There is no server-side
+  fix: the limit belongs to the CDN, paid plans raise it rather than removing
+  it, and an application that does not chunk cannot be made to. The credentials
+  file now says this plainly, with the measurement and the two paths that work.
+
+---
+
 ## [v3.32.0] - 2026-09-15
 
 ### Fixed

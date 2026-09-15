@@ -197,4 +197,13 @@ immich_repair() {
 immich_credentials() {
     echo "Immich: https://photos.${DOMAIN} (create admin on first visit)"
     echo "  DB pass: ${IMMICH_DB_PASS}"
+    echo
+    echo "  Large videos will not upload over mobile data, and this is not an Immich"
+    echo "  fault. Cloudflare's free plan refuses any single request body over 100MB,"
+    echo "  and Immich sends each photo or video as one body, so a 1GB clip is"
+    echo "  rejected with HTTP 413 partway through. Measured: a 150MB upload gives"
+    echo "  201 Created on the LAN and 413 through the tunnel."
+    echo "  On your own wifi it already goes direct and is not affected."
+    echo "  Away from home, put the phone on a VPN back to this box (Tailscale or"
+    echo "  WireGuard) so uploads take the same direct path."
 }
