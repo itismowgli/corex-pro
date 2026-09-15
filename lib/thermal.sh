@@ -42,6 +42,29 @@ THERMAL_RESTORE_BATCH="${THERMAL_RESTORE_BATCH:-3}"
 # Consecutive samples required before acting (hysteresis).
 THERMAL_CONFIRM_SAMPLES="${THERMAL_CONFIRM_SAMPLES:-3}"
 
+# ── The rung below shedding ──────────────────────────────────────────────────
+#
+# Stopping containers used to be the first thing the guardian did, and it is
+# drastic: Nextcloud disappearing is visible to everyone in the house. Lowering
+# the CPU ceiling is visible to nobody, and it removes heat at the source
+# rather than by removing the services that generate it. So the warn band,
+# which previously logged "no action" and did nothing at all, steps the clock
+# down, and the cooling path steps it back up. Shedding is unchanged and still
+# happens when this is not enough.
+#
+# The second effect matters as much as the first. With no gentle rung, a box
+# has to be capped low permanently to stay away from the drastic one: this
+# hardware ran at a flat 3000MHz against a 4680MHz maximum, giving up peak
+# performance every hour of every day to avoid a rare event. Once exceeding the
+# everyday ceiling is handled rather than feared, that ceiling can be raised.
+THERMAL_CLOCK_ENABLED="${THERMAL_CLOCK_ENABLED:-true}"
+# How far to move per sample: small enough that one hot reading does not halve
+# the machine, large enough to matter within a few samples.
+THERMAL_CLOCK_STEP_MHZ="${THERMAL_CLOCK_STEP_MHZ:-300}"
+# The floor. Below this the box is slow enough that shedding load is the better
+# answer, and that is the next rung anyway.
+THERMAL_CLOCK_MIN_MHZ="${THERMAL_CLOCK_MIN_MHZ:-1600}"
+
 thermal_install() {
     log_info "Installing thermal guardian..."
 
@@ -67,6 +90,13 @@ THERMAL_SHED_C=${THERMAL_SHED_C}
 THERMAL_CRITICAL_C=${THERMAL_CRITICAL_C}
 THERMAL_EMERGENCY_C=${THERMAL_EMERGENCY_C}
 THERMAL_RECOVER_C=${THERMAL_RECOVER_C}
+
+# The rung below shedding: lower the CPU ceiling before stopping anything.
+# A clock step is invisible; a stopped service is not. Set
+# THERMAL_CLOCK_ENABLED=false to go straight from warn to shedding.
+THERMAL_CLOCK_ENABLED=${THERMAL_CLOCK_ENABLED}
+THERMAL_CLOCK_STEP_MHZ=${THERMAL_CLOCK_STEP_MHZ}
+THERMAL_CLOCK_MIN_MHZ=${THERMAL_CLOCK_MIN_MHZ}
 
 # Consecutive samples above a threshold before acting (avoids reacting to
 # momentary spikes from a compile or a backup run).
@@ -105,7 +135,9 @@ TCEOF
         local k
         for k in THERMAL_WARN_C THERMAL_SHED_C THERMAL_CRITICAL_C \
                  THERMAL_EMERGENCY_C THERMAL_RECOVER_C \
-                 THERMAL_CONFIRM_SAMPLES THERMAL_RESTORE_BATCH; do
+                 THERMAL_CONFIRM_SAMPLES THERMAL_RESTORE_BATCH \
+                 THERMAL_CLOCK_ENABLED THERMAL_CLOCK_STEP_MHZ \
+                 THERMAL_CLOCK_MIN_MHZ; do
             grep -qE "^\s*${k}=" /etc/corex/thermal.conf && continue
             printf '%s=%s\n' "$k" "${!k}" >> /etc/corex/thermal.conf
             log_info "Added missing ${k} to thermal.conf"
@@ -156,6 +188,9 @@ THERMAL_SHED_TIER1="${THERMAL_SHED_TIER1:-ai}"
 THERMAL_SHED_TIER2="${THERMAL_SHED_TIER2:-monitoring productivity storage backup}"
 THERMAL_PROTECT="${THERMAL_PROTECT:-core security communication}"
 THERMAL_NEVER_SHED="${THERMAL_NEVER_SHED:-ups}"
+THERMAL_CLOCK_ENABLED="${THERMAL_CLOCK_ENABLED:-true}"
+THERMAL_CLOCK_STEP_MHZ="${THERMAL_CLOCK_STEP_MHZ:-300}"
+THERMAL_CLOCK_MIN_MHZ="${THERMAL_CLOCK_MIN_MHZ:-1600}"
 
 mkdir -p "$(dirname "$STATE")" "$(dirname "$LOG")" 2>/dev/null
 touch "$SHED_LIST" 2>/dev/null
@@ -163,6 +198,91 @@ touch "$SHED_LIST" 2>/dev/null
 say() {
     printf '%s thermal: %s\n' "$(date -Is)" "$1" >> "$LOG" 2>/dev/null
     logger -t corex-thermal "$1" 2>/dev/null || true
+}
+
+# ── The CPU ceiling, as a dial rather than a fixed setting ──────────────────
+#
+# The everyday ceiling is whatever /etc/corex/power.conf asked for, or the
+# hardware maximum when it asked for nothing. The guardian moves the live
+# ceiling below that while hot and walks it back up while cooling, so the
+# operator's setting is a target rather than a permanent cap.
+#
+# The floor to walk back up to has to be read from the config every time, not
+# remembered: raising POWER_CPU_MAX_MHZ must take effect without the guardian
+# needing to be told, and a remembered value from before a reboot would quietly
+# override it.
+CLOCK_TARGET_KHZ=0
+clock_ceiling_target() {
+    local mhz=""
+    if [[ -r /etc/corex/power.conf ]]; then
+        mhz=$(sed -n 's/^\s*POWER_CPU_MAX_MHZ=\s*"\?\([0-9]\+\)"\?\s*$/\1/p' \
+              /etc/corex/power.conf | tail -1)
+    fi
+    if [[ -n "$mhz" ]]; then
+        CLOCK_TARGET_KHZ=$(( mhz * 1000 ))
+    else
+        CLOCK_TARGET_KHZ=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq 2>/dev/null || echo 0)
+    fi
+}
+
+clock_now_khz() {
+    cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq 2>/dev/null || echo 0
+}
+
+# Apply to every policy, not just cpu0. Writing one policy on a multi-CCX part
+# leaves the other cores at their old ceiling, which looks like the step did
+# nothing because the hot cores are the ones that were never touched.
+clock_set_khz() {
+    local khz="$1" f n=0
+    for f in /sys/devices/system/cpu/cpu*/cpufreq/scaling_max_freq; do
+        [[ -w "$f" ]] || continue
+        echo "$khz" > "$f" 2>/dev/null && n=$((n + 1))
+    done
+    (( n > 0 ))
+}
+
+# Step down one notch. Returns 0 only when something actually moved, so the
+# caller can tell "cooled the machine" from "already at the floor and the next
+# rung is needed".
+clock_step_down() {
+    [[ "$THERMAL_CLOCK_ENABLED" == "true" ]] || return 1
+    local cur floor next
+    cur=$(clock_now_khz); (( cur > 0 )) || return 1
+    floor=$(( THERMAL_CLOCK_MIN_MHZ * 1000 ))
+    (( cur <= floor )) && return 1
+    next=$(( cur - THERMAL_CLOCK_STEP_MHZ * 1000 ))
+    (( next < floor )) && next=$floor
+    clock_set_khz "$next" || return 1
+    say "clock ${cur}kHz -> ${next}kHz (cooling before shedding anything)"
+    return 0
+}
+
+# Step back up, never past what the operator asked for.
+clock_step_up() {
+    [[ "$THERMAL_CLOCK_ENABLED" == "true" ]] || return 1
+    local cur next
+    cur=$(clock_now_khz); (( cur > 0 )) || return 1
+    clock_ceiling_target
+    (( CLOCK_TARGET_KHZ > 0 )) || return 1
+    (( cur >= CLOCK_TARGET_KHZ )) && return 1
+    next=$(( cur + THERMAL_CLOCK_STEP_MHZ * 1000 ))
+    (( next > CLOCK_TARGET_KHZ )) && next=$CLOCK_TARGET_KHZ
+    clock_set_khz "$next" || return 1
+    say "clock ${cur}kHz -> ${next}kHz (recovering)"
+    return 0
+}
+
+# Straight to the floor. Used once shedding has started: at that point the
+# machine is already in trouble and walking down in steps wastes samples.
+clock_floor() {
+    [[ "$THERMAL_CLOCK_ENABLED" == "true" ]] || return 1
+    local cur floor
+    cur=$(clock_now_khz); (( cur > 0 )) || return 1
+    floor=$(( THERMAL_CLOCK_MIN_MHZ * 1000 ))
+    (( cur <= floor )) && return 1
+    clock_set_khz "$floor" || return 1
+    say "clock ${cur}kHz -> ${floor}kHz (floor, shedding in progress)"
+    return 0
 }
 
 # ── Read the hottest relevant sensor ────────────────────────────────────────
@@ -403,6 +523,12 @@ fi
 
 case "$band" in
     critical)
+        # Measured omission: a load spike took this box from 56C to 92.6C
+        # between two samples, so the band went straight from normal to
+        # critical and the warn rung never ran. The ceiling stayed at its full
+        # value while 38 containers were stopped. Every band above warn drops
+        # the clock, not just the shed one.
+        clock_floor || true
         say "CRITICAL ${temp}C — shedding tier1+tier2"
         mapfile -t u < <(list_unmanaged)
         shed "unmanaged @ ${temp}C" "${u[@]:-}"
@@ -412,6 +538,8 @@ case "$band" in
         shed "tier2 @ ${temp}C" "${t2[@]:-}"
         ;;
     shed)
+        # Already past the gentle rung, so stop stepping and go to the floor.
+        clock_floor || true
         say "HIGH ${temp}C — shedding unmanaged + tier1"
         mapfile -t u < <(list_unmanaged)
         shed "unmanaged @ ${temp}C" "${u[@]:-}"
@@ -419,7 +547,14 @@ case "$band" in
         shed "tier1 @ ${temp}C" "${t1[@]:-}"
         ;;
     warn)
-        say "WARN ${temp}C (no action; shed threshold ${THERMAL_SHED_C}C)"
+        # The rung below shedding. A clock step removes heat without removing
+        # a service, so it is tried first and shedding is left to handle the
+        # case where it was not enough.
+        if clock_step_down; then
+            say "WARN ${temp}C — lowered the CPU ceiling, nothing stopped"
+        else
+            say "WARN ${temp}C — CPU ceiling already at its floor, shed threshold ${THERMAL_SHED_C}C"
+        fi
         ;;
     normal|recover)
         # Recovery cannot depend on reaching THERMAL_RECOVER_C. That is an
@@ -438,6 +573,14 @@ case "$band" in
         else
             restore "$THERMAL_RESTORE_BATCH"
         fi
+        # Services first, speed second. A stopped service is an outage and a
+        # lowered clock is not, so the shed list is drained before the ceiling
+        # is raised: giving the machine its speed back while Nextcloud is still
+        # down would be the wrong order, and would also make the next sample
+        # hotter for no benefit.
+        if [[ ! -s "$SHED_LIST" ]]; then
+            clock_step_up || true
+        fi
         ;;
 esac
 TGEOF
@@ -454,14 +597,28 @@ Type=oneshot
 ExecStart=/usr/local/bin/corex-thermal-guard.sh
 TSEOF
 
+    # Ten seconds, not thirty.
+    #
+    # This hardware climbs faster than a thirty second sample can follow.
+    # Gotcha #47 measured ten degrees in fifteen seconds under a compressing
+    # backup, and the guardian was left on thirty anyway. Measured again while
+    # testing the clock rung: a full-core encode took the box from 56C to 92.6C
+    # between two samples, so it went from normal straight to critical and the
+    # gentle rung never got a turn. A rung that only fires on gradual heating
+    # is not much of a rung.
+    #
+    # The cost is small because the normal path is cheap: read one sensor,
+    # check an empty shed list, maybe write a sysfs file. The expensive path is
+    # listing and stopping containers, and that only runs when something is
+    # already wrong.
     cat > /etc/systemd/system/corex-thermal.timer << TTEOF
 [Unit]
-Description=Run the CoreX thermal guardian every 30s
+Description=Run the CoreX thermal guardian every 10s
 
 [Timer]
 OnBootSec=45s
-OnUnitActiveSec=30s
-AccuracySec=5s
+OnUnitActiveSec=10s
+AccuracySec=2s
 
 [Install]
 WantedBy=timers.target

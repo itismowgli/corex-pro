@@ -1185,15 +1185,26 @@ _repair_body() {
 # reported every correctly sleeping Portainer as UNHEALTHY, because measured on
 # that image a clean `docker stop` leaves exit code 2, not 0 and not 143.
 # doctor would then "repair" it by starting it, defeating cold mode.
+# The logic moved into container_stopped_deliberately in common.sh, because
+# keeping a copy per module is how portainer came to accept 0/2/143 while
+# monitoring accepted only 0. The property is unchanged; only its address is.
 @test "the cold-mode check accepts the exit codes a clean stop really produces" {
-    run bash -c "awk '/^portainer_status\(\)/,/^}/' '${REPO_ROOT}/lib/services/portainer.sh' | grep -c '== 2'"
-    [ "$output" -ge 1 ]
+    local alts
+    # The one case line that lists the accepted codes, as a pipe-separated set.
+    alts=$(awk '/^container_stopped_deliberately\(\)/,/^}/' "${REPO_ROOT}/lib/common.sh" \
+           | grep -oE '^[[:space:]]*[0-9|]+\)' | tr -d ' )')
+    [ -n "$alts" ] || { echo "no exit-code case found in the helper"; false; }
+    local c
+    for c in 0 2 137 143; do
+        [[ "|${alts}|" == *"|${c}|"* ]] \
+            || { echo "exit code ${c} is not accepted as a deliberate stop (got: ${alts})"; false; }
+    done
 }
 
 # OOMKilled stays true until the container is recreated (gotcha #29), so a
 # container killed for memory must never read as a deliberate stop.
 @test "a cold container killed for memory is not reported as sleeping" {
-    run bash -c "awk '/^portainer_status\(\)/,/^}/' '${REPO_ROOT}/lib/services/portainer.sh' | grep -c 'OOMKilled'"
+    run bash -c "awk '/^container_stopped_deliberately\(\)/,/^}/' '${REPO_ROOT}/lib/common.sh' | grep -c 'OOMKilled'"
     [ "$output" -ge 1 ]
 }
 
@@ -1377,4 +1388,67 @@ _repair_body() {
     awk '/^_network_check_link\(\)/,/^}/' "${REPO_ROOT}/corex-manage.sh" \
         | grep -q 'command -v ethtool' \
         || { echo "no guard for a missing ethtool"; false; }
+}
+
+# ─── Cold mode, and the healer that could have rebooted a working box ────────
+
+# Cold mode stops containers on purpose, and docker stop SIGKILLs anything that
+# does not exit within the timeout, so a deliberately slept container exits 137.
+# A check that accepted only 0 reported monitoring UNHEALTHY permanently on a
+# box that was working. OOMKilled is what separates that from a real failure,
+# because a container killed for memory also exits 137.
+@test "a deliberately stopped container is recognised by exit code and OOM flag" {
+    local body
+    body=$(awk '/^container_stopped_deliberately\(\)/,/^}/' "${REPO_ROOT}/lib/common.sh")
+    echo "$body" | grep -q '137' \
+        || { echo "137 is not accepted, so cold mode reads as broken"; false; }
+    echo "$body" | grep -q 'OOMKilled' \
+        || { echo "an OOM kill would be mistaken for a deliberate stop"; false; }
+}
+
+# The same logic lived in two modules with two different exit-code lists, which
+# is how they drifted: portainer accepted 0/2/143 and monitoring only 0.
+@test "cold-mode checks share one implementation" {
+    local offenders=""
+    for f in "${REPO_ROOT}"/lib/services/monitoring.sh "${REPO_ROOT}"/lib/services/portainer.sh; do
+        grep -q 'container_stopped_deliberately' "$f" || offenders+=" $(basename "$f")"
+        # A local exit-code list means the copy is back.
+        grep -qE 'ExitCode.*==.*(0|2|137|143)' "$f" && offenders+=" $(basename "$f"):inline"
+    done
+    [ -z "$offenders" ] || { echo "cold-mode logic duplicated or missing:$offenders"; false; }
+}
+
+# A status verdict comes from a module and can be wrong; whether a container
+# stopped for a reason is a fact. Before rebooting a working machine the healer
+# has to check the fact, or one bad verdict reboots the box every six hours
+# forever.
+@test "the healer verifies container state before believing a verdict" {
+    # Read the whole file, not an awk range: the healer is a heredoc containing
+    # its own functions, so the first column-0 brace ends say(), not the
+    # function being searched.
+    grep -q 'OOMKilled' "${REPO_ROOT}/lib/recovery.sh" \
+        || { echo "the healer trusts the status verdict without checking containers"; false; }
+    grep -q 'thermal-shed.list' "${REPO_ROOT}/lib/recovery.sh" \
+        || { echo "the healer would fight the thermal guardian"; false; }
+}
+
+# A reboot loop is worse than the fault it clears, so the last reboot is
+# remembered on disk rather than in the process that is about to be replaced.
+@test "automatic reboot has a cooldown held on disk" {
+    grep -q 'RECOVERY_REBOOT_COOLDOWN_SEC' "${REPO_ROOT}/lib/recovery.sh" \
+        || { echo "nothing stops a reboot loop"; false; }
+    grep -q 'LAST_REBOOT' "${REPO_ROOT}/lib/recovery.sh" \
+        || { echo "the last reboot is not persisted, so a reboot resets the memory of it"; false; }
+}
+
+# An Intel board has no sp5100_tco and an AMD one has no iTCO_wdt. Loading the
+# wrong module does nothing at all: no device, no watchdog, and nothing says so.
+@test "the watchdog module is probed rather than assumed" {
+    local body
+    body=$(awk '/^_recovery_watchdog_module\(\)/,/^}/' "${REPO_ROOT}/lib/recovery.sh")
+    echo "$body" | grep -q '/dev/watchdog' \
+        || { echo "it never checks whether a device actually appeared"; false; }
+    local n
+    n=$(echo "$body" | grep -oE 'sp5100_tco|iTCO_wdt|wdat_wdt' | sort -u | wc -l)
+    [ "$n" -ge 2 ] || { echo "only one board family is covered"; false; }
 }

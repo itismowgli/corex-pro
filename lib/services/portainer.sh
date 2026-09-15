@@ -148,12 +148,8 @@ portainer_status() {
         # OOMKilled is checked separately because it stays true until the
         # container is recreated (gotcha #29), so a container killed for memory
         # must never be read as a deliberate stop.
-        local code oom
-        code=$(docker inspect -f '{{.State.ExitCode}}' portainer 2>/dev/null)
-        oom=$(docker inspect -f '{{.State.OOMKilled}}' portainer 2>/dev/null)
         if declare -f state_get >/dev/null && [[ "$(state_get cold_portainer 2>/dev/null)" == true ]] &&
-            [[ "$oom" != "true" ]] &&
-            [[ "$code" == 0 || "$code" == 2 || "$code" == 143 ]]; then echo "SLEEPING"
+            container_stopped_deliberately portainer; then echo "SLEEPING"
         else echo "UNHEALTHY"; fi
     else echo "MISSING"; fi
 }

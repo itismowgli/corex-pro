@@ -6,6 +6,67 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.35.0] - 2026-09-16
+
+### Added
+- **A rung below shedding, so the guardian stops services last instead of
+  first.** The warn band logged "no action" and did nothing, which meant the
+  first thing the guardian ever did was stop containers. Nobody notices a clock
+  step; everybody notices Nextcloud disappearing. The warn band now lowers the
+  CPU ceiling, the cooling path raises it again, and shedding is unchanged
+  underneath.
+
+  Measured end to end by forcing the band: the ceiling walked 3000 to 2700 to
+  2400 to 2100 MHz after the three-sample hysteresis, then back up and stopped
+  exactly at the operator's configured value. Every core moved, not just cpu0,
+  which matters because writing one policy leaves the hot cores untouched and
+  looks like the step did nothing.
+
+- **Self-recovery, so a wedged box fixes itself.** Two failures that look
+  identical from outside and need opposite answers. A kernel hang cannot be
+  fixed by software on the machine, because no software on the machine is
+  running, so the board's watchdog is enabled and systemd pets it; if systemd
+  stops, the hardware resets. Services being down while the box is fine is
+  fixable in software, so a healer restarts what is actually broken and reboots
+  only after that has failed for long enough to mean something else is wrong,
+  with a cooldown held on disk so a reboot loop cannot start.
+
+  On this hardware the watchdog is `sp5100_tco`; the module is probed rather
+  than assumed, because loading the wrong one does nothing at all: no device
+  appears, systemd runs without a watchdog, and nothing says so.
+
+### Fixed
+- **A deliberately sleeping service reported as broken, forever.** Cold mode
+  stops containers on purpose and `docker stop` SIGKILLs anything that does not
+  exit within the timeout, so a slept container exits 137. The monitoring
+  module's check accepted only exit code 0, so it reported UNHEALTHY
+  permanently on a perfectly working box.
+
+  That was harmless while nothing acted on it. The healer added above would
+  have restarted a healthy service every five minutes and then rebooted the
+  machine every six hours, forever, which is the exact failure the healer
+  exists to prevent. Found by running it.
+
+  The logic now lives in one helper rather than one copy per module, which is
+  how the two drifted: portainer accepted 0, 2 and 143 while monitoring
+  accepted only 0. `OOMKilled` is still what separates a deliberate stop from a
+  container killed for memory, since both exit 137.
+
+- **The critical band sheds containers without lowering the clock.** A
+  full-core encode took the box from 56C to 92.6C between two samples, so the
+  band went from normal straight to critical and the new warn rung never ran.
+  Every band above warn drops the ceiling now. Same load, before and after: 38
+  containers shed, then 4, with the temperature held around 75C instead of
+  reaching 92.6C.
+
+- **The guardian sampled slower than the hardware heats.** Gotcha #47 measured
+  ten degrees in fifteen seconds on this class of machine and the guardian was
+  left on a thirty second timer anyway, which is how a spike skips the gentle
+  rung entirely. Ten seconds now. The normal path is cheap by design: read one
+  sensor, check an empty list, maybe write a sysfs file.
+
+---
+
 ## [v3.34.0] - 2026-09-15
 
 ### Added

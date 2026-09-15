@@ -1003,9 +1003,14 @@ monitoring_status() {
 
     for c in "${required[@]}"; do
         if ! container_running "$c"; then
+            # Cold mode stops Grafana on purpose. The exit code test used to
+            # be "== 0", and Grafana exits 137 under cold mode every time,
+            # because docker stop SIGKILLs it after the timeout. So the module
+            # reported UNHEALTHY forever on a box that was working perfectly,
+            # and anything acting on that verdict would act forever.
             if [[ "$c" == grafana ]] && declare -f state_get >/dev/null 2>&1 &&
                [[ "$(state_get cold_grafana 2>/dev/null)" == true ]] && container_exists grafana &&
-               [[ "$(docker inspect -f '{{.State.ExitCode}}' grafana 2>/dev/null)" == 0 ]]; then
+               container_stopped_deliberately grafana; then
                 continue
             fi
             container_exists "$c" && { echo "UNHEALTHY"; return 0; }

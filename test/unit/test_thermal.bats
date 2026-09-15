@@ -337,3 +337,80 @@ _generated() {
     echo "$body" | grep -q "docker ps --format '{{.Names}}'"
     echo "$body" | grep -q 'would not stop'
 }
+
+# ─── The rung below shedding ─────────────────────────────────────────────────
+
+# The warn band used to log "no action" and do nothing, so the first thing the
+# guardian ever did was stop services. A clock step removes heat without
+# removing a service and has to be tried first.
+@test "the warn band lowers the clock instead of doing nothing" {
+    local f="${REPO_ROOT}/lib/thermal.sh"
+    local body
+    body=$(awk '/^    warn\)/,/^        ;;/' "$f")
+    echo "$body" | grep -q 'clock_step_down' \
+        || { echo "the warn band still takes no action"; false; }
+    echo "$body" | grep -q 'no action' \
+        && { echo "the warn band still claims to do nothing"; false; }
+    :
+}
+
+# Writing one policy on a multi-CCX part leaves the other cores at their old
+# ceiling, and the hot cores are exactly the ones that were never touched. That
+# reads as the step having had no effect.
+@test "a clock step applies to every CPU policy" {
+    awk '/^clock_set_khz\(\)/,/^}/' "${REPO_ROOT}/lib/thermal.sh" \
+        | grep -q 'cpu\*/cpufreq/scaling_max_freq' \
+        || { echo "the clock is set on one policy only"; false; }
+}
+
+# A stopped service is an outage; a lowered clock is not. Giving the machine
+# its speed back while something is still shed is the wrong order and makes the
+# next sample hotter for no benefit.
+@test "recovery restores services before it raises the clock" {
+    local body restore_line clock_line
+    body=$(awk '/^    normal\|recover\)/,/^        ;;/' "${REPO_ROOT}/lib/thermal.sh")
+    echo "$body" | grep -q 'clock_step_up' \
+        || { echo "the clock is never raised again, so the box stays slow"; false; }
+    echo "$body" | grep -q 'SHED_LIST' \
+        || { echo "the clock is raised without checking whether anything is still shed"; false; }
+    restore_line=$(echo "$body" | grep -n 'restore ' | head -1 | cut -d: -f1)
+    clock_line=$(echo "$body" | grep -n 'clock_step_up' | head -1 | cut -d: -f1)
+    [ -n "$restore_line" ] && [ -n "$clock_line" ] && [ "$restore_line" -lt "$clock_line" ] \
+        || { echo "the clock is raised before services are restored"; false; }
+}
+
+# Raising POWER_CPU_MAX_MHZ must take effect without telling the guardian, and
+# a value remembered from before a reboot would quietly override the operator.
+@test "the clock ceiling is re-read from config, not remembered" {
+    awk '/^clock_ceiling_target\(\)/,/^}/' "${REPO_ROOT}/lib/thermal.sh" \
+        | grep -q 'power.conf' \
+        || { echo "the target ceiling does not come from power.conf"; false; }
+}
+
+# Once shedding starts the machine is already in trouble, so walking down in
+# 300MHz steps wastes samples that matter.
+@test "shedding drops the clock straight to the floor" {
+    awk '/^    shed\)/,/^        ;;/' "${REPO_ROOT}/lib/thermal.sh" \
+        | grep -q 'clock_floor' \
+        || { echo "shedding does not also drop the clock"; false; }
+}
+
+# A load spike took a real box from 56C to 92.6C between two 30s samples, so
+# the band went from normal straight to critical and the warn rung never ran.
+# The ceiling sat at full value while 38 containers were stopped. Every band
+# above warn has to drop the clock, not just the shed one.
+@test "the critical band also drops the clock" {
+    awk '/^    critical\)/,/^        ;;/' "${REPO_ROOT}/lib/thermal.sh" \
+        | grep -q 'clock_floor' \
+        || { echo "critical sheds containers without lowering the clock"; false; }
+}
+
+# Gotcha #47 measured ten degrees in fifteen seconds on this class of hardware.
+# A thirty second sample cannot follow that, which is how a spike skips the
+# gentle rung entirely.
+@test "the guardian samples faster than the hardware heats" {
+    local iv
+    iv=$(grep -oE '^OnUnitActiveSec=[0-9]+' "${REPO_ROOT}/lib/thermal.sh" | grep -oE '[0-9]+' | head -1)
+    [ -n "$iv" ] && [ "$iv" -le 15 ] \
+        || { echo "sample interval ${iv}s is too slow for a box that climbs 10C in 15s"; false; }
+}

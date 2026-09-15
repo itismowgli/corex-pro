@@ -157,6 +157,35 @@ require_cmd() {
 
 # Check if a docker container is currently running.
 # Returns 0 if running, 1 if not.
+# Did this container stop because something meant it to?
+#
+# Cold mode stops containers on purpose, so a stopped one is only a fault when
+# nothing intended it. Telling those apart needs two facts and both matter.
+#
+# The exit code says how it ended. 0 is a clean exit, 143 is SIGTERM obeyed,
+# 2 is an application's own quit path, and 137 is SIGKILL, which is what
+# `docker stop` sends when a container does not exit within the timeout. That
+# last one is the common case and it was missing: Grafana under cold mode exits
+# 137 every time, so a check that accepted only 0 reported a deliberately
+# sleeping service as broken forever.
+#
+# OOMKilled is what separates that from a real failure, because a container
+# killed for memory also exits 137. Without it, "ran out of memory" and "was
+# put to sleep" are the same number.
+#
+# This lived in two modules with two different lists, which is how they drifted
+# apart. One copy now.
+container_stopped_deliberately() {
+    local name="$1" code oom
+    oom=$(docker inspect -f '{{.State.OOMKilled}}' "$name" 2>/dev/null)
+    [[ "$oom" == "true" ]] && return 1
+    code=$(docker inspect -f '{{.State.ExitCode}}' "$name" 2>/dev/null)
+    case "$code" in
+        0|2|137|143) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 container_running() {
     local name="$1"
     docker inspect -f '{{.State.Running}}' "$name" 2>/dev/null | grep -q '^true$'

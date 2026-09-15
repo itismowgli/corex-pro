@@ -36,6 +36,7 @@ source "${SCRIPT_DIR}/lib/wizard.sh"
 # here costs nothing.
 source "${SCRIPT_DIR}/lib/kuma.sh"
 source "${SCRIPT_DIR}/lib/video.sh"
+source "${SCRIPT_DIR}/lib/recovery.sh"
 
 # ── v1 → v2 migration ────────────────────────────────────────────────────────
 # Called automatically when state.json is missing but CoreX appears to be installed
@@ -3228,6 +3229,7 @@ Commands:
   network-tune        Diagnose and optimize network for high-speed file transfers
   network-check       Test HTTPS reachability, SSL expiry, and DNS for all services
   video-fix           Rewrap QuickTime video as MP4 so browsers and apps can play it
+  self-heal           Install the hardware watchdog and the service healer
   agent [sub]         Action agent behind the dashboard buttons and Telegram bot
                         agent          show state and what it will run
                         agent setup    install the agent and the Telegram bot
@@ -3341,6 +3343,7 @@ main() {
         network-tune)  cmd_network_tune ;;
         network-check) cmd_network_check ;;
         video-fix)    cmd_video_fix "$@" ;;
+        self-heal)    recovery_install ;;
         restart)      cmd_restart "$@" ;;
         watchdog)     cmd_watchdog "$@" ;;
         kuma-seed)    kuma_seed_http_monitors ;;
