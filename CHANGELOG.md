@@ -10,10 +10,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ### Fixed
 - **Every install had its own DNS pointed away from itself.** `adguard_deploy`
-  wrote `nameserver 1.1.1.1` and `8.8.8.8` and locked the file, which is right
-  as a bootstrap, since AdGuard is not running yet and a box with no DNS cannot
-  pull the image that would give it DNS. Nothing ever switched it back, so those
-  two lines were the permanent configuration of every CoreX install.
+  wrote two public resolvers into `/etc/resolv.conf` and locked the file, which
+  is right as a bootstrap, since AdGuard is not running yet and a box with no
+  DNS cannot pull the image that would give it DNS. Nothing ever switched it
+  back, so those two lines were the permanent configuration of every CoreX
+  install.
 
   Measured on a live server, asking it for a service it was itself running:
   5.03s of DNS and 6.60s in total, against 0.04s pinned to the LAN address and
