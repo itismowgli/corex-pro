@@ -137,6 +137,45 @@ _jellyfin_media_mounts() {
 
 # ── Functions ─────────────────────────────────────────────────────────────────
 
+# Keep a server nobody has claimed off the internet.
+#
+# The first visit to a fresh Jellyfin is a setup wizard with no password on it,
+# and whoever finishes it becomes the administrator. That would be survivable
+# if the hostname were a secret, and it is not: issuing its certificate
+# publishes the name to the public Certificate Transparency logs, so it is
+# discoverable within minutes of deploying, by anyone, without guessing.
+#
+# So a new install is restricted to the LAN and says so, rather than being
+# published and hoping the owner gets there first. The restriction is lifted by
+# the owner once an account exists, which is the moment the wizard stops being
+# a way in.
+#
+# Only on a first install. An operator who has deliberately published this is
+# not overruled on every repair, which would be gotcha #22 pointed the wrong
+# way: regenerating config is right, re-imposing a policy decision is not.
+_jellyfin_guard_unclaimed_wizard() {
+    # An existing install has already been through this.
+    declare -f state_service_is_installed >/dev/null 2>&1 \
+        && state_service_is_installed "jellyfin" && return 0
+    # Nothing to protect without a hostname: a LAN-only install is already
+    # only on the LAN.
+    [[ -n "${DOMAIN:-}" ]] || return 0
+    [[ -w /etc/corex/authelia.conf ]] || return 0
+
+    local cur=""
+    # shellcheck source=/dev/null
+    cur="$(. /etc/corex/authelia.conf 2>/dev/null; printf '%s' "${AUTHELIA_LAN_ONLY:-}")"
+    case " ${cur} " in *" jellyfin "*) return 0 ;; esac
+
+    sed -i "s|^AUTHELIA_LAN_ONLY=.*|AUTHELIA_LAN_ONLY=\"${cur:+${cur} }jellyfin\"|" \
+        /etc/corex/authelia.conf 2>/dev/null || return 0
+    log_warning "Jellyfin starts restricted to your local network, because its setup"
+    log_warning "  wizard has no password until you create an account."
+    log_warning "  Claim it from home, then publish it:"
+    log_warning "    sudo corex manage lan-only remove jellyfin"
+    log_warning "    sudo corex manage repair jellyfin"
+}
+
 jellyfin_dirs() {
     mkdir -p "${DOCKER_ROOT}/jellyfin" \
              "${DATA_ROOT}/jellyfin/config" \
@@ -153,6 +192,12 @@ jellyfin_firewall() {
 jellyfin_deploy() {
     jellyfin_dirs
     local dir="${DOCKER_ROOT}/jellyfin"
+
+    # Before the label is computed, not after: sso_label_for reads the config
+    # this writes, so setting it afterwards would leave the first install
+    # published and only take effect on the next repair, which is the one run
+    # where it was actually needed.
+    _jellyfin_guard_unclaimed_wizard
 
     local gpu_groups media_mounts dri_device="" sso_label=""
     gpu_groups="$(_jellyfin_gpu_groups)"
@@ -235,6 +280,12 @@ jellyfin_repair() {
 
 jellyfin_credentials() {
     echo "Jellyfin: https://jellyfin.${DOMAIN}"
+    echo "  BEFORE you add a library, untick 'Enable trickplay image extraction'."
+    echo "    It is on by default and it decodes every video from start to end to"
+    echo "    build the scrub-bar thumbnails. On a few hours of recordings that is"
+    echo "    hours at full CPU, which is the one workload that overheats this class"
+    echo "    of hardware. Chapter image extraction does the same, more cheaply."
+    echo "    Everything still plays, and seeking still works, without either."
     echo "  First visit runs the setup wizard. The account you create there is the"
     echo "  administrator, and the wizard is reachable by anyone until you finish it."
     echo "  Add libraries from: /media/nextcloud/<account>/files/<folder>"

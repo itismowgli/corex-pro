@@ -6,6 +6,84 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.32.0] - 2026-09-15
+
+### Fixed
+- **Every install had its own DNS pointed away from itself.** `adguard_deploy`
+  wrote `nameserver 1.1.1.1` and `8.8.8.8` and locked the file, which is right
+  as a bootstrap, since AdGuard is not running yet and a box with no DNS cannot
+  pull the image that would give it DNS. Nothing ever switched it back, so those
+  two lines were the permanent configuration of every CoreX install.
+
+  Measured on a live server, asking it for a service it was itself running:
+  5.03s of DNS and 6.60s in total, against 0.04s pinned to the LAN address and
+  0.01s straight to the container. The 5.03s is a resolver timeout, paid on
+  every request the box makes to itself, which then leaves over the internet and
+  returns through the tunnel. Uptime Kuma runs on the box, so its checks took
+  that path too, and anything restricted to the LAN is answered 403 through the
+  tunnel and could never pass its own monitor.
+
+  The switch now happens once AdGuard is up, and it proves the end state rather
+  than the precondition: it writes the file, runs a real lookup, and puts the
+  public resolvers back if that lookup fails. AdGuard can hold port 53 and still
+  not resolve, and writing a resolver the box cannot use is worse than leaving
+  it wrong, because it cannot then pull the image that would repair AdGuard.
+  Loopback rather than the LAN address, so it survives the machine changing IP,
+  and no public fallback on purpose: glibc only falls through after a timeout,
+  so a slow AdGuard would bring the slow path back at random. The recovery
+  commands are written into the file, where they will be read at the moment they
+  are needed.
+
+  Verified by breaking it deliberately on a running box and repairing: 5.04s to
+  the public edge before, 0.0012s to the LAN address after.
+
+- **A new Jellyfin was published to the internet with an unclaimed setup
+  wizard.** The first visit to a fresh install has no password and whoever
+  finishes it becomes the administrator. That would be survivable if the
+  hostname were a secret, and it is not: issuing its certificate publishes the
+  name to the public Certificate Transparency logs, so it is discoverable within
+  minutes by anyone, without guessing. A new install now starts restricted to
+  the local network and prints the two commands that publish it once an account
+  exists. Only on a first install, so an operator who has deliberately published
+  it is not overruled on every repair.
+
+- **Compose generation reached the network.** The static ffmpeg fetch was placed
+  in `_nextcloud_write_compose`, which both deploy and repair call, so
+  `corex manage repair nextcloud`, the command someone runs when the service is
+  already broken, depended on a 145MB transfer completing. It also turned the
+  smoke suite into a download. The fetch moved to `_dirs`, where preparing the
+  filesystem belongs, `COREX_NO_DOWNLOADS=1` declines it for an air-gapped
+  install or a test, and a connect timeout means a dead network fails instead of
+  hanging.
+
+- **The AdGuard readiness wait ran where there was no AdGuard.** Polling for
+  port 53 is correct on a real box and pure delay anywhere else, and it took the
+  smoke suite from 19 seconds to 141. It is gated on the container actually
+  being there.
+
+### Changed
+- **The installer explains the one answer that cannot be changed by rerunning
+  it.** The mode screen asked "How do you want to access your services?" and
+  offered three one-line options, so choosing LAN-only without knowing it drops
+  thirteen services was easy and had to be reinstalled to undo. It now says what
+  each choice means, that a domain has to be managed by Cloudflare and needs no
+  router configuration or static IP, which services are unavailable without one
+  and why, and that adding a domain later is one command rather than a
+  reinstall.
+
+  The count and the list are read from the modules rather than written down. A
+  number typed into that screen is wrong the first time a module is added, and
+  nothing fails when it drifts: the wizard simply tells the next person
+  something untrue at the one point where they cannot check it. The first draft
+  of this entry said nine, and the modules said thirteen.
+
+  The domain and email prompts say what a valid answer looks like, what is
+  rejected and why. The domain prompt shows the shape to type and the shape not
+  to, since pasting from a browser address bar is the usual mistake, and the
+  email prompt says what the address is actually for.
+
+---
+
 ## [v3.31.0] - 2026-09-15
 
 ### Added

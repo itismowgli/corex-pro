@@ -158,12 +158,16 @@ _nextcloud_fetch_ffmpeg() {
     if [[ -x "${dir}/ffmpeg" ]] && "${dir}/ffmpeg" -version >/dev/null 2>&1; then
         return 0
     fi
+    # An explicit way to say no. Set COREX_NO_DOWNLOADS=1 for an air-gapped
+    # install, or anywhere a deploy must not reach the network. The mount is
+    # then simply not written and everything else works.
+    [[ -n "${COREX_NO_DOWNLOADS:-}" ]] && return 1
     log_info "Fetching a static ffmpeg for Nextcloud video thumbnails..."
     mkdir -p "$dir"
     local tmp
     tmp="$(mktemp -d)" || return 1
     local url="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz"
-    if ! curl -fsSL --max-time 600 -o "${tmp}/f.tar.xz" "$url"; then
+    if ! curl -fsSL --connect-timeout 10 --max-time 300 -o "${tmp}/f.tar.xz" "$url"; then
         rm -rf "$tmp"
         log_warning "Could not fetch ffmpeg, so Nextcloud video thumbnails stay off"
         return 1
@@ -203,6 +207,14 @@ nextcloud_dirs() {
     # www-data inside the Nextcloud container runs as uid 33
     chown -R 33:33 "${DATA_ROOT}/nextcloud-html"
     chown -R 1000:1000 "${DATA_ROOT}/nextcloud-db"
+
+    # Here rather than in _nextcloud_write_compose, which has to stay pure.
+    # Compose generation runs on every repair, so a download inside it makes a
+    # repair depend on the network: on a box that cannot reach GitHub, the one
+    # command that fixes a broken service would sit waiting on an optional
+    # thumbnail feature. Preparing the filesystem is the right place for a file
+    # to arrive, and the mount is written only if it did.
+    _nextcloud_fetch_ffmpeg || true
 }
 
 nextcloud_firewall() {
@@ -234,10 +246,6 @@ _nextcloud_write_compose() {
     local dir="${DOCKER_ROOT}/nextcloud"
     _nextcloud_whiteboard_secret
 
-    # Fetch before the mounts are computed, so a first run gets the binary and
-    # the mount in the same pass rather than needing a second repair. A failure
-    # is not fatal: thumbnails are worth less than the file server.
-    _nextcloud_fetch_ffmpeg || true
     local ffmpeg_mounts
     ffmpeg_mounts="$(_nextcloud_ffmpeg_mounts)"
 

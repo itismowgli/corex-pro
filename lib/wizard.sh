@@ -493,10 +493,54 @@ Requirements:
   • (Optional) A domain name managed on Cloudflare"
 
     # ── Mode selection ───────────────────────────────────────────────────────
-    MODE=$(_menu "Installation Mode" "How do you want to access your services?" \
-        "with-domain"    "Full setup with domain + Cloudflare Tunnel + HTTPS" \
-        "local-only"     "LAN-only access (no domain required)" \
-        "configure-later" "Install now, configure domain later") || return 1
+    #
+    # This is the one answer that changes what gets installed, so it is
+    # explained before it is asked. Picking "local-only" without knowing it
+    # drops nine services is the mistake that has to be reinstalled to undo.
+    # Counted from the modules, never written down. A number typed into this
+    # message is wrong the first time a module is added, and nothing fails when
+    # it drifts: the wizard simply tells the next person something untrue at
+    # the one point where they cannot check it.
+    local _nd_count=0 _nd_names="" _n
+    while read -r _n; do
+        [[ -n "$_n" ]] || continue
+        if ! service_works_without_domain "$_n"; then
+            _nd_count=$((_nd_count + 1))
+            _nd_names+="${_nd_names:+, }${_n}"
+        fi
+    done < <(all_service_names)
+
+    _msgbox "How you reach your services" \
+"There are two real choices here, and the difference is whether your
+services get a name on the internet.
+
+WITH A DOMAIN
+  You reach things at names like nextcloud.yourdomain.com, from
+  anywhere, with certificates browsers already trust.
+
+  You need: a domain whose DNS is managed by Cloudflare. It is free,
+  and a domain costs a few dollars a year. You do NOT need to open
+  any ports on your router, and you do NOT need a static IP.
+
+WITHOUT A DOMAIN
+  Everything runs, and you reach it by IP address on your home
+  network only. Nothing is published to the internet.
+
+  ${_nd_count} services need a name to work at all and are not offered.
+  Anything with a login page or a certificate has nowhere to live
+  without one:
+
+    ${_nd_names}
+
+  You can add a domain later and install them then.
+
+Not sure? Choose local-only. Nothing you do now is wasted: adding a
+domain later is one command and no reinstall."
+
+    MODE=$(_menu "Installation Mode" "How do you want to reach your services?" \
+        "with-domain"    "I have a domain on Cloudflare (full setup, reachable anywhere)" \
+        "local-only"     "No domain (home network only, ${_nd_count} services unavailable)" \
+        "configure-later" "Install the LAN-only set now, add a domain later") || return 1
 
     export MODE
 
@@ -506,17 +550,39 @@ Requirements:
     if [[ "$MODE" == "with-domain" ]]; then
         while true; do
             DOMAIN=$(_inputbox "Domain Configuration" \
-                "Enter your domain name\nExample: myhomelab.com" "") || return 1
+"Your domain, with no https:// and no www.
+
+  Type:  myhomelab.com
+  Not:   https://www.myhomelab.com
+
+Its DNS must be managed by Cloudflare. If you bought the domain
+somewhere else, add it to a free Cloudflare account and point the
+registrar at the nameservers Cloudflare gives you.
+
+Your services will answer at names underneath it, such as
+nextcloud.myhomelab.com. You do not create those records yourself." "") || return 1
             validate_domain "$DOMAIN" && break
-            _msgbox "Invalid Domain" "Please enter a valid domain (e.g., example.com)"
+            _msgbox "That domain does not look right" \
+"Enter the bare domain only: example.com, or sub.example.com.
+
+Leave off https://, any trailing slash, and any path. If you pasted
+it from a browser address bar, that is usually the problem."
         done
 
         while true; do
             EMAIL=$(_inputbox "Email Address" \
-                "Email for Let's Encrypt SSL certificates\nExample: admin@${DOMAIN}" \
+"An address you actually read.
+
+Let's Encrypt uses it to warn you if a certificate is about to expire
+without having renewed itself. That is the one message here worth
+receiving, because the symptom otherwise is every service showing a
+browser security warning on the same morning.
+
+It is not published anywhere and nothing else is sent to it." \
                 "admin@${DOMAIN}") || return 1
             validate_email "$EMAIL" && break
-            _msgbox "Invalid Email" "Please enter a valid email address"
+            _msgbox "That email does not look right" \
+"It needs an @ and a domain after it, for example admin@${DOMAIN}"
         done
     fi
     export DOMAIN EMAIL

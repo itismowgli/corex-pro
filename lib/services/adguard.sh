@@ -43,6 +43,104 @@ adguard_firewall() {
     ufw allow 5353/udp comment 'mDNS (Avahi/Bonjour)'       2>/dev/null || true
 }
 
+# Point the host's own resolver at AdGuard, once AdGuard can answer.
+#
+# The public resolvers written during deploy are a bootstrap step: AdGuard is
+# not running yet at that point, and a box with no working DNS cannot pull the
+# image that would fix it. They were never meant to be the end state, and for a
+# long time they were, which cost every install the LAN fast path from the box
+# itself.
+#
+# What that looked like, measured on a live server. The host resolved its own
+# hostnames to the Cloudflare edge, so a request to a service it is itself
+# running went out to the internet and came back through the tunnel:
+#
+#   nextcloud.DOMAIN from the host   dns 5.03s   ttfb 6.60s
+#   the same, pinned to the LAN IP   dns 0.00s   ttfb 0.04s
+#   the container, direct                        ttfb 0.01s
+#
+# The 5.03s is a resolver timeout, paid on every request the box makes to
+# itself. Uptime Kuma runs on the box, so its checks take that path too, and
+# anything restricted to the LAN is answered 403 through the tunnel and can
+# never pass its own monitor.
+#
+# Loopback rather than the LAN address, so it does not break when the LAN
+# interface changes IP. No public fallback on purpose: glibc only falls through
+# after a timeout, so a slow AdGuard would intermittently hand back the
+# Cloudflare address and reintroduce the 6.6s path at random, which is far
+# harder to diagnose than a clean failure. AdGuard is already the only resolver
+# every other device in the house has.
+_adguard_own_the_resolver() {
+    # Only ever touch the host resolver when AdGuard is actually there to take
+    # it over. Guarded with declare -f so a module sourced without common.sh
+    # does nothing rather than dying on a missing command (gotcha #44), which
+    # is also what keeps the readiness wait below out of the test suite: there
+    # is no container to wait for, so there is nothing to wait.
+    declare -f container_running >/dev/null 2>&1 || return 0
+    container_running adguard || {
+        log_warning "AdGuard is not running, so the host keeps its bootstrap DNS"
+        return 0
+    }
+
+    # Wait for something to be listening on 53, then prove the end state
+    # rather than the precondition. A resolv.conf pointing at a resolver that
+    # does not answer is a box that cannot pull an image, including the image
+    # that would repair AdGuard, so the switch is verified by a real lookup and
+    # rolled back if that lookup fails.
+    local up="" i
+    for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+        if ss -lnu 2>/dev/null | grep -q ':53 '; then up=yes; break; fi
+        sleep 2
+    done
+    if [[ -z "$up" ]]; then
+        log_warning "Nothing is listening on port 53 yet, so the host keeps public DNS"
+        log_warning "  Re-run once AdGuard is up:  sudo corex manage repair adguard"
+        return 0
+    fi
+
+    chattr -i /etc/resolv.conf 2>/dev/null || true
+    cat > /etc/resolv.conf << 'RESOLVEOF'
+# Managed by CoreX. Locked with chattr +i so systemd-resolved cannot take it.
+#
+# AdGuard is the resolver, on loopback rather than the LAN address so it does
+# not depend on this machine keeping its IP. This is what lets the box reach
+# its own services directly instead of resolving them to the public edge and
+# going out and back through the tunnel.
+#
+# There is no public fallback on purpose. glibc only falls through after a
+# timeout, so a slow AdGuard would intermittently return the public address and
+# bring the slow path back at random, which is harder to diagnose than a clean
+# failure.
+#
+# If AdGuard is down and you need DNS to repair it:
+#   sudo chattr -i /etc/resolv.conf
+#   echo "nameserver 1.1.1.1" | sudo tee /etc/resolv.conf
+#   ... then once it is running again:
+#   sudo corex manage repair adguard
+nameserver 127.0.0.1
+options timeout:2 attempts:2
+RESOLVEOF
+    chattr +i /etc/resolv.conf 2>/dev/null || true
+
+    # Prove it before walking away. AdGuard can hold port 53 and still refuse
+    # to resolve, during its first start or with no upstream configured, and
+    # the cost of being wrong here is a box that cannot fetch anything.
+    local resolved="" j
+    for j in 1 2 3 4 5; do
+        if getent hosts github.com >/dev/null 2>&1; then resolved=yes; break; fi
+        sleep 2
+    done
+    if [[ -z "$resolved" ]]; then
+        chattr -i /etc/resolv.conf 2>/dev/null || true
+        printf "nameserver 1.1.1.1\nnameserver 8.8.8.8\n" > /etc/resolv.conf 2>/dev/null || true
+        chattr +i /etc/resolv.conf 2>/dev/null || true
+        log_warning "AdGuard holds port 53 but did not resolve, so public DNS is back"
+        log_warning "  Finish the AdGuard setup wizard, then: sudo corex manage repair adguard"
+        return 0
+    fi
+    log_success "Host DNS now goes through AdGuard, so the box reaches its own services on the LAN"
+}
+
 adguard_deploy() {
     mkdir -p "${DOCKER_ROOT}/adguard"
     mkdir -p "${DATA_ROOT}/adguard-work" "${DATA_ROOT}/adguard-conf"
@@ -155,6 +253,11 @@ DCEOF
 
     docker compose -f "${dir}/docker-compose.yml" up -d \
         || log_warning "AdGuard may not have started — check: docker ps"
+
+    # The public resolvers written above were only ever meant to last until
+    # AdGuard was answering. Hand the box back to it now.
+    _adguard_own_the_resolver
+
     state_service_installed "adguard"
     log_success "AdGuard Home deployed (DNS:53, Admin:3000)"
 }

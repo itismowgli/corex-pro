@@ -30,6 +30,12 @@ setup() {
     export IMMICH_DB_PASS="testimmichdb"
     export WEBUI_SECRET_KEY="testwebuisecret"
 
+    # No module may reach the network from a test. Nextcloud fetches a static
+    # ffmpeg for video thumbnails, which is 145MB and turns a two second suite
+    # into a download; a test that depends on GitHub being up is not a test of
+    # this repository.
+    export COREX_NO_DOWNLOADS=1
+
     # Temp directories (no real SSD needed)
     export DOCKER_ROOT
     DOCKER_ROOT="$(mktemp -d /tmp/corex-test-docker-XXXXXX)"

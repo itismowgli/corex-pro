@@ -28,7 +28,7 @@ learning nginx, SSL, Docker networking, or Linux hardening.
 - Re-run on existing server = health-check + repair broken services only
 - No live server required for testing (Docker-in-Docker + bats)
 
-**Current version:** v3.31.0
+**Current version:** v3.32.0
 **Current service modules:** 21 (Traefik, AdGuard, Portainer, Nextcloud,
 Immich, Vaultwarden, Stalwart Mail, Coolify, n8n, Cal.com, Time Machine,
 Uptime Kuma + Grafana + Prometheus (monitoring), Ollama + OpenWebUI +
@@ -2637,6 +2637,83 @@ shell argument**, so there is one layer of quoting instead of three.
 The general shape is gotcha #50's: the number came from one place and the
 action from another, and nobody compared them. Here the comparison is a single
 `diff` between what was intended and what `config:system:get` returns.
+
+### 66. A bootstrap value that nothing ever replaces is the final value
+
+`adguard_deploy` disabled systemd-resolved, wrote `nameserver 1.1.1.1` and
+`8.8.8.8`, and locked the file with `chattr +i`. That is correct as a
+bootstrap: AdGuard is not running at that point in the install, and a box with
+no DNS cannot pull the image that would give it DNS. Nothing ever switched it
+back, so those two lines were the permanent configuration of every CoreX
+install ever made.
+
+What it cost, measured on a live server, asking it for a service it was itself
+running:
+
+| Request from the host | DNS | TTFB |
+|---|---|---|
+| `nextcloud.DOMAIN` | **5.03s** | 6.60s |
+| same, pinned to the LAN address | 0.00s | 0.04s |
+| the container directly | | 0.01s |
+
+The 5.03s is a resolver timeout and it is paid on every request the box makes
+to itself, which then leaves over the internet and comes back through the
+tunnel. Uptime Kuma runs on the box, so its checks take that path, and anything
+restricted to the LAN is answered 403 through the tunnel and can never pass its
+own monitor. None of that looks like a DNS problem from any of the places you
+would look.
+
+**The general shape: a temporary value with no expiry is permanent, and it
+reads as deliberate.** Two locked lines in `/etc/resolv.conf` look like a
+decision, not a leftover, so nobody questions them. Anything written as a
+stepping stone needs the step that replaces it in the same function, or a
+comment saying what replaces it and when.
+
+Three details in the replacement are load bearing.
+
+**Prove the end state, not the precondition.** AdGuard can hold port 53 and
+still not resolve, during first start or before its wizard has an upstream. So
+the switch writes the file, runs a real lookup, and puts the public resolvers
+back if that lookup fails. Writing a resolver the box cannot use is worse than
+leaving it wrong, because it cannot then pull the image that would repair
+AdGuard.
+
+**Loopback, not the LAN address**, so it survives the machine's IP changing.
+
+**No public fallback.** glibc only falls through after a timeout, so a slow
+AdGuard would intermittently hand back the public address and reintroduce the
+6.6s path at random. A clean failure is far easier to diagnose than an
+intermittent one, and the escape hatch is written into the file itself where
+someone will find it at the moment they need it.
+
+The wait for AdGuard to bind port 53 is gated on `container_running`, for the
+reason in gotcha #44 and one more: without the gate it is pure delay wherever
+there is no AdGuard, and it took the smoke suite from 19s to 141s.
+
+### 67. A deploy that downloads cannot be a deploy that repairs
+
+Video thumbnails need an ffmpeg the Nextcloud image does not carry, so one is
+fetched. The fetch was put in `_nextcloud_write_compose`, which is the function
+both deploy and repair call to regenerate configuration.
+
+That makes `corex manage repair nextcloud`, the one command someone runs when
+the service is already broken, depend on GitHub being reachable and on a 145MB
+transfer completing. On a box with no route out it would sit there. The repair
+would be waiting on an optional thumbnail feature.
+
+It also turned the smoke suite into a download, because compose generation is
+exactly what those tests call.
+
+Two rules. **Config generation stays pure**: no network, no downloads, no
+waiting. It runs on every repair and has to be the cheap, reliable part. A file
+that needs to arrive belongs in `_dirs`, which is the step whose job is to
+prepare the filesystem.
+
+**And anything that reaches the network needs a way to say no.**
+`COREX_NO_DOWNLOADS=1` declines it, for an air-gapped install and for the test
+suite, and the service works without it: the mount is simply not written. A
+`--connect-timeout` matters for the same reason, so a dead network fails
+instead of hanging.
 
 ## What NOT to Do
 

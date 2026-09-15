@@ -1196,3 +1196,109 @@ _repair_body() {
     run bash -c "awk '/^portainer_status\(\)/,/^}/' '${REPO_ROOT}/lib/services/portainer.sh' | grep -c 'OOMKilled'"
     [ "$output" -ge 1 ]
 }
+
+# ─── The host must end up resolving through AdGuard ──────────────────────────
+
+# The public resolvers AdGuard writes during deploy are a bootstrap step, valid
+# only until AdGuard itself can answer. For a long time nothing switched back,
+# so every install left the box resolving its own hostnames to the public edge:
+# measured at 5.03s of DNS and 6.60s total for a request to a service the same
+# machine was running, against 0.04s pinned to the LAN address. Uptime Kuma
+# runs on the box, so its own checks took that path too.
+@test "adguard hands the host resolver back to itself" {
+    local f="${REPO_ROOT}/lib/services/adguard.sh"
+    grep -q "_adguard_own_the_resolver" "$f" \
+        || { echo "nothing switches the host off the bootstrap resolvers"; false; }
+    # Called from deploy, not merely defined.
+    awk '/^adguard_deploy\(\)/,/^}/' "$f" | grep -q "_adguard_own_the_resolver" \
+        || { echo "the switch is defined but deploy never calls it"; false; }
+}
+
+# Writing a resolver the box cannot use is worse than leaving it wrong: it
+# cannot then pull the image that would repair AdGuard. The switch has to prove
+# a real lookup works and put the public resolvers back when it does not.
+@test "the resolver switch verifies a lookup and rolls back" {
+    local body
+    body=$(awk '/^_adguard_own_the_resolver\(\)/,/^}/' "${REPO_ROOT}/lib/services/adguard.sh")
+    echo "$body" | grep -q "getent hosts" \
+        || { echo "nothing proves the new resolver actually resolves"; false; }
+    echo "$body" | grep -q "nameserver 1.1.1.1" \
+        || { echo "no rollback to a working resolver when the lookup fails"; false; }
+}
+
+# ─── An unclaimed media server must not be published ─────────────────────────
+
+# A fresh Jellyfin answers a setup wizard with no password, and whoever
+# finishes it becomes the administrator. Issuing the certificate publishes the
+# hostname to the public Certificate Transparency logs, so the name is
+# discoverable within minutes and secrecy is not a defence.
+@test "a new jellyfin install starts restricted to the LAN" {
+    local f="${REPO_ROOT}/lib/services/jellyfin.sh"
+    grep -q "_jellyfin_guard_unclaimed_wizard" "$f" \
+        || { echo "nothing keeps the unclaimed setup wizard off the internet"; false; }
+    # It must run before the middleware label is computed, or it lands one
+    # repair too late: the first install, the one that needed it, is published.
+    local body guard_line label_line
+    body=$(awk '/^jellyfin_deploy\(\)/,/^}/' "$f")
+    guard_line=$(echo "$body" | grep -n "_jellyfin_guard_unclaimed_wizard" | head -1 | cut -d: -f1)
+    label_line=$(echo "$body" | grep -n "sso_label_for jellyfin" | head -1 | cut -d: -f1)
+    [ -n "$guard_line" ] && [ -n "$label_line" ]
+    [ "$guard_line" -lt "$label_line" ] \
+        || { echo "the guard runs after the label, so it takes effect one repair late"; false; }
+}
+
+# ─── The wizard must not quote a number it does not count ────────────────────
+
+# The mode screen tells the reader how many services need a domain. A literal
+# there is wrong the first time a module is added, and nothing fails when it
+# drifts: the wizard just tells the next person something untrue at the one
+# point where they cannot check it.
+@test "the wizard counts domain-only services rather than naming a figure" {
+    local body
+    body=$(awk '/How you reach your services/,/configure-later/' "${REPO_ROOT}/lib/wizard.sh")
+    echo "$body" | grep -q '_nd_count' \
+        || { echo "the count is not computed"; false; }
+    echo "$body" | grep -qE '\b(Nine|Ten|Eleven|Twelve|Thirteen|[0-9]+) services need' \
+        && { echo "a hardcoded count is back in the mode screen"; false; }
+    :
+}
+
+# Compose generation runs on every repair, so a download inside it makes repair
+# depend on the network: on a box that cannot reach GitHub, the one command
+# that fixes a broken service would sit waiting on an optional thumbnail. It
+# also turned the two second smoke suite into a 145MB download.
+@test "compose generation never reaches the network" {
+    local body
+    body=$(awk '/^_nextcloud_write_compose\(\)/,/^}/' "${REPO_ROOT}/lib/services/nextcloud.sh")
+    echo "$body" | grep -qE 'curl|wget|_nextcloud_fetch_ffmpeg' \
+        && { echo "_nextcloud_write_compose fetches something; move it to _dirs"; false; }
+    :
+}
+
+# An air-gapped install, and any test, must be able to refuse the download and
+# still get a working service.
+@test "the ffmpeg fetch can be declined" {
+    local body
+    body=$(awk '/^_nextcloud_fetch_ffmpeg\(\)/,/^}/' "${REPO_ROOT}/lib/services/nextcloud.sh")
+    echo "$body" | grep -q 'COREX_NO_DOWNLOADS' \
+        || { echo "no way to decline the download"; false; }
+    echo "$body" | grep -q 'connect-timeout' \
+        || { echo "a dead network would hang rather than fail"; false; }
+}
+
+# The resolver switch waits for AdGuard to bind port 53, which is correct on a
+# real box and is pure delay anywhere there is no AdGuard: it added 30s per
+# adguard deploy to the smoke suite, taking it from seconds to 141s. Gate the
+# wait on the container actually being there.
+@test "the resolver switch does not wait when there is no adguard to wait for" {
+    local body
+    body=$(awk '/^_adguard_own_the_resolver\(\)/,/^}/' "${REPO_ROOT}/lib/services/adguard.sh")
+    echo "$body" | grep -q 'declare -f container_running' \
+        || { echo "the readiness wait is not gated on the container existing"; false; }
+    # The gate must come before the polling loop, or it saves nothing.
+    local gate_line poll_line
+    gate_line=$(echo "$body" | grep -n 'declare -f container_running' | head -1 | cut -d: -f1)
+    poll_line=$(echo "$body" | grep -n 'sleep 2' | head -1 | cut -d: -f1)
+    [ -n "$gate_line" ] && [ -n "$poll_line" ] && [ "$gate_line" -lt "$poll_line" ] \
+        || { echo "the gate is after the wait, so the wait still happens"; false; }
+}
