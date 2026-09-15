@@ -6,6 +6,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.34.0] - 2026-09-15
+
+### Added
+- **`corex manage network-check` now reports the wired link speed and says
+  which end is limiting it.** "Uploads are slow" is usually answered here and
+  almost never looks like a fault: nothing errors, every service responds, and
+  the only evidence is a number nobody reads.
+
+  Found on a live box whose card offers gigabit while the router port offers
+  only 100Mb. That caps every transfer through the server at about 12MB/s, and
+  it was invisible: no errors on the interface, no dropped packets, every
+  service healthy. Measured from a laptop on the same network, 3.1MB/s up and
+  5.7MB/s down.
+
+  The check compares what the card advertises against what the link partner
+  advertises, because those two numbers say which end to change. A server whose
+  card offers gigabit is not the thing to replace, and telling someone to buy a
+  cable when the port is the problem wastes their afternoon. It names the cable
+  when both ends offer gigabit and negotiated less, the port when only one end
+  offers it, and the card when the card cannot.
+
+  It degrades quietly where `ethtool` is not installed, rather than taking the
+  rest of the network check down.
+
+---
+
 ## [v3.33.0] - 2026-09-15
 
 ### Added

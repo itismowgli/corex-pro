@@ -1352,3 +1352,29 @@ _repair_body() {
     echo "$body" | grep -q 'ip_network' \
         || { echo "the network address is not computed from the real prefix"; false; }
 }
+
+# "Uploads are slow" is usually a negotiated link speed and almost never looks
+# like a fault: nothing errors, every service answers, and the only evidence is
+# a number nobody reads. A gigabit card on a 100Mb link caps the whole box at
+# about 12MB/s. The check has to say which END is limiting, because a server
+# whose card offers gigabit is not the thing to change.
+@test "the network check reports the wired link and names the limiting end" {
+    local body
+    body=$(awk '/^_network_check_link\(\)/,/^}/' "${REPO_ROOT}/corex-manage.sh")
+    echo "$body" | grep -q 'Link partner advertised' \
+        || { echo "it does not look at what the other end offers"; false; }
+    echo "$body" | grep -q 'Supported link modes' \
+        || { echo "it does not look at what the card can do"; false; }
+    # Called, not merely defined.
+    awk '/^cmd_network_check\(\)/,/^}/' "${REPO_ROOT}/corex-manage.sh" \
+        | grep -q '_network_check_link' \
+        || { echo "the link check is never called"; false; }
+}
+
+# ethtool is not on every box, and a missing tool must not take the whole
+# network check down with it.
+@test "the link check degrades when ethtool is absent" {
+    awk '/^_network_check_link\(\)/,/^}/' "${REPO_ROOT}/corex-manage.sh" \
+        | grep -q 'command -v ethtool' \
+        || { echo "no guard for a missing ethtool"; false; }
+}

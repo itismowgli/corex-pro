@@ -2023,6 +2023,53 @@ VFEOF
     fi
 }
 
+# What the wired link actually negotiated, against what the card can do.
+#
+# "Uploads are slow" is usually answered here and almost never looks like a
+# network fault: nothing errors, every service responds, and the only evidence
+# is a number nobody reads. A gigabit card sitting on a 100Mb link caps every
+# transfer on the box at about 12MB/s, and it is invisible until measured.
+#
+# The distinction that matters is which end is limiting. The card advertises
+# what it can do and so does the switch, so when the card offers 1000baseT and
+# the link partner does not, the server is not the thing to change.
+_network_check_link() {
+    command -v ethtool >/dev/null 2>&1 || return 0
+    local iface
+    iface=$(ip -o route get 8.8.8.8 2>/dev/null | sed -n 's/.* dev \([^ ]*\).*/\1/p' | head -1)
+    [[ -n "$iface" ]] || return 0
+
+    local info speed
+    info=$(ethtool "$iface" 2>/dev/null) || return 0
+    speed=$(echo "$info" | sed -n 's/.*Speed: \([0-9]*\)Mb\/s.*/\1/p' | head -1)
+    [[ -n "$speed" ]] || return 0
+
+    local can_gig=no partner_gig=no
+    echo "$info" | sed -n '/Supported link modes/,/Supported pause/p' | grep -q '1000baseT' && can_gig=yes
+    echo "$info" | sed -n '/Link partner advertised link modes/,/Link partner advertised pause/p' \
+        | grep -q '1000baseT' && partner_gig=yes
+
+    echo ""
+    echo -e "${BOLD}Wired link (${iface})${NC}"
+    if (( speed >= 1000 )); then
+        echo -e "  ${GREEN}✓${NC} ${speed}Mb/s, about $((speed / 8))MB/s at best"
+        return 0
+    fi
+
+    echo -e "  ${YELLOW}!${NC} ${speed}Mb/s, which caps every transfer at about $((speed / 8))MB/s"
+    if [[ "$can_gig" == yes && "$partner_gig" == no ]]; then
+        echo "     This card offers gigabit and the other end does not, so the"
+        echo "     limit is the switch or router port, or the cable. Try a"
+        echo "     different port and a Cat5e or better cable; many ISP routers"
+        echo "     have 100Mb LAN ports and need a gigabit switch beside them."
+    elif [[ "$can_gig" == no ]]; then
+        echo "     This card does not support gigabit, so this is its ceiling."
+    else
+        echo "     Both ends offer gigabit but negotiated lower, which is"
+        echo "     almost always the cable. Replace it before anything else."
+    fi
+}
+
 cmd_network_check() {
     local domain server_ip
     domain=$(state_get "domain" 2>/dev/null || echo "")
@@ -2031,6 +2078,7 @@ cmd_network_check() {
     echo ""
     echo -e "${CYAN}${BOLD}CoreX Pro — Network Check${NC}"
     echo "──────────────────────────────────────────────────────"
+    _network_check_link
 
     if [[ -z "$domain" || "$domain" == "null" ]]; then
         log_warning "No domain configured (local-only mode). Skipping URL checks."
