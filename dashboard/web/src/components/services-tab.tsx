@@ -59,6 +59,11 @@ const GROUPS: { key: Group; title: string; note: string }[] = [
   { key: "disabled", title: "Switched off", note: "Stays off across reboots until switched back on." },
 ]
 
+const TABS: { key: Group | "all"; title: string }[] = [
+  { key: "all", title: "All" },
+  ...GROUPS.map(({ key, title }) => ({ key: key as Group | "all", title })),
+]
+
 /**
  * Whether to offer Update, and how the card describes the answer.
  *
@@ -105,6 +110,26 @@ export function ServicesTab({
   onAction: (svc: Service, action: ServiceAction) => void
   onLogs: (svc: Service) => void
 }) {
+  // Above the early returns below, and it has to stay there. This component
+  // returns early while loading and while the list is empty, so a hook placed
+  // after those is skipped on the first render and called on the next one,
+  // which is the "rendered more hooks than during the previous render" crash.
+  const [group, setGroup] = React.useState<Group | "all">("all")
+
+  const counts = React.useMemo(() => {
+    const c: Record<Group, number> = { running: 0, sleeping: 0, stopped: 0, disabled: 0 }
+    for (const svc of services) c[groupOf(svc)] += 1
+    return c
+  }, [services])
+
+  // A selected group that empties out would otherwise leave the reader on a
+  // blank page with no obvious way back, and the common case is exactly that:
+  // you open "Needs attention", the thing repairs itself, and the group is
+  // gone. Fall back to All rather than to nothing.
+  React.useEffect(() => {
+    if (group !== "all" && !counts[group]) setGroup("all")
+  }, [group, counts])
+
   if (loading && !services.length) {
     return (
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -132,6 +157,9 @@ export function ServicesTab({
     (s) => updates?.services?.[s.name]?.state === "update"
   ).length
 
+  const shown = group === "all" ? services : services.filter((s) => groupOf(s) === group)
+  const note = group === "all" ? "" : (GROUPS.find((g) => g.key === group)?.note ?? "")
+
   return (
     <div className="flex flex-col gap-3">
       {updates && (
@@ -145,34 +173,77 @@ export function ServicesTab({
                 : `Checked ${ago(updates.checked_at)}. ${waiting} ${waiting === 1 ? "service has" : "services have"} a new image.`}
         </p>
       )}
-      {GROUPS.map(({ key, title, note }) => {
-        const inGroup = services.filter((s) => groupOf(s) === key)
-        if (!inGroup.length) return null
-        return (
-          <section key={key} className="flex flex-col gap-2">
-            <div className="flex flex-wrap items-baseline gap-x-2">
-              <h3 className="text-sm font-medium">
+      {/* One group at a time, chosen rather than scrolled past.
+          Stacked sections meant the group you cared about could be three
+          screens down, and on a phone that is most of them. Tabs on a wide
+          screen because they are all visible at once and cost one click; a
+          native select below that, because four tab targets side by side at
+          360px are either too small to hit or wrap into two rows that push
+          the cards off the fold. The select is also what a phone already
+          knows how to render full-screen. */}
+      <div className="flex flex-col gap-3">
+        <div className="hidden flex-wrap gap-1 sm:flex" role="tablist" aria-label="Filter services">
+          {TABS.map(({ key, title }) => {
+            const n = key === "all" ? services.length : counts[key]
+            if (key !== "all" && !n) return null
+            const on = group === key
+            return (
+              <button
+                key={key}
+                role="tab"
+                aria-selected={on}
+                onClick={() => setGroup(key)}
+                className={
+                  "rounded-md px-2.5 py-1 text-sm transition-colors " +
+                  (on
+                    ? "bg-secondary text-secondary-foreground font-medium"
+                    : "text-muted-foreground hover:text-foreground")
+                }
+              >
                 {title}
-                <span className="text-muted-foreground ml-1.5 font-normal">{inGroup.length}</span>
-              </h3>
-              {note && <p className="text-muted-foreground text-xs">{note}</p>}
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-              {inGroup.map((svc) => (
-                <ServiceCard
-                  key={svc.name}
-                  svc={svc}
-                  update={updates?.services?.[svc.name]}
-                  busy={busy === svc.name}
-                  disabled={!!busy || locked}
-                  onAction={onAction}
-                  onLogs={onLogs}
-                />
-              ))}
-            </div>
-          </section>
-        )
-      })}
+                <span className="ml-1.5 tabular-nums opacity-60">{n}</span>
+              </button>
+            )
+          })}
+        </div>
+
+        <select
+          className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm sm:hidden"
+          value={group}
+          aria-label="Filter services"
+          onChange={(e) => setGroup(e.target.value as Group | "all")}
+        >
+          {TABS.map(({ key, title }) => {
+            const n = key === "all" ? services.length : counts[key]
+            if (key !== "all" && !n) return null
+            return (
+              <option key={key} value={key}>
+                {title} ({n})
+              </option>
+            )
+          })}
+        </select>
+
+        {note && <p className="text-muted-foreground text-xs">{note}</p>}
+
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {shown.map((svc) => (
+            <ServiceCard
+              key={svc.name}
+              svc={svc}
+              update={updates?.services?.[svc.name]}
+              busy={busy === svc.name}
+              disabled={!!busy || locked}
+              onAction={onAction}
+              onLogs={onLogs}
+            />
+          ))}
+        </div>
+
+        {!shown.length && (
+          <p className="text-muted-foreground text-sm">Nothing in this group.</p>
+        )}
+      </div>
     </div>
   )
 }

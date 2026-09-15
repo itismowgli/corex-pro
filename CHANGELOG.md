@@ -6,6 +6,40 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.37.0] - 2026-09-16
+
+### Changed
+- **The service groups are tabs, and a select on a phone.** Stacked sections
+  meant the group you cared about could be three screens down, and on a phone
+  that is most of them. Tabs on a wide screen, because all four are visible at
+  once and cost one click.
+
+  A native select below that breakpoint rather than the same tabs shrunk down:
+  four targets side by side at 360px are either too small to hit reliably or
+  they wrap onto a second row and push the cards off the fold. A select is also
+  the control a phone already knows how to present full screen.
+
+  Each tab carries its own count, an empty group is not offered at all, and
+  choosing a group that then empties falls back to All rather than leaving the
+  reader on a blank page. That last case is the common one: you open "Needs
+  attention", the service repairs itself, and the group you are standing in
+  disappears.
+
+### Fixed
+- **The new filter state was added below two early returns.** `ServicesTab`
+  returns early while loading and while the list is empty, so hooks placed
+  after those are skipped on the first render and called on the next one. React
+  answers that with "rendered more hooks than during the previous render", and
+  the moment it would have happened is the ordinary one: the first poll
+  arriving and turning an empty list into a populated one.
+
+  Caught by reading the component rather than by any check. The build's render
+  pass mounts each tab with data and with the server down, and neither of those
+  crosses the empty-to-populated transition that breaks it, which is worth
+  knowing about what that check does and does not cover.
+
+---
+
 ## [v3.36.0] - 2026-09-16
 
 ### Changed
