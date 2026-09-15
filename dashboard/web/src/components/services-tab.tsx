@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Switch } from "@/components/ui/switch"
 import type { Service, ServiceAction, ServiceUpdate, Updates } from "@/lib/api"
 
 // Confirmation text per action. Only the ones that interrupt something ask;
@@ -25,11 +26,37 @@ const CONFIRM: Partial<Record<ServiceAction, (label: string) => string>> = {
   update: (l) => `Pull the latest image for ${l} and restart it?`,
 }
 
+// Start and Stop are not two actions, they are one piece of state, and a pair
+// of buttons asks the reader to work out which one is currently true. The
+// switch says it. What is left here are things that genuinely are verbs.
+//
+// The switch drives enable and disable rather than docker start and stop,
+// which is the same pair it always drove: enable writes the restart policy and
+// state.json, so the box comes back the way the operator left it. A bare
+// docker stop looks identical and is undone by the next reboot (gotcha #30).
 const ACTIONS: { action: ServiceAction; label: string; icon: typeof PlayIcon }[] = [
-  { action: "start", label: "Start", icon: PlayIcon },
-  { action: "stop", label: "Stop", icon: SquareIcon },
   { action: "restart", label: "Restart", icon: RotateCcwIcon },
   { action: "repair", label: "Repair", icon: WrenchIcon },
+]
+
+// How each service is filed. SLEEPING is Sablier cold mode: the container is
+// stopped on purpose and wakes on the next request, so filing it under
+// "stopped" would report a working service as a problem, which is the same
+// mistake the monitoring module made for months.
+type Group = "running" | "sleeping" | "stopped" | "disabled"
+
+function groupOf(svc: Service): Group {
+  if (!svc.enabled) return "disabled"
+  if (svc.status === "SLEEPING") return "sleeping"
+  if (svc.status === "HEALTHY") return "running"
+  return "stopped"
+}
+
+const GROUPS: { key: Group; title: string; note: string }[] = [
+  { key: "running", title: "Running", note: "" },
+  { key: "sleeping", title: "Sleeping", note: "Stopped on purpose, started again by the next request." },
+  { key: "stopped", title: "Needs attention", note: "Switched on, but not answering." },
+  { key: "disabled", title: "Switched off", note: "Stays off across reboots until switched back on." },
 ]
 
 /**
@@ -118,19 +145,34 @@ export function ServicesTab({
                 : `Checked ${ago(updates.checked_at)}. ${waiting} ${waiting === 1 ? "service has" : "services have"} a new image.`}
         </p>
       )}
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        {services.map((svc) => (
-          <ServiceCard
-            key={svc.name}
-            svc={svc}
-            update={updates?.services?.[svc.name]}
-            busy={busy === svc.name}
-            disabled={!!busy || locked}
-            onAction={onAction}
-            onLogs={onLogs}
-          />
-        ))}
-      </div>
+      {GROUPS.map(({ key, title, note }) => {
+        const inGroup = services.filter((s) => groupOf(s) === key)
+        if (!inGroup.length) return null
+        return (
+          <section key={key} className="flex flex-col gap-2">
+            <div className="flex flex-wrap items-baseline gap-x-2">
+              <h3 className="text-sm font-medium">
+                {title}
+                <span className="text-muted-foreground ml-1.5 font-normal">{inGroup.length}</span>
+              </h3>
+              {note && <p className="text-muted-foreground text-xs">{note}</p>}
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {inGroup.map((svc) => (
+                <ServiceCard
+                  key={svc.name}
+                  svc={svc}
+                  update={updates?.services?.[svc.name]}
+                  busy={busy === svc.name}
+                  disabled={!!busy || locked}
+                  onAction={onAction}
+                  onLogs={onLogs}
+                />
+              ))}
+            </div>
+          </section>
+        )
+      })}
     </div>
   )
 }
@@ -178,13 +220,20 @@ function ServiceCard({
           <span className="min-w-0 flex-1 truncate" title={svc.label}>
             {svc.label}
           </span>
-          <span className="flex shrink-0 items-center gap-1">
+          <span className="flex shrink-0 items-center gap-1.5">
             {hint.badge && !busy && <Badge variant={hint.badge.tone}>{hint.badge.text}</Badge>}
             {busy ? (
               <Loader2Icon className="text-muted-foreground size-4 animate-spin" />
             ) : (
               <StatusBadge status={svc.status} />
             )}
+            <Switch
+              checked={svc.enabled}
+              busy={busy}
+              disabled={disabled}
+              label={`${svc.enabled ? "Switch off" : "Switch on"} ${svc.label}`}
+              onCheckedChange={(next) => click(next ? "start" : "stop")}
+            />
           </span>
         </CardTitle>
         <div className="flex min-w-0 flex-col gap-0.5">

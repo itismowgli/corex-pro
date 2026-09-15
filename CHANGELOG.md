@@ -6,6 +6,38 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.36.0] - 2026-09-16
+
+### Changed
+- **Start and Stop are one switch.** They were never two actions; they are one
+  piece of state, and a pair of buttons asks the reader to work out which one
+  is currently true before pressing either. The switch says it.
+
+  It drives the same pair underneath, enable and disable, which write the
+  restart policy and `state.json` so the box comes back the way it was left. A
+  bare docker stop looks identical in the moment and is undone by the next
+  reboot (gotcha #30). Restart and Repair stay as buttons, because those are
+  verbs rather than states.
+
+  The switch is written rather than pulled in: Radix is not a dependency of
+  this app, and adding one for a control this small would put a package between
+  the operator and the button that stops their file server. It is a checkbox
+  underneath, so it focuses, toggles on space, and announces itself. It also
+  shows a pending state, because the action behind it takes several seconds and
+  the natural reading of nothing happening is that the click was missed.
+
+- **Services are grouped by what is true of them**, rather than listed in one
+  block: Running, Sleeping, Needs attention, Switched off. Empty groups are not
+  drawn.
+
+  Sleeping is its own group on purpose. Cold mode stops a container deliberately
+  and wakes it on the next request, so filing it under stopped would report a
+  working service as a problem. That is the same mistake the monitoring module
+  made for months, fixed in v3.35.0, and it should not be reintroduced by the
+  page that displays the result.
+
+---
+
 ## [v3.35.0] - 2026-09-16
 
 ### Added
