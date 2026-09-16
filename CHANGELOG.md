@@ -6,6 +6,50 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.44.0] - 2026-09-16
+
+### Fixed
+- **The watchdog alerted constantly about swap that was not a problem.**
+  "Swapping heavily: 28% of swap is in use, and the limit is 25%" fired again
+  and again on a box with 25.9GB of its 31.5GB available, swappiness at 10,
+  `/proc/pressure/memory` reading 0.00 across every window, and no swap traffic
+  in `vmstat`. The 592MB in swap was pages parked long ago and never wanted
+  since, which is swap doing its job.
+
+  Swap in use is a level, not a rate, and a level that never falls is an alert
+  that never clears. It is corroborating detail now and never a trigger. What
+  triggers is headroom (`MemAvailable`) and stalling, read from
+  `/proc/pressure/memory` `some avg60`, which is the share of the last minute
+  in which something was actually blocked waiting for memory. That is the
+  direct measurement of what the swap figure was being used to guess at, and
+  unlike swap it falls back to zero on its own.
+
+  `WATCHDOG_MEM_STALL_PCT` defaults to 10 and is backfilled into an existing
+  `/etc/corex/watchdog.conf`. Swap is still reported in both the healthy and
+  the unhealthy message, so the number remains visible without being an alarm.
+
+### Added
+- **`test/run-tests.sh` runs the whole suite, not two thirds of it.** It
+  covered syntax, shellcheck, bats and python, and silently omitted the
+  dashboard Go tests, the frontend build with its four checks, and the login
+  end-to-end script. A runner that skips a third of the checks and prints a
+  green total is the shape of problem the rest of this project keeps finding.
+
+  New targets `go`, `frontend` and `e2e`, all included in `all`. Two
+  prerequisites that used to read as broken builds are handled instead of
+  documented: `main.go` embeds `web/dist`, so a missing `dist` fails at setup
+  with "no matching files found" and is now built first when npm can; and the
+  Go toolchain image is derived from `dashboard/go.mod` rather than typed, so
+  it cannot go stale the way the network list and the watchdog check count
+  did. An installed docker CLI with no running daemon skips with a reason
+  rather than failing.
+
+- `test/python/test_memory.py`, seven cases driven off `/proc` fixtures rather
+  than whatever state the box is in, and `test/python/test_networks.py` from
+  v3.43.2 alongside it.
+
+---
+
 ## [v3.43.2] - 2026-09-16
 
 ### Fixed

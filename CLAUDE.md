@@ -28,7 +28,7 @@ learning nginx, SSL, Docker networking, or Linux hardening.
 - Re-run on existing server = health-check + repair broken services only
 - No live server required for testing (Docker-in-Docker + bats)
 
-**Current version:** v3.43.2
+**Current version:** v3.44.0
 **Current service modules:** 21 (Traefik, AdGuard, Portainer, Nextcloud,
 Immich, Vaultwarden, Stalwart Mail, Coolify, n8n, Cal.com, Time Machine,
 Uptime Kuma + Grafana + Prometheus (monitoring), Ollama + OpenWebUI +
@@ -2894,6 +2894,42 @@ is a note, and one that some service does name is a warning that lists those
 services and the command to create it. Reading it from the files rather than
 from a table here is the same rule as gotcha #58, and is what this whole
 function exists in its current form to obey.
+
+### 72. Swap in use is not memory pressure, and a percentage of 2GB is not news
+
+`corex manage watchdog` alerted constantly with "Swapping heavily: 28% of swap
+is in use, and the limit is 25%". Measured on the box while it was firing:
+
+| | |
+|---|---|
+| RAM | 31.5GB, **25.9GB available** |
+| swappiness | 10 |
+| `/proc/pressure/memory` | `some` and `full` **0.00** at avg10, avg60 and avg300 |
+| `vmstat` swap traffic | si 5, so 0 |
+
+So nothing was short of memory and nothing was moving. The 592MB in swap was
+pages parked long ago and never wanted since, which is swap doing exactly what
+it is for. The alert was measuring a **level** where the fault is a **rate**,
+the same mistake as gotcha #29's sticky `OOMKilled` flag, and a level that
+never falls is an alert that never clears.
+
+The percentage flattered it too. Swap here is 2GB, so the 25% limit is 512MB,
+which is 1.6% of RAM. **A percentage of a small number makes a small number
+into a headline.**
+
+Two triggers now, and swap is neither. `MemAvailable` is the headroom measure.
+`/proc/pressure/memory`, `some avg60`, is the share of the last minute in which
+at least one task was blocked waiting for memory, which is the direct
+measurement of the thing the swap figure was being used to guess at, and it
+falls back to zero on its own. Swap is named only beside a real finding, where
+it says whether the shortage has started spilling to disk.
+
+**A check whose inputs are `/proc` can only be exercised on the state the box
+happens to be in, and the state worth testing is the one it is not in.** So
+`WATCHDOG_MEMINFO` and `WATCHDOG_PRESSURE_MEM` are variables, and
+`test/python/test_memory.py` drives seven cases off fixtures, including a
+kernel with no `CONFIG_PSI` and a box with no swap at all. Both the old
+behaviour and a version ignoring PSI were put back and confirmed to fail it.
 
 ## What NOT to Do
 

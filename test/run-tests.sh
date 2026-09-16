@@ -1,6 +1,6 @@
 #!/bin/bash
 # CoreX Pro — Test Runner
-# Usage: bash test/run-tests.sh [unit|smoke|syntax|all]
+# Usage: bash test/run-tests.sh [syntax|unit|smoke|go|frontend|e2e|all]
 #
 # Runs tests without touching the live server.
 # All tests are safe to run locally or in the Docker test container.
@@ -149,6 +149,104 @@ run_smoke_tests() {
     fi
 }
 
+# An installed docker CLI is not a running daemon. Checking only `command -v
+# docker` reported FAIL on a laptop with Docker Desktop stopped, which is an
+# unavailable environment and not a broken build. A check that cannot run is
+# skipped and says why; the same rule the ai-net note in network-check follows.
+docker_usable() { command -v docker &>/dev/null && docker info &>/dev/null; }
+
+# ─── Dashboard: Go ────────────────────────────────────────────────────────────
+# Two things make this fail in ways that read as a broken build when they are
+# a missing prerequisite, so both are handled rather than documented.
+#
+# main.go embeds web/dist with `go:embed all:web/dist`, and an embed of a
+# directory that is not there is a SETUP failure: "pattern all:web/dist: no
+# matching files found", printed before a single test runs. dist is a build
+# artifact and is not in the repository, so it is built here when npm can.
+#
+# And the toolchain version is read from go.mod, never typed. golang:1.24
+# refuses a module needing 1.25 with GOTOOLCHAIN=local, and a tag written by
+# hand here goes stale the first time go.mod moves, which is the same defect
+# as the "7 of 6" watchdog count and the network list that dropped backend-net.
+run_go_tests() {
+    log_section "Dashboard (go test)"
+
+    local dash="${REPO_DIR}/dashboard"
+    [[ -f "${dash}/go.mod" ]] || { log_skip "no dashboard/go.mod"; return; }
+
+    if [[ ! -d "${dash}/web/dist" ]]; then
+        if command -v npm &>/dev/null && [[ -d "${dash}/web/node_modules" ]]; then
+            echo -e "${CYAN}[NOTE]${NC} Building web/dist first, because go:embed needs it"
+            ( cd "${dash}/web" && npm run build >/dev/null 2>&1 ) \
+                || { log_skip "web/dist could not be built, so go:embed has nothing to embed"; return; }
+        else
+            log_skip "web/dist absent and npm cannot build it: cd dashboard/web && npm ci && npm run build"
+            return
+        fi
+    fi
+
+    local want
+    want=$(awk '/^go[[:space:]]+[0-9]/ {print $2; exit}' "${dash}/go.mod")
+    [[ -n "$want" ]] || { log_skip "go.mod names no Go version"; return; }
+
+    if command -v go &>/dev/null; then
+        if ( cd "$dash" && go test ./... ); then
+            log_pass "go test ./... (dashboard)"
+        else
+            log_fail "go test ./... (dashboard)"
+        fi
+        return
+    fi
+
+    if ! docker_usable; then
+        log_skip "no local go, and no running docker to borrow one (go.mod wants ${want})"
+        return
+    fi
+    # go.mod may say 1.25.0; the image tag is the major.minor of that.
+    local tag="golang:${want%.*}-alpine"
+    if docker run --rm -v "${dash}:/src" -w /src "$tag" go test ./...; then
+        log_pass "go test ./... (dashboard, in ${tag})"
+    else
+        log_fail "go test ./... (dashboard, in ${tag})"
+    fi
+}
+
+# ─── Dashboard: frontend ──────────────────────────────────────────────────────
+# tsc, then vite, then four checks that each exist because of a bug they should
+# have caught: logline, poll, responsive and render. See CLAUDE.md.
+run_frontend_checks() {
+    log_section "Dashboard frontend (tsc, vite, four checks)"
+
+    local web="${REPO_DIR}/dashboard/web"
+    [[ -f "${web}/package.json" ]] || { log_skip "no dashboard/web/package.json"; return; }
+    command -v npm &>/dev/null || { log_skip "npm not installed"; return; }
+    [[ -d "${web}/node_modules" ]] || { log_skip "node_modules absent: cd dashboard/web && npm ci"; return; }
+
+    if ( cd "$web" && npm run build ); then
+        log_pass "frontend build and checks"
+    else
+        log_fail "frontend build and checks"
+    fi
+}
+
+# ─── Dashboard: login, end to end ─────────────────────────────────────────────
+run_e2e_tests() {
+    log_section "Dashboard login (end to end)"
+
+    local script="${SCRIPT_DIR}/e2e/dashboard-auth.sh"
+    [[ -x "$script" ]] || { log_skip "no test/e2e/dashboard-auth.sh"; return; }
+    docker_usable || {
+        log_skip "no running docker; on this box try: sudo bash test/run-tests.sh e2e"
+        return
+    }
+
+    if bash "$script"; then
+        log_pass "dashboard auth end to end"
+    else
+        log_fail "dashboard auth end to end"
+    fi
+}
+
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 main() {
@@ -170,12 +268,24 @@ main() {
         smoke)
             run_smoke_tests
             ;;
+        go)
+            run_go_tests
+            ;;
+        frontend)
+            run_frontend_checks
+            ;;
+        e2e)
+            run_e2e_tests
+            ;;
         all|*)
             run_syntax_checks
             run_shellcheck
             run_unit_tests
             run_python_tests
             run_smoke_tests
+            run_go_tests
+            run_frontend_checks
+            run_e2e_tests
             ;;
     esac
 

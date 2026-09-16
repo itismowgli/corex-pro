@@ -45,10 +45,18 @@ WATCHDOG_TEMP_C="${WATCHDOG_TEMP_C:-80}"
 # 5-minute load average per core. 1.5 tolerates a backup or a photo import
 # without alerting; sustained above it means something is genuinely stuck.
 WATCHDOG_LOAD_RATIO="${WATCHDOG_LOAD_RATIO:-1.5}"
-# Percent of RAM that must stay available.
+# Percent of RAM that must stay available. This is the headroom measure and is
+# the one that triggers on its own.
 WATCHDOG_MEM_AVAIL_PCT="${WATCHDOG_MEM_AVAIL_PCT:-15}"
-# Swap in use at all is worth knowing on a 31GB box; 25% means real pressure.
+# Swap in use. NOT a trigger by itself, only corroborating detail: see
+# check_memory. Kept as a threshold so the figure is mentioned when it is
+# unusual and stays quiet when it is not.
 WATCHDOG_SWAP_USED_PCT="${WATCHDOG_SWAP_USED_PCT:-25}"
+# Memory stall, from /proc/pressure/memory "some avg60": the share of the last
+# minute in which at least one task was blocked waiting for memory. This is the
+# direct measurement of the thing the swap percentage was being used to guess
+# at, and unlike swap it is a rate, so it falls back to zero on its own.
+WATCHDOG_MEM_STALL_PCT="${WATCHDOG_MEM_STALL_PCT:-10}"
 # Free space floors. The OS disk gets the tighter one: dpkg needs room and a
 # full root breaks Docker itself, not just one service.
 WATCHDOG_OS_FREE_PCT="${WATCHDOG_OS_FREE_PCT:-10}"
@@ -108,6 +116,7 @@ WATCHDOG_TEMP_C=${WATCHDOG_TEMP_C}
 WATCHDOG_LOAD_RATIO=${WATCHDOG_LOAD_RATIO}
 WATCHDOG_MEM_AVAIL_PCT=${WATCHDOG_MEM_AVAIL_PCT}
 WATCHDOG_SWAP_USED_PCT=${WATCHDOG_SWAP_USED_PCT}
+WATCHDOG_MEM_STALL_PCT=${WATCHDOG_MEM_STALL_PCT}
 WATCHDOG_OS_FREE_PCT=${WATCHDOG_OS_FREE_PCT}
 WATCHDOG_SSD_FREE_PCT=${WATCHDOG_SSD_FREE_PCT}
 WATCHDOG_RESTART_THRESHOLD=${WATCHDOG_RESTART_THRESHOLD}
@@ -130,7 +139,7 @@ _watchdog_sync_conf() {
     local k
     for k in WATCHDOG_ENABLED WATCHDOG_KUMA_URL WATCHDOG_TEMP_C \
              WATCHDOG_LOAD_RATIO WATCHDOG_MEM_AVAIL_PCT \
-             WATCHDOG_SWAP_USED_PCT WATCHDOG_OS_FREE_PCT \
+             WATCHDOG_SWAP_USED_PCT WATCHDOG_MEM_STALL_PCT WATCHDOG_OS_FREE_PCT \
              WATCHDOG_SSD_FREE_PCT WATCHDOG_RESTART_THRESHOLD; do
         grep -q "^${k}=" /etc/corex/watchdog.conf 2>/dev/null && continue
         echo "${k}=${!k:-true}" >> /etc/corex/watchdog.conf
@@ -166,6 +175,13 @@ STATS_CACHE=""
 : "${WATCHDOG_LOAD_RATIO:=1.5}"
 : "${WATCHDOG_MEM_AVAIL_PCT:=15}"
 : "${WATCHDOG_SWAP_USED_PCT:=25}"
+: "${WATCHDOG_MEM_STALL_PCT:=10}"
+# The two files check_memory reads. Variables rather than literals so the test
+# can point them at fixtures: a check whose inputs are /proc can only ever be
+# exercised on the state the box happens to be in, and the state worth testing
+# is the one it is not in.
+: "${WATCHDOG_MEMINFO:=/proc/meminfo}"
+: "${WATCHDOG_PRESSURE_MEM:=/proc/pressure/memory}"
 : "${WATCHDOG_OS_FREE_PCT:=10}"
 : "${WATCHDOG_SSD_FREE_PCT:=15}"
 : "${WATCHDOG_RESTART_THRESHOLD:=2}"
@@ -305,32 +321,69 @@ check_load() {
 }
 
 # ── Check: memory and swap ──────────────────────────────────────────────────
+# Swap in use is not memory pressure, and treating it as such alerted this box
+# constantly for nothing. Measured while "Swapping heavily: 28% of swap is in
+# use" was firing: 31.5GB of RAM with 25.9GB available, swappiness 10, and
+# /proc/pressure/memory reading 0.00 for both `some` and `full` across avg10,
+# avg60 and avg300, with vmstat showing no swap traffic. The 592MB in swap was
+# pages parked long ago and never wanted since, which is swap doing its job.
+#
+# The percentage made it look worse than it was, too: swap here is 2GB, so the
+# 25% limit is 512MB, which is 1.6% of RAM. A percentage of a small number is
+# a bad headline.
+#
+# So swap is corroborating detail now, never a trigger on its own. What
+# triggers is headroom (MemAvailable) and stalling, and the stall figure is the
+# direct measurement of the thing the swap percentage was being used to guess
+# at. Same lesson as gotcha #29: a sticky level has to be read as a transition
+# or a rate, or the alert never clears and stops meaning anything.
+_mem_stall_pct() {
+    # "some avg60=12.34" -> 12, the share of the last minute in which at least
+    # one task was blocked on memory. Absent on a kernel built without
+    # CONFIG_PSI, where this prints nothing and the caller does without it.
+    [[ -r "$WATCHDOG_PRESSURE_MEM" ]] || return 0
+    awk '/^some/ { for (i = 1; i <= NF; i++)
+                       if ($i ~ /^avg60=/) { sub(/^avg60=/, "", $i); printf "%d\n", $i }
+                   exit }' "$WATCHDOG_PRESSURE_MEM" 2>/dev/null
+}
+
 check_memory() {
     local total avail stotal sfree used_pct avail_pct swap_pct=0 nl
     nl=$'\n'
-    total=$(awk '/^MemTotal:/{print $2}'     /proc/meminfo)
-    avail=$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)
-    stotal=$(awk '/^SwapTotal:/{print $2}'   /proc/meminfo)
-    sfree=$(awk '/^SwapFree:/{print $2}'     /proc/meminfo)
+    total=$(awk '/^MemTotal:/{print $2}'     "$WATCHDOG_MEMINFO")
+    avail=$(awk '/^MemAvailable:/{print $2}' "$WATCHDOG_MEMINFO")
+    stotal=$(awk '/^SwapTotal:/{print $2}'   "$WATCHDOG_MEMINFO")
+    sfree=$(awk '/^SwapFree:/{print $2}'     "$WATCHDOG_MEMINFO")
     [[ -n "${total:-}" && "${total:-0}" -gt 0 ]] || return 0
 
     avail_pct=$(( avail * 100 / total ))
     used_pct=$(( 100 - avail_pct ))
     (( ${stotal:-0} > 0 )) && swap_pct=$(( (stotal - sfree) * 100 / stotal ))
 
+    local stall
+    stall=$(_mem_stall_pct)
+    [[ "$stall" =~ ^[0-9]+$ ]] || stall=""
+
     local reasons=""
     (( avail_pct < WATCHDOG_MEM_AVAIL_PCT )) && \
         reasons="Running low on memory: only ${avail_pct}% free, and the floor is ${WATCHDOG_MEM_AVAIL_PCT}%."
-    (( swap_pct > WATCHDOG_SWAP_USED_PCT )) && \
-        reasons="${reasons:+$reasons }Swapping heavily: ${swap_pct}% of swap is in use, and the limit is ${WATCHDOG_SWAP_USED_PCT}%."
+    if [[ -n "$stall" ]] && (( stall >= WATCHDOG_MEM_STALL_PCT )); then
+        reasons="${reasons:+$reasons }Waiting on memory: something was blocked for ${stall}% of the last minute."
+    fi
 
     if [[ -n "$reasons" ]]; then
         local msg="$reasons" who
+        # Swap is named only alongside a real finding, where it says whether
+        # the shortage has already started spilling to disk.
+        (( swap_pct > WATCHDOG_SWAP_USED_PCT )) && \
+            msg="${msg} Swap is ${swap_pct}% full as well."
         who=$(top_mem)
         [[ -n "$who" ]] && msg="${msg}${nl}Using the most: ${who}"
         push memory down "$msg" "$used_pct"
     else
-        push memory up "Memory is comfortable again: ${used_pct}% used, swap at ${swap_pct}%." "$used_pct"
+        local note="Memory is comfortable: ${used_pct}% used, swap at ${swap_pct}%."
+        [[ -n "$stall" ]] && note="${note} Nothing is waiting on memory."
+        push memory up "$note" "$used_pct"
     fi
 }
 
