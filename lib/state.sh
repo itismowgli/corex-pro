@@ -10,7 +10,7 @@
 
 # Allow tests to override the state file path via env var
 COREX_STATE_FILE="${COREX_STATE_FILE:-/etc/corex/state.json}"
-_COREX_VERSION="3.38.0"
+_COREX_VERSION="3.39.0"
 
 # ── state_init ────────────────────────────────────────────────────────────────
 # Create a fresh state.json with default structure.
@@ -20,8 +20,27 @@ state_init() {
     state_dir="$(dirname "$COREX_STATE_FILE")"
     mkdir -p "$state_dir"
 
+    # Existing AND readable, not merely existing.
+    #
+    # Testing for the file alone means a zero-length or truncated state.json is
+    # treated as a finished installation: init returns success, every
+    # state_get answers nothing, and the box reports no services while running
+    # thirty containers. That is gotcha #24's symptom arriving by a different
+    # road, and it is reachable here, because this hardware loses power without
+    # flushing (gotcha #16) and an empty file is exactly what that leaves.
+    #
+    # A file that cannot be parsed holds nothing worth keeping, but it is
+    # evidence, so it is moved aside rather than overwritten. state_set writes
+    # atomically through mktemp and mv, so a half-written file is never
+    # observable and this cannot fire on a healthy box mid-write.
+    if [[ -s "$COREX_STATE_FILE" ]] && jq -e . "$COREX_STATE_FILE" >/dev/null 2>&1; then
+        return 0  # Already initialised, and readable
+    fi
     if [[ -f "$COREX_STATE_FILE" ]]; then
-        return 0  # Already initialized
+        local wreck="${COREX_STATE_FILE}.unreadable.$(date +%s)"
+        mv -f "$COREX_STATE_FILE" "$wreck" 2>/dev/null \
+            && log_warning "state.json was unreadable; kept it at ${wreck} and starting fresh" 2>/dev/null \
+            || true
     fi
 
     jq -n \

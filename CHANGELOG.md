@@ -6,6 +6,46 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.39.0] - 2026-09-16
+
+### Fixed
+- **An unreadable state.json counted as a finished installation.** `state_init`
+  returned early when the file merely existed, without asking whether it could
+  be read. A zero-length or truncated `state.json` therefore passed as
+  initialised: every `state_get` answered nothing and the box reported no
+  services while running thirty containers.
+
+  That is gotcha #24's symptom arriving by a different road, and it is
+  reachable on this hardware, which loses power without flushing (gotcha #16).
+  An empty file is exactly what that leaves behind. The check is now existing
+  **and parseable**, and a file that cannot be parsed is moved aside rather
+  than overwritten, because it holds nothing worth keeping but is still
+  evidence. `state_set` writes atomically through mktemp and mv, so a
+  half-written file is never observable and this cannot fire mid-write on a
+  healthy box.
+
+- **Fifteen state tests had never once run.** Their setup built a temp file
+  with `mktemp /tmp/corex-test-state-XXXXXX.json`. GNU mktemp allows trailing
+  text after the X block and BusyBox does not, answering "Invalid argument",
+  and the suite runs in a BusyBox container. One line failed setup for the
+  whole file, which then reported as fifteen separate state bugs that did not
+  exist, and sat in the "known failures" baseline long enough to be treated as
+  furniture.
+
+- **A test that asserted a guess rather than the design.** It required
+  `services.traefik.installed` to be `"true"` or `"false"` on a fresh state,
+  with a comment conceding it "could be true or false depending on design". It
+  is neither: `state_init` writes an empty services object, so the value is
+  null and always has been. It now checks the contract the rest of the file
+  depends on, that a fresh state records nothing as installed, which is why
+  `state_list_installed` comes back empty and why marking traefik installed
+  before it is deployed would make doctor believe in a service that is not
+  there.
+
+  Unit failures go from 21 to 6.
+
+---
+
 ## [v3.38.0] - 2026-09-16
 
 ### Added
