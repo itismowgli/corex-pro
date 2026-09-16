@@ -1489,20 +1489,51 @@ _repair_body() {
     [ "$n" -ge 2 ] || { echo "only one board family is covered"; false; }
 }
 
-# Traefik downloads plugins at startup and disables plugins entirely when that
+# Traefik downloads plugins at startup and disables plugins ENTIRELY when that
 # fails, so a router naming one answers 404 with "invalid middleware type or
 # middleware does not exist". Observed: AdGuard was restarting during a repair,
 # Traefik came up in the DNS gap, and grafana and portainer served 404 for
-# hours.
+# hours while both containers were healthy.
 #
-# This only asserts the cache is kept and writable. It deliberately does not
-# claim the cache fixes that failure, because it was measured and it does not:
-# Traefik calls the plugin service on every start whatever is cached. The fix
-# is experimental.localPlugins and is not done.
-@test "traefik keeps its plugin cache on disk and writable" {
+# Persisting the download cache does not fix it, measured at 3.3MB of cache.
+# experimental.localPlugins does, so the source is vendored and read from disk.
+@test "traefik reads its plugin from disk rather than downloading it" {
     local f="${REPO_ROOT}/lib/services/traefik.sh"
-    grep -q 'plugins-storage:/plugins-storage' "$f" \
-        || { echo "the plugin store is not persisted, so every restart re-downloads"; false; }
-    awk '/^traefik_dirs\(\)/,/^}/' "$f" | grep -q 'plugins-storage' \
-        || { echo "the directory is not created, so Docker makes it root-owned"; false; }
+    grep -q 'localPlugins:' "$f" \
+        || { echo "the plugin is still downloaded at every start"; false; }
+    grep -q 'plugins-local:/plugins-local' "$f" \
+        || { echo "the source is not mounted, so localPlugins cannot read it"; false; }
+    awk '/^traefik_dirs\(\)/,/^}/' "$f" | grep -q '_traefik_install_local_plugin' \
+        || { echo "nothing copies the source into place"; false; }
+}
+
+# The vendored tree has to mirror /plugins-local/src exactly, because the
+# installer is a plain copy. A missing .traefik.yml or main.go stops Traefik
+# from starting at all, so every file it needs is checked here.
+@test "the sablier plugin source is vendored and complete" {
+    local d="${REPO_ROOT}/vendor/traefik-plugins/github.com/sablierapp/sablier-traefik-plugin"
+    local f
+    for f in .traefik.yml main.go config.go version.go go.mod LICENSE; do
+        [ -f "${d}/${f}" ] || { echo "vendored plugin is missing ${f}"; false; }
+    done
+    # localPlugins carries no version field, so version.go is the only record
+    # of which release this is. The README quotes it; keep them agreeing.
+    grep -q 'Version = "1.3.0"' "${d}/version.go" \
+        || { echo "version.go no longer says 1.3.0, so the README is now wrong"; false; }
+}
+
+# Traefik does not start when localPlugins names a source it cannot read, and a
+# Traefik that does not start takes every route down rather than two. So the
+# block is written only after the files are confirmed present, and the download
+# path stays reachable as the fallback.
+@test "traefik checks the plugin source exists before naming it in static config" {
+    local body
+    body=$(awk '/^_traefik_write_configs\(\)/,/^}/' "${REPO_ROOT}/lib/services/traefik.sh")
+    echo "$body" | grep -q '_traefik_local_plugin_present' \
+        || { echo "localPlugins is written unconditionally, which can stop Traefik booting"; false; }
+    echo "$body" | grep -q 'experimental:' \
+        || { echo "no plugin block is written at all"; false; }
+    local n
+    n=$(echo "$body" | grep -c 'experimental:')
+    [ "$n" -ge 2 ] || { echo "there is no fallback when the source is absent"; false; }
 }

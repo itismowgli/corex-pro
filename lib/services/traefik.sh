@@ -127,12 +127,64 @@ SANEOF
 
 # ── Functions ─────────────────────────────────────────────────────────────────
 
+# ── Traefik plugins, read from disk instead of downloaded ────────────────────
+# Traefik contacts plugins.traefik.io at every start for anything declared
+# under experimental.plugins, and when that call fails it disables plugins
+# ENTIRELY. Every router naming one then answers 404 with "invalid middleware
+# type or middleware does not exist". Seen here: AdGuard was restarting during
+# a repair, Traefik came up in the DNS gap, and grafana and portainer served
+# 404 for hours while both containers were healthy the whole time.
+#
+# Persisting the download cache does not fix it, which was measured rather
+# than assumed: with the cache at 3.3MB, stopping AdGuard and restarting
+# Traefik reproduced the failure exactly. The call goes out whatever is
+# cached.
+#
+# experimental.localPlugins reads the source from disk and never calls out.
+# Measured on a throwaway Traefik 3.6.25 with DNS pointed at an unroutable
+# address: "Plugins loaded", middleware enabled, router enabled. The same
+# container with experimental.plugins under the same dead DNS produced the
+# 404 above, so both halves of the claim are tested rather than one.
+TRAEFIK_PLUGIN_MODULE="github.com/sablierapp/sablier-traefik-plugin"
+
+_traefik_local_plugin_dir() {
+    echo "${DOCKER_ROOT}/traefik/plugins-local/src/${TRAEFIK_PLUGIN_MODULE}"
+}
+
+# Whether the vendored source is really on disk. Traefik refuses to START on a
+# localPlugins entry it cannot read, and a Traefik that does not start takes
+# every route down rather than two, so the config generator asks this before
+# writing the block instead of assuming the copy worked.
+_traefik_local_plugin_present() {
+    local d
+    d=$(_traefik_local_plugin_dir)
+    [[ -f "${d}/.traefik.yml" && -f "${d}/main.go" && -f "${d}/go.mod" ]]
+}
+
+# Copy the vendored plugin tree into place. vendor/traefik-plugins mirrors the
+# layout Traefik expects under /plugins-local/src, so this stays a plain copy
+# and a second plugin needs no code here.
+_traefik_install_local_plugin() {
+    local src="${SCRIPT_DIR:-/opt/corex-pro}/vendor/traefik-plugins"
+    local dest="${DOCKER_ROOT}/traefik/plugins-local/src"
+    [[ -d "$src" ]] || return 1
+    mkdir -p "$dest" || return 1
+    cp -r "${src}/." "${dest}/" || return 1
+    _traefik_local_plugin_present
+}
+
 traefik_dirs() {
     mkdir -p "${DOCKER_ROOT}/traefik"
     mkdir -p "${DOCKER_ROOT}/traefik/certs"
     # Must exist before the bind mount, or Docker creates it as root-owned and
-    # Traefik cannot write the plugin it just downloaded.
+    # Traefik cannot write a plugin it downloaded on the fallback path.
     mkdir -p "${DOCKER_ROOT}/traefik/plugins-storage"
+    # The plugin source arrives here. A file that has to be fetched or copied
+    # belongs in _dirs and not in config generation, which repair runs and
+    # which has to stay free of anything that can fail or hang. Quiet on
+    # failure: _traefik_write_configs says so where it matters, which is only
+    # when a cold-start service is actually configured.
+    _traefik_install_local_plugin || true
 }
 
 traefik_firewall() {
@@ -357,13 +409,29 @@ TEOF
     if declare -f state_get >/dev/null &&
        { [[ "$(state_get cold_portainer 2>/dev/null)" == true ]] ||
          [[ "$(state_get cold_grafana 2>/dev/null)" == true ]]; }; then
-        cat >> "${dir}/traefik.yml" <<'PLUGIN'
+        if _traefik_local_plugin_present; then
+            cat >> "${dir}/traefik.yml" <<PLUGIN
+experimental:
+  localPlugins:
+    sablier:
+      moduleName: ${TRAEFIK_PLUGIN_MODULE}
+PLUGIN
+        else
+            # The download path, kept only as a fallback. It is what produced
+            # the 404 outage, so it is announced rather than used quietly.
+            log_warning "Traefik plugin source missing, so the plugin is downloaded at every start"
+            echo "    A failed download disables plugins entirely and the"
+            echo "    cold-start services answer 404 until Traefik is restarted."
+            echo "    Restore the local copy:"
+            echo "      sudo bash corex-manage.sh repair traefik"
+            cat >> "${dir}/traefik.yml" <<PLUGIN
 experimental:
   plugins:
     sablier:
-      moduleName: github.com/sablierapp/sablier-traefik-plugin
+      moduleName: ${TRAEFIK_PLUGIN_MODULE}
       version: v1.3.0
 PLUGIN
+        fi
     fi
 
     # ── Default certificate: ONLY when ACME cannot work ────────────────
@@ -478,24 +546,15 @@ services:
       - ./dynamic:/dynamic:ro
       - ./acme.json:/acme.json
       - ./certs:/certs:ro
-      # Traefik's plugin cache, kept so it is inspectable and survives a
-      # container recreate. It does NOT make startup independent of the
-      # network, which was the reason for adding it, and measuring said
-      # otherwise: with the cache populated at 3.3MB, stopping AdGuard and
-      # restarting Traefik still produced "Plugins are disabled because an
-      # error has occurred", and grafana and portainer went to 404 again.
-      # Traefik calls plugins.traefik.io on every start regardless of what is
-      # cached.
-      #
-      # That failure mode is real and still open: a router naming a plugin
-      # middleware that did not load answers 404 with "invalid middleware type
-      # or middleware does not exist", so a momentary DNS gap at boot takes
-      # cold-start services down until Traefik is restarted again. It was first
-      # seen when AdGuard was restarting during a repair and Traefik came up in
-      # the gap. The fix is experimental.localPlugins, which reads the plugin
-      # from disk and never calls out; that is a static-config change worth
-      # making deliberately, because getting it wrong takes all routing down
-      # rather than two services.
+      # The plugin source, read by experimental.localPlugins. This is what
+      # makes startup independent of DNS and of plugins.traefik.io: see the
+      # comment above _traefik_local_plugin_dir for what the download path
+      # cost and how both halves were measured.
+      - ./plugins-local:/plugins-local:ro
+      # Traefik's download cache. Used only on the fallback path, where the
+      # vendored source is absent. Kept mounted so that path still works and
+      # stays inspectable; persisting it was once believed to fix the outage
+      # above and measurably does not.
       - ./plugins-storage:/plugins-storage
     environment:
       # Traefik's Cloudflare DNS-01 provider reads this. Empty when no token
