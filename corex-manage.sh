@@ -2206,9 +2206,23 @@ cmd_network_check() {
     echo ""
 }
 
-# Internal: check all three CoreX Docker networks
+# Internal: check the Docker networks CoreX owns.
+#
+# A missing network is a fault only when something needs it. ai-net is created
+# at install and goes away with the AI stack, so a box that removed AI, or
+# never installed it, has no ai-net and is entirely correct. Reporting that as
+# a warning is the self-inflicted noise of gotchas #15 and #62: an operator who
+# can do nothing about a warning stops reading warnings, and the one that
+# matters is then indistinguishable from the six that do not.
+#
+# Need is read from the compose files on disk rather than from a table kept
+# here, for the reason in gotcha #58: anything that has to agree with what
+# Docker loads should be built from what Docker loads, not from a second list
+# that drifts. This whole function exists in its current form because exactly
+# such a list dropped backend-net.
 _check_docker_networks() {
     log_step "Checking Docker networks..."
+    local net
     for net in "${COREX_NETWORKS[@]}"; do
         if docker network inspect "$net" &>/dev/null; then
             local containers
@@ -2216,8 +2230,25 @@ _check_docker_networks() {
                 --format '{{range $k,$v := .Containers}}{{$v.Name}} {{end}}' 2>/dev/null \
                 | tr ' ' '\n' | grep -c '[^[:space:]]') || containers=0
             log_success "${net}: ${containers} container(s) connected"
+            continue
+        fi
+
+        # Which installed services name this network. A disabled service still
+        # counts: its compose file is still there and enabling it will need the
+        # network, so the absence is worth flagging before that happens.
+        local wanted="" f svc
+        for f in "${DOCKER_ROOT}"/*/docker-compose.yml; do
+            [[ -f "$f" ]] || continue
+            grep -Fq "$net" "$f" || continue
+            svc=$(basename "$(dirname "$f")")
+            wanted+="${wanted:+, }${svc}"
+        done
+
+        if [[ -n "$wanted" ]]; then
+            log_warning "${net}: missing, and these services expect it: ${wanted}"
+            echo "    They will fail to start. Create it: docker network create ${net}"
         else
-            log_warning "${net}: network not found"
+            log_info "${net}: not present, and no installed service asks for it"
         fi
     done
 }

@@ -6,6 +6,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.43.2] - 2026-09-16
+
+### Fixed
+- **`network-check` warned about a network nothing needs.** With all four
+  networks finally checked (v3.43.1), a box that removed the AI stack got
+  `WARN ai-net: network not found`, which is a warning about a correct state
+  and nothing anyone can act on. That is the self-inflicted noise of gotchas
+  #15 and #62: warnings that cannot be acted on teach an operator to skim
+  warnings, and then the one that matters looks like the rest.
+
+  A missing network is a fault only when something needs it. Need is read from
+  the compose files on disk rather than from a table in the diagnostic, for
+  the same reason `COREX_NETWORKS` exists: a second list drifts. A network no
+  installed service names is now a note, and one that some service does name
+  is a warning listing exactly those services and the command to create it.
+
+---
+
 ## [v3.43.1] - 2026-09-16
 
 ### Fixed

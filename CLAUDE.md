@@ -28,7 +28,7 @@ learning nginx, SSL, Docker networking, or Linux hardening.
 - Re-run on existing server = health-check + repair broken services only
 - No live server required for testing (Docker-in-Docker + bats)
 
-**Current version:** v3.43.1
+**Current version:** v3.43.2
 **Current service modules:** 21 (Traefik, AdGuard, Portainer, Nextcloud,
 Immich, Vaultwarden, Stalwart Mail, Coolify, n8n, Cal.com, Time Machine,
 Uptime Kuma + Grafana + Prometheus (monitoring), Ollama + OpenWebUI +
@@ -2884,6 +2884,16 @@ except against a file that embeds JSON or YAML. The assertion is written as
 
 **Put the bug back and confirm the test fails.** Both faults above were found
 that way, not by reading. Same rule as `render-check.mjs` in gotcha #37.
+
+**And the fix surfaced its own noise.** With all four networks finally checked,
+`network-check` printed `WARN ai-net: network not found` on a box that removed
+the AI stack, which is a warning about a correct state and nothing an operator
+can act on. A missing network is a fault only when something needs it, so need
+is read from the compose files on disk: a network no installed service names
+is a note, and one that some service does name is a warning that lists those
+services and the command to create it. Reading it from the files rather than
+from a table here is the same rule as gotcha #58, and is what this whole
+function exists in its current form to obey.
 
 ## What NOT to Do
 
