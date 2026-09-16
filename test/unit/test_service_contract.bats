@@ -250,8 +250,15 @@ _repair_body() {
     local body
     body=$(awk '/^cloudflared_deploy\(\)/,/^}/' "$f")
     local rm_line token_line
-    token_line=$(echo "$body" | grep -n '_cloudflared_token' | head -1 | cut -d: -f1)
-    rm_line=$(echo "$body" | grep -n 'docker rm -f cloudflared' | head -1 | cut -d: -f1)
+    # Code lines only. The comment above this function explains the original
+    # bug and therefore contains the words "docker rm -f cloudflared", so a
+    # grep over the whole body finds the removal on the comment line, decides
+    # it comes before the token resolution, and reports the fix as missing.
+    # The test was reading its own documentation.
+    local code
+    code=$(printf '%s\n' "$body" | grep -vE '^\s*#')
+    token_line=$(printf '%s\n' "$code" | grep -n '_cloudflared_token' | head -1 | cut -d: -f1)
+    rm_line=$(printf '%s\n' "$code" | grep -n 'docker rm -f cloudflared' | head -1 | cut -d: -f1)
     [ -n "$token_line" ]
     [ -n "$rm_line" ]
     [ "$token_line" -lt "$rm_line" ]
@@ -297,8 +304,15 @@ _repair_body() {
     body=$(awk '/^_stalwart_proxy_banned\(\)/,/^}/' \
         "${REPO_ROOT}/lib/services/stalwart.sh")
     echo "$body" | grep -q 'State.StartedAt'
-    run bash -c "echo '$body' | grep -c 'docker logs --since 24h'"
-    [ "$output" = "0" ]
+    # printf into grep, not `bash -c "echo '$body'"`. Wrapping the body in
+    # single quotes inside a double-quoted string breaks the moment the body
+    # contains a single quote, which it does: the function being checked holds
+    # '{{.State.StartedAt}}'. The command then fails to parse, $output is a
+    # shell error rather than a count, and the test reports the code as broken
+    # when the code is fine.
+    local n
+    n=$(printf '%s\n' "$body" | grep -c 'docker logs --since 24h' || true)
+    [ "$n" = "0" ]
 }
 
 @test "no module pipes docker logs into grep -q" {
@@ -679,8 +693,15 @@ _repair_body() {
     local body
     body=$(awk '/^_traefik_write_configs\(\)/,/^}/' "$f")
     echo "$body" | grep -q 'cf_token=\$(_traefik_cf_token)'
-    run bash -c "echo '$body' | grep -c 'if \[\[ -n \"\\\${CLOUDFLARE_DNS_API_TOKEN:-}\" \]\]'"
-    [ "$output" = "0" ]
+    # printf into grep, not `bash -c "echo '$body'"`. Wrapping the body in
+    # single quotes inside a double-quoted string breaks the moment the body
+    # contains a single quote, which it does: the function being checked holds
+    # '{{.State.StartedAt}}'. The command then fails to parse, $output is a
+    # shell error rather than a count, and the test reports the code as broken
+    # when the code is fine.
+    local n
+    n=$(printf '%s\n' "$body" | grep -c 'if \[\[ -n "\${CLOUDFLARE_DNS_API_TOKEN:-}" \]\]' || true)
+    [ "$n" = "0" ]
 }
 
 @test "traefik file provider reads a directory so services can add routes" {
@@ -902,8 +923,15 @@ _repair_body() {
     [ "$removals" -le 1 ]
     echo "$body" | grep -qE 'rm -f "\$\{dir\}/dynamic\.yml"'
     # And it must not wipe the directory.
-    run bash -c "echo '$body' | grep -c 'rm -rf .*dynamic'"
-    [ "$output" = "0" ]
+    # printf into grep, not `bash -c "echo '$body'"`. Wrapping the body in
+    # single quotes inside a double-quoted string breaks the moment the body
+    # contains a single quote, which it does: the function being checked holds
+    # '{{.State.StartedAt}}'. The command then fails to parse, $output is a
+    # shell error rather than a count, and the test reports the code as broken
+    # when the code is fine.
+    local n
+    n=$(printf '%s\n' "$body" | grep -c 'rm -rf .*dynamic' || true)
+    [ "$n" = "0" ]
 }
 
 @test "an https backend gets the insecure-backend transport" {

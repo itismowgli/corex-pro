@@ -636,8 +636,20 @@ sso_off() {
     _authelia_write_config
     local cfg="${DOCKER_ROOT}/authelia/configuration.yml"
     grep -q "default_policy: deny" "$cfg"
-    grep -q "portainer.test.example.com" "$cfg"
-    grep -q "grafana.test.example.com" "$cfg"
+    # The protected list is read from the module, not written down here.
+    # This named portainer, grafana and auth, and portainer stopped being
+    # protected when it moved to cold start: the list is grafana, adguard and
+    # n8n now. A test that hardcodes the opinion fails the next time the
+    # opinion changes, and says the config is broken when it is current.
+    #
+    # Deny-by-default makes this load bearing rather than cosmetic: a hostname
+    # absent from the rules is refused outright, with no sign-in that fixes it
+    # (gotcha #58), so every protected name really must appear.
+    local svc
+    for svc in $AUTHELIA_DEFAULT_PROTECT; do
+        grep -q "${svc}.test.example.com" "$cfg" \
+            || { echo "protected service ${svc} is missing from access_control"; false; }
+    done
     grep -q "auth.test.example.com" "$cfg"
 }
 

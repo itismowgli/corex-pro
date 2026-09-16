@@ -6,6 +6,42 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.40.0] - 2026-09-16
+
+### Fixed
+- **The whole suite is green: 186 unit and 56 smoke, nothing failing.** It had
+  been carrying a documented baseline of 21 known failures for long enough that
+  the number was treated as furniture, and comparing a new run against it was
+  being reported as success. Every one of the remaining five turned out to be
+  the test being wrong rather than the code, and each accused working code of a
+  specific bug.
+
+- **Four tests broke their own shell quoting.** They ran
+  `bash -c "echo '$body' | grep -c ..."`, which falls apart the moment the
+  extracted body contains a single quote, and the body did: the Stalwart
+  function being checked holds `'{{.State.StartedAt}}'`. The command then
+  failed to parse, `$output` was a shell error rather than a count, and the
+  comparison against `"0"` failed. They use `printf` into `grep` now, with no
+  round trip through a nested quoting context.
+
+- **One test was reading its own documentation.** It checked that cloudflared
+  resolves its token before removing the container, by finding the line numbers
+  of each. The comment above that function explains the original bug and
+  therefore contains the words `docker rm -f cloudflared`, so the search found
+  the removal on a comment line, placed it before the token resolution, and
+  reported a fix that has been in place for releases as missing. It reads code
+  lines only.
+
+- **One asserted an opinion that had since changed.** The Authelia check named
+  portainer, grafana and auth as protected hostnames. Portainer stopped being
+  protected when it moved to cold start, and the list is grafana, adguard and
+  n8n now. It reads `AUTHELIA_DEFAULT_PROTECT` instead of naming services, so
+  it cannot go stale again. Deny-by-default makes this worth checking properly:
+  a hostname absent from the rules is refused outright with no sign-in that
+  fixes it (gotcha #58).
+
+---
+
 ## [v3.39.0] - 2026-09-16
 
 ### Fixed

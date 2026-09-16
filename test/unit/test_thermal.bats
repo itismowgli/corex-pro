@@ -331,8 +331,15 @@ _generated() {
     body=$(awk '/^shed\(\)/,/^}/' "$out")
     [ -n "$body" ]
     # The stop must not gate the recording.
-    run bash -c "echo '$body' | grep -c 'if timeout 45 docker stop'"
-    [ "$output" = "0" ]
+    # printf into grep, not `bash -c "echo '$body'"`. Wrapping the body in
+    # single quotes inside a double-quoted string breaks the moment the body
+    # contains a single quote, which it does: the function being checked holds
+    # '{{.State.StartedAt}}'. The command then fails to parse, $output is a
+    # shell error rather than a count, and the test reports the code as broken
+    # when the code is fine.
+    local n
+    n=$(printf '%s\n' "$body" | grep -c 'if timeout 45 docker stop' || true)
+    [ "$n" = "0" ]
     # Recording is decided by whether it is still running.
     echo "$body" | grep -q "docker ps --format '{{.Names}}'"
     echo "$body" | grep -q 'would not stop'
