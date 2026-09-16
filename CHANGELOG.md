@@ -6,6 +6,31 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.44.1] - 2026-09-16
+
+### Fixed
+- **A maintenance command produced a Telegram alert with nothing wrong.**
+  `watchdog setup` and `kuma-seed` both stop Uptime Kuma to write its SQLite
+  file safely. While it is stopped nothing pushes, so its first check on the
+  way back finds nothing inside the window, marks every push monitor down and
+  notifies, and Kuma then re-notifies on its resend interval until a real beat
+  arrives up to a minute later.
+
+  This was the other half of the memory alerts fixed in v3.44.0: the beat that
+  opened each episode read "No heartbeat in the time window", not "Swapping
+  heavily". A maintenance command opened it and the swap threshold kept it
+  open. What ruled out the watchdog itself is that the other push monitors,
+  written by the same script in the same cycle, lost 0, 0, 1 and 2 beats over
+  the same day while memory lost 173.
+
+  `kuma_start_after_edit` starts the container, waits for it to answer, and
+  runs one watchdog cycle so every push monitor has a fresh beat before Kuma
+  checks. Verified by running a full `watchdog setup` on a live box: zero
+  notifications and zero missed beats, where the same operation previously
+  started the cascade.
+
+---
+
 ## [v3.44.0] - 2026-09-16
 
 ### Fixed

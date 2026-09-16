@@ -28,7 +28,7 @@ learning nginx, SSL, Docker networking, or Linux hardening.
 - Re-run on existing server = health-check + repair broken services only
 - No live server required for testing (Docker-in-Docker + bats)
 
-**Current version:** v3.44.0
+**Current version:** v3.44.1
 **Current service modules:** 21 (Traefik, AdGuard, Portainer, Nextcloud,
 Immich, Vaultwarden, Stalwart Mail, Coolify, n8n, Cal.com, Time Machine,
 Uptime Kuma + Grafana + Prometheus (monitoring), Ollama + OpenWebUI +
@@ -2930,6 +2930,27 @@ happens to be in, and the state worth testing is the one it is not in.** So
 `test/python/test_memory.py` drives seven cases off fixtures, including a
 kernel with no `CONFIG_PSI` and a box with no swap at all. Both the old
 behaviour and a version ignoring PSI were put back and confirmed to fail it.
+
+**The alert had a second cause, and the first message was the giveaway.** The
+Telegram alerts kept arriving, and the beat that opened each episode did not
+say "Swapping heavily" at all: it said **"No heartbeat in the time window"**.
+Seeding and watchdog registration both stop Uptime Kuma to write its SQLite
+file, and while it is stopped nothing pushes, so its first check on the way
+back marks every push monitor down and notifies. The swap alert then held the
+monitor down, and Kuma re-notified every `resend_interval` for as long as that
+lasted. So a maintenance command opened it and a bad threshold kept it open.
+
+What ruled out the obvious suspect was comparing siblings: over the same day
+the other push monitors, written by the **same script in the same cycle**, lost
+0, 0, 1 and 2 beats while memory lost 173. A fault in the pusher cannot be
+selective like that. And while down, the no-heartbeat rows arrived at exactly
+30 an hour, which is `retry_interval` of 120s, so they were Kuma's own beats
+rather than lost pushes: a consequence of being down, not the cause of it.
+
+`kuma_start_after_edit` in `lib/common.sh` starts the container, waits for it
+to answer, and runs one watchdog cycle, so the window is refreshed before
+Kuma's first check rather than up to a minute later on the timer. Both writers
+go through it.
 
 ## What NOT to Do
 
