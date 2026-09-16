@@ -42,7 +42,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
   before it is deployed would make doctor believe in a service that is not
   there.
 
-  Unit failures go from 21 to 6.
+- **A test that accused working code of rotating credentials.** It checked that
+  a module reads back a persisted secret before generating one, which is the
+  right property, by matching three blessed variable names. calcom guards with
+  `[[ -s "$env_file" ]]` and keeper with `[[ ! -s "$file" ]]`, so both were
+  reported as regenerating secrets on every run while both are correct. It
+  matches the shape now. A test that names the variables it will accept fails
+  the next module that picks a different name, and the failure it prints
+  accuses working code of the Stalwart bug (gotcha #3).
+
+  Unit failures go from 21 to 5.
 
 ---
 

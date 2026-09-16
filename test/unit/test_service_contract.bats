@@ -141,8 +141,16 @@ _repair_body() {
         local svc
         svc=$(basename "$f" .sh)
         grep -qE 'openssl rand|generate_pass' "$f" || continue
-        # Must read back a persisted dotfile before generating.
-        grep -qE '\-s "\$(pass_file|token_file)"|-s "\$f"|cat "\$(pass_file|token_file)"' "$f" \
+        # Must read back a persisted file before generating.
+        #
+        # Matched on the shape, not on three blessed variable names. The
+        # previous pattern only accepted $pass_file, $token_file and $f, so
+        # calcom and keeper were reported as regenerating secrets on every run
+        # while both guard correctly, one with [[ -s "$env_file" ]] and the
+        # other with [[ ! -s "$file" ]]. A test that names the variables it
+        # will accept fails the next module that picks a different name, and
+        # the failure accuses working code of a credential-rotating bug.
+        grep -qE '! *-s +"\$[A-Za-z_][A-Za-z0-9_]*"|[^!] *-s +"\$[A-Za-z_][A-Za-z0-9_]*"' "$f" \
             || offenders+=" $svc"
     done
     [ -z "$offenders" ] || {
