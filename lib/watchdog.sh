@@ -875,7 +875,7 @@ watchdog_seed_monitors() {
 
     if (( rc != 0 )) || [[ -z "$tokens" ]]; then
         log_warning "Monitor registration failed; database backup kept at ${db}.pre-watchdog"
-        [[ "$was_running" == "true" ]] && docker start uptime-kuma >/dev/null 2>&1 || true
+        kuma_start_after_edit "$was_running"
         return 1
     fi
 
@@ -891,7 +891,7 @@ watchdog_seed_monitors() {
     rm -f "$tmp"
     chmod 640 /etc/corex/watchdog.conf
 
-    [[ "$was_running" == "true" ]] && docker start uptime-kuma >/dev/null 2>&1 || true
+    kuma_start_after_edit "$was_running"
 
     local n; n=$(printf '%s\n' "$tokens" | grep -c '^WATCHDOG_TOKEN_')
     log_success "Registered ${n} watchdog monitors in Uptime Kuma"

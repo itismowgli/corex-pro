@@ -1612,3 +1612,32 @@ _repair_body() {
     [ "$declared" = "$nuked" ] \
         || { echo "uninstall would orphan a network: declared [${declared}] vs nuked [${nuked}]"; false; }
 }
+
+# Seeding and watchdog registration stop Uptime Kuma to write its SQLite file.
+# While it is stopped nothing pushes, so its first check on the way back marks
+# every push monitor down and notifies, and Kuma then re-notifies on its resend
+# interval until a real beat arrives. Measured on this box: a Memory Pressure
+# alert on Telegram whose transition beat read "No heartbeat in the time
+# window", with the watchdog running normally throughout.
+@test "restarting Kuma after a database edit refreshes the heartbeat" {
+    grep -q '^kuma_start_after_edit()' "${REPO_ROOT}/lib/common.sh" \
+        || { echo "no shared way to come back from a Kuma edit"; false; }
+
+    # Both writers go through it. A bare docker start is the bug.
+    local f
+    for f in lib/watchdog.sh lib/kuma.sh; do
+        grep -q 'kuma_start_after_edit' "${REPO_ROOT}/${f}" \
+            || { echo "${f} does not refresh the beat after restarting Kuma"; false; }
+        grep -qE '^[^#]*docker start uptime-kuma' "${REPO_ROOT}/${f}" \
+            && { echo "${f} still starts Kuma without refreshing the beat"; false; }
+    done
+
+    # It has to wait for Kuma to answer and then actually push. Starting the
+    # container and returning immediately loses the race it exists to win.
+    local body
+    body=$(awk '/^kuma_start_after_edit\(\)/,/^}/' "${REPO_ROOT}/lib/common.sh")
+    echo "$body" | grep -q 'curl' \
+        || { echo "it does not wait for Kuma to come up"; false; }
+    echo "$body" | grep -q 'corex-watchdog.sh' \
+        || { echo "it never pushes a beat, so the window is still empty"; false; }
+}

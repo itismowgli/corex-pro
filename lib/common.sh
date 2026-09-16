@@ -36,6 +36,33 @@ log_error()   { echo -e "${RED}[FAIL]${NC} $1" >&2; exit 1; }
 # isolation boundary carved off it.
 COREX_NETWORKS=(proxy-net backend-net monitoring-net ai-net)
 
+# ── Coming back from an edit to the Kuma database ─────────────────────────────
+# Seeding and watchdog registration both have to stop Uptime Kuma to write its
+# SQLite file safely. While it is stopped no push arrives, so its first check
+# on the way back finds nothing inside the window, marks every push monitor
+# down and notifies. A maintenance command that produces a Telegram alert with
+# nothing wrong is the self-inflicted noise of gotchas #15 and #62, and it is
+# worse than it sounds: the monitor then stays down until the next real beat,
+# and Kuma re-notifies on its resend interval the whole time.
+#
+# So the heartbeat is refreshed as part of coming back rather than left to the
+# next timer tick, which can be a minute away.
+kuma_start_after_edit() {
+    [[ "${1:-false}" == "true" ]] || return 0
+    docker start uptime-kuma >/dev/null 2>&1 || return 0
+    local i
+    for i in $(seq 1 30); do
+        curl -sf -o /dev/null --max-time 2 "http://127.0.0.1:3001" 2>/dev/null && break
+        sleep 1
+    done
+    # One cycle pushes every monitor the watchdog owns. The script is absent
+    # before the first `watchdog setup`, which is precisely when there are no
+    # monitors to refresh.
+    [[ -x /usr/local/bin/corex-watchdog.sh ]] \
+        && /usr/local/bin/corex-watchdog.sh >/dev/null 2>&1
+    return 0
+}
+
 # ── Utilities ─────────────────────────────────────────────────────────────────
 
 # Generate a 32-char random password (alphanumeric, no special chars).

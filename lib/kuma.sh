@@ -308,7 +308,7 @@ if __name__ == "__main__":
 PYEOF
     rm -f "$decl"
 
-    [[ "$was_running" == "true" ]] && docker start uptime-kuma >/dev/null 2>&1 || true
+    kuma_start_after_edit "$was_running"
 
     if (( rc != 0 )); then
         log_warning "Seeding monitors failed; the database backup is at ${_KUMA_DB}.pre-seed"
