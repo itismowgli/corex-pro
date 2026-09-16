@@ -6,6 +6,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.41.0] - 2026-09-16
+
+### Fixed
+- **Uptime Kuma had never been monitored, by itself or anything else.** Seeding
+  writes directly into Kuma's SQLite database, so Kuma is stopped for the
+  duration, and the seeder only creates a monitor for a hostname that answers
+  now. Its own hostname therefore could not answer during the only window in
+  which its monitor would have been created, and it was skipped on every run
+  since the feature shipped. The one service whose entire job is noticing that
+  something is down had nothing watching it.
+
+  The precheck exists so that a deliberately stopped component does not get a
+  permanently DOWN monitor and train the operator to ignore alerts. That
+  reasoning does not apply to the container the seeder has just stopped itself,
+  so its own check is exempt. 13 monitors to 14.
+
+---
+
 ## [v3.40.0] - 2026-09-16
 
 ### Fixed

@@ -237,8 +237,21 @@ def main(db_path):
         # the operator chose, and that is how alerts get ignored. Existing
         # monitors are never removed on this basis: switching something off
         # for an hour should not delete its history.
+        # Uptime Kuma cannot answer a check about Uptime Kuma right now.
+        #
+        # Seeding writes straight into Kuma's SQLite database, so Kuma is
+        # stopped for the duration. Its own hostname therefore cannot answer
+        # during the only window in which its monitor would be created, and it
+        # was skipped on every run since the feature shipped: the one service
+        # whose entire job is noticing that something is down had nothing
+        # watching it.
+        #
+        # The precheck exists to avoid creating a permanently DOWN monitor for
+        # a component the operator deliberately switched off. That reasoning
+        # does not apply to the container this function just stopped itself.
+        self_check = name == "Uptime Kuma"
         if not cur.execute("SELECT 1 FROM monitor WHERE name = ?", (name,)).fetchone():
-            if not _answers(url, codes):
+            if not self_check and not _answers(url, codes):
                 skipped += 1
                 print("skipped %s: %s does not answer acceptably yet" % (name, url),
                       file=sys.stderr)
