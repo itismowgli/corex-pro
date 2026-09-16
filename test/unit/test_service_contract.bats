@@ -1567,3 +1567,48 @@ _repair_body() {
     echo "$body" | grep -q 'not answering' \
         || { echo "a Traefik that cannot be asked is not distinguished from one with no faults"; false; }
 }
+
+# backend-net was added to the install and to nothing else, so for every
+# release since, `corex manage network-check` reported three networks on a box
+# running four, and `nuke-corex.sh` left one behind on every uninstall. Neither
+# failed; both were quietly incomplete, which is why a test rather than care is
+# what keeps them in step.
+@test "every CoreX network is created, diagnosed and removed" {
+    local lib="${REPO_ROOT}/lib/common.sh"
+    grep -q '^COREX_NETWORKS=(' "$lib" \
+        || { echo "there is no single list, so the copies cannot be checked"; false; }
+
+    # The creator and the diagnostic read the list rather than repeating it.
+    # Asserted as "names no network literally" rather than by extracting a
+    # function body: lib/docker.sh writes daemon.json through a heredoc whose
+    # closing brace sits in column 0, so an awk range on /^}/ stops there and
+    # never reaches the network block. That is worth knowing before writing
+    # any other test against this file.
+    local f
+    for f in lib/docker.sh corex-manage.sh; do
+        grep -q 'COREX_NETWORKS' "${REPO_ROOT}/${f}" \
+            || { echo "${f} does not read the shared list"; false; }
+    done
+    grep -qE 'docker network create[[:space:]]+[a-z]+-net' "${REPO_ROOT}/lib/docker.sh" \
+        && { echo "lib/docker.sh still creates a network by literal name"; false; }
+    awk '/^_check_docker_networks\(\)/,/^}/' "${REPO_ROOT}/corex-manage.sh" \
+        | grep -qE 'for net in[[:space:]]+[a-z]+-net' \
+        && { echo "network-check still iterates a literal list"; false; }
+
+    # nuke-corex.sh is standalone by design and sources nothing, so its copy is
+    # a literal. That is the one that has to be compared, not trusted.
+    local declared nuked
+    declared=$(sed -n 's/^COREX_NETWORKS=(\(.*\))$/\1/p' "$lib" | tr ' ' '\n' | sort | tr '\n' ' ')
+    # Comment lines are stripped first, and only the removal itself is read.
+    # Scanning the whole file passed with the bug deliberately reintroduced,
+    # because the comment above the loop names backend-net and that satisfied
+    # the grep. A test that reads prose instead of code cannot fail.
+    nuked=$(grep -v '^[[:space:]]*#' "${REPO_ROOT}/nuke-corex.sh" \
+        | grep -hoE '(docker network rm [a-z]+-net|for _net in [a-z][a-z -]*-net)' \
+        | sed -e 's/docker network rm //' -e 's/for _net in //' \
+        | tr ' ' '\n' | grep -E '^[a-z]+-net$' | sort -u | tr '\n' ' ')
+    [ -n "$declared" ] || { echo "could not read COREX_NETWORKS"; false; }
+    [ -n "$nuked" ] || { echo "nuke-corex.sh removes no networks at all"; false; }
+    [ "$declared" = "$nuked" ] \
+        || { echo "uninstall would orphan a network: declared [${declared}] vs nuked [${nuked}]"; false; }
+}

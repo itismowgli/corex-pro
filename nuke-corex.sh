@@ -171,9 +171,13 @@ if confirm "Stop and remove ALL Docker containers, volumes, and networks?"; then
 
     # Remove CoreX networks
     log_nuke "Removing Docker networks..."
-    run "docker network rm proxy-net 2>/dev/null"
-    run "docker network rm monitoring-net 2>/dev/null"
-    run "docker network rm ai-net 2>/dev/null"
+    # Kept as a literal list rather than sourced, because this script is
+    # standalone by design. test_service_contract.bats asserts it matches
+    # COREX_NETWORKS in lib/common.sh; backend-net was added there and missed
+    # here, so every uninstall left one network behind.
+    for _net in proxy-net backend-net monitoring-net ai-net; do
+        run "docker network rm ${_net} 2>/dev/null"
+    done
 
     # Remove named volumes
     log_nuke "Removing Docker volumes..."

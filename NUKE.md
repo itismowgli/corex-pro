@@ -48,7 +48,7 @@ The script runs 10 phases in order. In interactive mode, each phase asks for con
 
 - Stops each docker-compose stack gracefully (in order)
 - Force-removes any remaining containers
-- Removes `proxy-net`, `monitoring-net`, `ai-net` networks
+- Removes `proxy-net`, `backend-net`, `monitoring-net`, `ai-net` networks
 - Removes all Docker volumes
 - Prunes unused images to free disk space
 
@@ -295,7 +295,7 @@ This is a complete list of everything the nuke script can remove or modify:
 | File/Path                                           | Phase | Action                           |
 | --------------------------------------------------- | ----- | -------------------------------- |
 | All Docker containers                               | 1     | Removed                          |
-| Docker networks (proxy-net, monitoring-net, ai-net) | 1     | Removed                          |
+| Docker networks (all four CoreX networks)           | 1     | Removed                          |
 | Docker volumes                                      | 1     | Removed                          |
 | Docker images (unused)                              | 1     | Pruned                           |
 | `/usr/local/bin/corex-backup.sh`                    | 2     | Deleted                          |

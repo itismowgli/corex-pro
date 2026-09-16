@@ -2209,7 +2209,7 @@ cmd_network_check() {
 # Internal: check all three CoreX Docker networks
 _check_docker_networks() {
     log_step "Checking Docker networks..."
-    for net in proxy-net monitoring-net ai-net; do
+    for net in "${COREX_NETWORKS[@]}"; do
         if docker network inspect "$net" &>/dev/null; then
             local containers
             containers=$(docker network inspect "$net" \

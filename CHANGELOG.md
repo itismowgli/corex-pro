@@ -6,6 +6,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.43.1] - 2026-09-16
+
+### Fixed
+- **backend-net was created and then forgotten by everything else.** The
+  four-network split added it to `lib/docker.sh` and to nothing else, so
+  `corex manage network-check` reported three networks on a box running four,
+  and `nuke-corex.sh` left one behind on every uninstall. Neither failed;
+  both were quietly incomplete, which is the harder kind to notice.
+
+  `COREX_NETWORKS` in `lib/common.sh` is the list now. The installer creates
+  from it and the diagnostic iterates it. `nuke-corex.sh` keeps a literal copy
+  because it is standalone by design and sources nothing, the same rule as its
+  logging functions, so a unit test compares the two and fails when they
+  drift. `NUKE.md` was saying the same wrong thing and now does not.
+
+- **`corex manage watchdog show` reported "7 of 6" registered checks.** The
+  expected count was a literal typed beside the list it describes, so adding
+  the Traefik Routing check made a correct install read as broken. It is
+  counted from `WATCHDOG_CHECKS`.
+
+---
+
 ## [v3.43.0] - 2026-09-16
 
 ### Fixed

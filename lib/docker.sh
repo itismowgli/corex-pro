@@ -57,10 +57,10 @@ phase3_docker() {
     # into one web application could open the others' databases directly, and
     # Redis in particular takes commands with no password at all. An app keeps
     # a foot in both networks; its database keeps only the one.
-    docker network create proxy-net      2>/dev/null || true
-    docker network create backend-net    2>/dev/null || true
-    docker network create monitoring-net 2>/dev/null || true
-    docker network create ai-net         2>/dev/null || true
+    local net
+    for net in "${COREX_NETWORKS[@]}"; do
+        docker network create "$net" 2>/dev/null || true
+    done
 
-    log_success "Docker networks ready (proxy-net, backend-net, monitoring-net, ai-net)"
+    log_success "Docker networks ready (${COREX_NETWORKS[*]})"
 }

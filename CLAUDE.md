@@ -28,7 +28,7 @@ learning nginx, SSL, Docker networking, or Linux hardening.
 - Re-run on existing server = health-check + repair broken services only
 - No live server required for testing (Docker-in-Docker + bats)
 
-**Current version:** v3.43.0
+**Current version:** v3.43.1
 **Current service modules:** 21 (Traefik, AdGuard, Portainer, Nextcloud,
 Immich, Vaultwarden, Stalwart Mail, Coolify, n8n, Cal.com, Time Machine,
 Uptime Kuma + Grafana + Prometheus (monitoring), Ollama + OpenWebUI +
@@ -2850,6 +2850,40 @@ sends the reader to Grafana while "invalid middleware type" sends them to the
 middleware that did not load. An unreachable API is reported as unverifiable
 rather than as healthy, for the reason in gotcha #55: ready is not the same as
 working.
+
+### 71. A list that grew in one place, and two tests that could not fail
+
+`backend-net` was added to `lib/docker.sh` and to nothing else. So
+`corex manage network-check` reported three networks on a box running four,
+and `nuke-corex.sh` left one behind on every uninstall. Neither command
+failed, both were merely incomplete, and an incomplete uninstall is the kind
+nobody discovers until the next install behaves oddly.
+
+`COREX_NETWORKS` in `lib/common.sh` is the one list. The installer creates
+from it and the diagnostic iterates it. `nuke-corex.sh` keeps a literal copy
+because it is standalone by design and sources nothing, the same rule as its
+logging functions, so the test compares the two rather than trusting them.
+
+The two traps found while writing that test are worth more than the fix.
+
+**A test that reads prose instead of code cannot fail.** The first version
+scanned the whole of `nuke-corex.sh` for anything matching `[a-z]+-net`. With
+`backend-net` deliberately removed from the removal loop it still passed,
+because the comment above the loop mentions `backend-net` by name. Comment
+lines are stripped first now and only the removal itself is read. The general
+rule, which is gotcha #50's in a different costume: a check has to read the
+thing that runs, not the thing that describes it.
+
+**An `awk` range ending at `/^}/` stops at the first brace in column 0, not at
+the end of the function.** `phase3_docker` writes `daemon.json` through a
+heredoc whose closing brace sits in column 0, so the range ended a third of
+the way in and never reached the network block. This repo extracts function
+bodies with that idiom in a dozen tests, and it is correct in all of them
+except against a file that embeds JSON or YAML. The assertion is written as
+"names no network literally" instead, which needs no extraction.
+
+**Put the bug back and confirm the test fails.** Both faults above were found
+that way, not by reading. Same rule as `render-check.mjs` in gotcha #37.
 
 ## What NOT to Do
 

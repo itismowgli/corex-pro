@@ -21,6 +21,21 @@ log_success() { echo -e "${GREEN}[  OK]${NC} $1"; }
 log_warning() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error()   { echo -e "${RED}[FAIL]${NC} $1" >&2; exit 1; }
 
+# ── The Docker networks CoreX owns ────────────────────────────────────────────
+# One list, because it has gone stale twice. backend-net was added and neither
+# `corex manage network-check` nor `nuke-corex.sh` heard about it, so the
+# diagnostic under-reported by one network for every install and the uninstall
+# left an orphan behind.
+#
+# nuke-corex.sh keeps its own copy on purpose: it is standalone by design and
+# sources nothing, the same rule as the logging functions. A unit test asserts
+# the two agree, which is the only thing that can keep them agreeing.
+#
+# Order is creation order and does not matter to Docker, but proxy-net first
+# reads correctly: it is the one Traefik owns and everything else is an
+# isolation boundary carved off it.
+COREX_NETWORKS=(proxy-net backend-net monitoring-net ai-net)
+
 # ── Utilities ─────────────────────────────────────────────────────────────────
 
 # Generate a 32-char random password (alphanumeric, no special chars).
