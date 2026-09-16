@@ -1488,3 +1488,21 @@ _repair_body() {
     n=$(echo "$body" | grep -oE 'sp5100_tco|iTCO_wdt|wdat_wdt' | sort -u | wc -l)
     [ "$n" -ge 2 ] || { echo "only one board family is covered"; false; }
 }
+
+# Traefik downloads plugins at startup and disables plugins entirely when that
+# fails, so a router naming one answers 404 with "invalid middleware type or
+# middleware does not exist". Observed: AdGuard was restarting during a repair,
+# Traefik came up in the DNS gap, and grafana and portainer served 404 for
+# hours.
+#
+# This only asserts the cache is kept and writable. It deliberately does not
+# claim the cache fixes that failure, because it was measured and it does not:
+# Traefik calls the plugin service on every start whatever is cached. The fix
+# is experimental.localPlugins and is not done.
+@test "traefik keeps its plugin cache on disk and writable" {
+    local f="${REPO_ROOT}/lib/services/traefik.sh"
+    grep -q 'plugins-storage:/plugins-storage' "$f" \
+        || { echo "the plugin store is not persisted, so every restart re-downloads"; false; }
+    awk '/^traefik_dirs\(\)/,/^}/' "$f" | grep -q 'plugins-storage' \
+        || { echo "the directory is not created, so Docker makes it root-owned"; false; }
+}

@@ -6,6 +6,41 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.42.0] - 2026-09-16
+
+### Fixed
+- **Grafana and Portainer were both serving 404.** Not a routing mistake and
+  not cold start misbehaving: Traefik downloads the Sablier middleware from
+  plugins.traefik.io at startup, that download failed, and Traefik responds to
+  a failed plugin load by disabling plugins entirely. Every router naming one
+  then reports "invalid middleware type or middleware does not exist" and
+  answers 404, which is gotcha #44 arriving from the static config rather than
+  from a missing container.
+
+  It failed because AdGuard was restarting during a repair and Traefik came up
+  in the DNS gap. Nothing pointed at the cause: the routers existed, Authelia
+  was healthy, the containers were fine, and Traefik logged the real reason
+  once at startup and never again. Restarting Traefik once DNS worked restored
+  both, grafana to its expected 302 to the sign-in portal and portainer to 200.
+
+### Changed
+- **Traefik's plugin cache is kept on disk.** It makes the cache inspectable
+  and survives a container recreate.
+
+  It does **not** make startup independent of the network, which is why it was
+  added, and the measurement says otherwise: with the cache populated at 3.3MB,
+  stopping AdGuard and restarting Traefik reproduced the failure exactly and
+  both services returned to 404. Traefik calls the plugin service on every
+  start whatever is cached. The comment and the test say that rather than the
+  thing that sounded right, because a claim nobody re-measured is how a
+  feature comes to be documented and absent (gotcha #63).
+
+  The real fix is `experimental.localPlugins`, which reads the plugin from disk
+  and never calls out. That is a static-config change worth making deliberately:
+  getting it wrong takes all routing down rather than two services.
+
+---
+
 ## [v3.41.0] - 2026-09-16
 
 ### Fixed

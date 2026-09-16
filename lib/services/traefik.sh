@@ -130,6 +130,9 @@ SANEOF
 traefik_dirs() {
     mkdir -p "${DOCKER_ROOT}/traefik"
     mkdir -p "${DOCKER_ROOT}/traefik/certs"
+    # Must exist before the bind mount, or Docker creates it as root-owned and
+    # Traefik cannot write the plugin it just downloaded.
+    mkdir -p "${DOCKER_ROOT}/traefik/plugins-storage"
 }
 
 traefik_firewall() {
@@ -475,6 +478,25 @@ services:
       - ./dynamic:/dynamic:ro
       - ./acme.json:/acme.json
       - ./certs:/certs:ro
+      # Traefik's plugin cache, kept so it is inspectable and survives a
+      # container recreate. It does NOT make startup independent of the
+      # network, which was the reason for adding it, and measuring said
+      # otherwise: with the cache populated at 3.3MB, stopping AdGuard and
+      # restarting Traefik still produced "Plugins are disabled because an
+      # error has occurred", and grafana and portainer went to 404 again.
+      # Traefik calls plugins.traefik.io on every start regardless of what is
+      # cached.
+      #
+      # That failure mode is real and still open: a router naming a plugin
+      # middleware that did not load answers 404 with "invalid middleware type
+      # or middleware does not exist", so a momentary DNS gap at boot takes
+      # cold-start services down until Traefik is restarted again. It was first
+      # seen when AdGuard was restarting during a repair and Traefik came up in
+      # the gap. The fix is experimental.localPlugins, which reads the plugin
+      # from disk and never calls out; that is a static-config change worth
+      # making deliberately, because getting it wrong takes all routing down
+      # rather than two services.
+      - ./plugins-storage:/plugins-storage
     environment:
       # Traefik's Cloudflare DNS-01 provider reads this. Empty when no token
       # is configured, in which case tlsChallenge is used instead.
