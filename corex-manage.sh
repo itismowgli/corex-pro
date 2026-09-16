@@ -2464,8 +2464,12 @@ cmd_watchdog() {
                     /etc/corex/watchdog.conf 2>/dev/null | sed 's/^/    /'
                 echo ""
                 echo "  Registered checks:"
-                grep -c '^WATCHDOG_TOKEN_' /etc/corex/watchdog.conf 2>/dev/null \
-                    | sed 's/^/    /;s/$/ of 6/'
+                # Counted from WATCHDOG_CHECKS, never typed. A literal here
+                # read "7 of 6" the first time a check was added, which is a
+                # number that makes a correct install look broken.
+                local have
+                have=$(grep -c '^WATCHDOG_TOKEN_' /etc/corex/watchdog.conf 2>/dev/null)
+                echo "    ${have} of ${#WATCHDOG_CHECKS[@]}"
             fi
 
             if [[ -r /var/log/corex-watchdog.log ]]; then
