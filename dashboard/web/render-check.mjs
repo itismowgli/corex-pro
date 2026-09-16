@@ -36,7 +36,7 @@ const bundle = fs.readFileSync(entryPath, "utf8")
 // Every tab, not just the default one. Radix renders tab content lazily, so a
 // component that throws is invisible until someone opens it: exactly the
 // blank page this check exists to prevent, one click further in.
-const TABS = ["overview", "services", "health", "storage", "network", "catalogue", "maintenance", "system", "account"]
+const TABS = ["overview", "services", "health", "storage", "network", "catalogue", "updates", "maintenance", "system", "account"]
 
 // The names as they appear in the sidebar. Not derived from TABS: a check
 // that computes its expectation the same way the code does agrees with the

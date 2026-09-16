@@ -4,6 +4,7 @@ import {
   HardDriveIcon,
   HeartPulseIcon,
   LayoutGridIcon,
+  ArrowUpCircleIcon,
   MonitorIcon,
   NetworkIcon,
   ServerIcon,
@@ -41,6 +42,7 @@ const GROUPS: NavGroup[] = [
     items: [
       { id: "services", label: "Services", icon: ServerIcon, hint: "Start, stop, repair, update and read logs" },
       { id: "catalogue", label: "Catalogue", icon: LayoutGridIcon, hint: "Everything CoreX can install, and what is installed" },
+      { id: "updates", label: "Updates", icon: ArrowUpCircleIcon, hint: "New images per service, and the supervised Ubuntu upgrade" },
     ],
   },
   {

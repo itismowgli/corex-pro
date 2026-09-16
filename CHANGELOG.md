@@ -6,6 +6,37 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.38.0] - 2026-09-16
+
+### Added
+- **An Updates section, so "what needs attention today" has an answer.** The
+  information already existed, one badge at a time across the service cards,
+  which answers "is this one current" and never answers the question people
+  actually open a dashboard with. Per-service update, Update all when more than
+  one is waiting, and a count in the nav.
+
+  Services whose registry could not be reached are listed separately rather
+  than folded into either number. An unreachable registry is not "up to date",
+  and flattening it would make the count one people learn to ignore, which is
+  the whole value of having one.
+
+- **The Ubuntu upgrade has a surface and a number.** `os-upgrade` already
+  existed as a supervised maintenance task, behind step-up auth, refusing to
+  start above 85C, on a dirty dpkg, or within fifteen minutes of boot. What was
+  missing was any way to see that anything was pending.
+
+  `os_updates()` in `agent/corex_metrics.py` reports both figures, because they
+  disagree on purpose. `apt-check` says what unattended upgrades would install
+  tonight, and CoreX deliberately holds back `linux-*`, `libc6`, `libc-bin`,
+  `systemd` and `udev` (gotcha #18), since a kernel upgrade interrupted by a
+  thermal trip can leave the machine unbootable. So "4 upgradable" and "0 can
+  be applied immediately" are both true at once, and the held count is the one
+  the supervised upgrade exists for. Measured on a live box: total 4, auto 0,
+  held 4. The card says which is which rather than presenting one number and
+  letting the other look like a contradiction.
+
+---
+
 ## [v3.37.0] - 2026-09-16
 
 ### Changed

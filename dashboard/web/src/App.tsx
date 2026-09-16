@@ -16,6 +16,7 @@ import {
 import { AccountTab } from "@/components/account-tab"
 import { OverviewTab } from "@/components/overview-tab"
 import { CatalogueTab } from "@/components/catalogue-tab"
+import { UpdatesTab } from "@/components/updates-tab"
 import { HealthTab } from "@/components/health-tab"
 import { JobPanel } from "@/components/job-panel"
 import { ConsumersDialog, type Consumer } from "@/components/consumers-dialog"
@@ -693,6 +694,18 @@ function Dashboard({
           )}
           {tab === "catalogue" && (
             <CatalogueTab entries={catalogue.data ?? []} loading={catalogue.loading} />
+          )}
+          {tab === "updates" && (
+            <UpdatesTab
+              services={services.data ?? []}
+              updates={overview.data?.metrics?.updates ?? null}
+              os={overview.data?.metrics?.os_updates ?? null}
+              busy={runningAction}
+              locked={locked}
+              onAction={runService}
+              onUpdateAll={() => void runBox("update-all")}
+              onOsUpgrade={() => runMaintenance("os-upgrade")}
+            />
           )}
           {tab === "maintenance" && (
             <MaintenanceTab

@@ -37,6 +37,57 @@ import time
 
 import corex_updates as cu_updates
 
+
+def os_updates() -> dict:
+    """Pending Ubuntu packages, and whether a reboot is owed.
+
+    Two numbers, because they disagree on purpose and a reader who sees only
+    one of them will think something is broken.
+
+    apt-check reports what unattended-upgrades would install tonight. CoreX
+    blacklists linux-*, libc6, libc-bin, systemd and udev from that (gotcha
+    #18), because a kernel upgrade interrupted by a thermal trip can leave the
+    box unbootable. So a machine can honestly report "4 upgradable" and "0 can
+    be applied immediately" at the same time: the four are the held ones, and
+    they are held deliberately.
+
+    The held count is the interesting one, since those only move when someone
+    runs the supervised upgrade, which is the button this feeds.
+    """
+    out = {"total": 0, "security": 0, "auto": 0, "held": 0, "reboot_required": False}
+    try:
+        out["reboot_required"] = os.path.exists("/var/run/reboot-required")
+    except Exception:
+        pass
+    try:
+        r = subprocess.run(
+            ["/usr/lib/update-notifier/apt-check"],
+            capture_output=True, text=True, timeout=20,
+        )
+        # It writes "updates;security" to stderr, which is not an error.
+        raw = (r.stderr or r.stdout or "").strip()
+        if ";" in raw:
+            a, b = raw.split(";")[:2]
+            out["auto"], out["security"] = int(a), int(b)
+    except Exception:
+        pass
+    try:
+        r = subprocess.run(
+            ["apt", "list", "--upgradable"],
+            capture_output=True, text=True, timeout=30,
+            env={**os.environ, "LC_ALL": "C"},
+        )
+        names = [
+            ln.split("/", 1)[0]
+            for ln in (r.stdout or "").splitlines()
+            if "/" in ln and not ln.startswith("Listing")
+        ]
+        out["total"] = len(names)
+        out["held"] = max(0, len(names) - out["auto"])
+    except Exception:
+        pass
+    return out
+
 BLACKBOX = "/mnt/corex-data/blackbox.log"
 WATCHDOG_LOG = "/var/log/corex-watchdog.log"
 THERMAL_CONF = "/etc/corex/thermal.conf"
@@ -844,4 +895,5 @@ def collect(want_sizes=True):
         # that timescale. The cache is a file read; what is being avoided is
         # arming a background registry sweep from the fast path.
         "updates": cu_updates.updates() if want_sizes else None,
+        "os_updates": os_updates() if want_sizes else None,
     }

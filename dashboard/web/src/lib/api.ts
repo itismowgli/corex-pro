@@ -395,6 +395,7 @@ export type Metrics = {
   maintenance: Maintenance | null
   // null on the fast vitals stream, which does not carry it.
   updates: Updates | null
+  os_updates: OsUpdates | null
 }
 
 /**
@@ -425,6 +426,24 @@ export type Updates = {
   checked_at: number
   checking: boolean
   services: Record<string, ServiceUpdate>
+}
+
+/**
+ * Pending Ubuntu packages.
+ *
+ * `auto` and `total` disagree on purpose. apt-check reports what unattended
+ * upgrades would install tonight, and CoreX deliberately holds linux-*, libc6,
+ * libc-bin, systemd and udev back from that, because a kernel upgrade
+ * interrupted by a thermal trip can leave the box unbootable. So "4 upgradable"
+ * and "0 can be applied immediately" are both true at once, and `held` is the
+ * number the supervised upgrade exists for.
+ */
+export type OsUpdates = {
+  total: number
+  security: number
+  auto: number
+  held: number
+  reboot_required: boolean
 }
 
 export type MaintenanceTask = {
