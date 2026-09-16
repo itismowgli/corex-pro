@@ -28,7 +28,7 @@ learning nginx, SSL, Docker networking, or Linux hardening.
 - Re-run on existing server = health-check + repair broken services only
 - No live server required for testing (Docker-in-Docker + bats)
 
-**Current version:** v3.42.0
+**Current version:** v3.43.0
 **Current service modules:** 21 (Traefik, AdGuard, Portainer, Nextcloud,
 Immich, Vaultwarden, Stalwart Mail, Coolify, n8n, Cal.com, Time Machine,
 Uptime Kuma + Grafana + Prometheus (monitoring), Ollama + OpenWebUI +
@@ -2795,6 +2795,61 @@ produces a symptom the service cannot log.** When an operation fails only from
 outside, measure the same operation from inside before reading the application
 log, because a clean log is evidence about where the refusal happened rather
 than evidence that nothing was refused.
+
+### 70. A plugin fetched at startup makes routing depend on DNS, and no container shows it
+
+Traefik contacts plugins.traefik.io at every start for anything declared under
+`experimental.plugins`, and when that call fails it disables plugins
+**entirely**. Every router naming one then enters an error state and its
+hostname answers 404 with "invalid middleware type or middleware does not
+exist", which is gotcha #44 arriving from the static config rather than from a
+missing container.
+
+It happened here because AdGuard was restarting during a repair and Traefik
+came up in the DNS gap. Grafana and Portainer served 404 for hours.
+
+**Persisting the download cache does not fix it**, and that is worth stating
+plainly because it sounds like it should. Measured: with the cache at 3.3MB,
+stopping AdGuard and restarting Traefik reproduced the failure exactly. The
+call goes out whatever is cached.
+
+`experimental.localPlugins` reads the source from disk and never calls out, so
+the source is vendored at `vendor/traefik-plugins` in the layout Traefik wants
+under `/plugins-local/src`. Both halves were measured on a throwaway Traefik
+3.6.25 with DNS pointed at an unroutable address, and then on the live box:
+
+| Configuration | Under dead DNS |
+|---|---|
+| `localPlugins` | "Plugins loaded", middleware enabled, router enabled |
+| `plugins` | "Plugins are disabled because an error has occurred", 404 |
+
+Three things follow.
+
+**Test both halves or neither.** A local plugin that loads proves nothing on
+its own, because it also loads with working DNS. The claim is that the network
+no longer matters, so the network has to be taken away.
+
+**Traefik refuses to start on a `localPlugins` entry it cannot read**, and a
+Traefik that does not start takes every route down rather than two. The block
+is written only after the files are confirmed on disk, and the download path
+stays as a fallback that says so. Verify a static-config change against a
+throwaway container before the live one: it costs a minute and the blast
+radius is the whole box.
+
+**Vendoring is delivery, not a fork.** Every file is checksummed against the
+upstream tag, and `localPlugins` carries no version field, so `version.go` and
+`vendor/traefik-plugins/README.md` are the only record of which release is
+present. Keep them agreeing.
+
+**And the monitoring blind spot is the wider lesson.** Every container was
+healthy for the whole outage. `lib/recovery.sh` reads container state, so it
+would not have noticed; the HTTP monitors see a 404 but cannot say why. The
+resource watchdog now reads `/api/http/routers` and pushes down on any router
+that is not enabled, quoting Traefik's own reason, because "grafana is 404"
+sends the reader to Grafana while "invalid middleware type" sends them to the
+middleware that did not load. An unreachable API is reported as unverifiable
+rather than as healthy, for the reason in gotcha #55: ready is not the same as
+working.
 
 ## What NOT to Do
 

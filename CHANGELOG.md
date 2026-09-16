@@ -6,6 +6,51 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.43.0] - 2026-09-16
+
+### Fixed
+- **Traefik no longer downloads its plugin at every start, so a DNS gap cannot
+  take routing down.** v3.42.0 diagnosed the outage and left the fix open. This
+  is the fix.
+
+  The Sablier middleware source is vendored at `vendor/traefik-plugins`, in the
+  layout Traefik expects under `/plugins-local/src`, and `traefik.yml` names it
+  through `experimental.localPlugins`, which reads from disk and never contacts
+  plugins.traefik.io. Every vendored file matches both the upstream v1.3.0 tag
+  and the copy the live server was already running, so the code is the same
+  code and only the delivery changed.
+
+  Both halves were measured on a throwaway Traefik 3.6.25 whose DNS pointed at
+  an unroutable address, and then again on the live box by stopping AdGuard and
+  restarting Traefik, which is exactly what caused the outage:
+
+  | Configuration | Result under dead DNS |
+  |---|---|
+  | `localPlugins` | "Plugins loaded", middleware enabled, router enabled |
+  | `plugins` | "Plugins are disabled because an error has occurred", 404 |
+
+  Traefik refuses to start when `localPlugins` names a source it cannot read,
+  and a Traefik that does not start takes every route down rather than two. So
+  the block is written only after the files are confirmed on disk, and the
+  download path stays reachable as a fallback that announces itself.
+
+### Added
+- **The resource watchdog checks Traefik's routing, not only container state.**
+  The outage that prompted it had every container healthy for hours while two
+  hostnames answered 404, so nothing on the box reported a fault. The new
+  Traefik Routing monitor reads `/api/http/routers` and pushes down when any
+  router is not enabled, naming the router and quoting Traefik's own reason.
+
+  The reason is the point. "grafana is 404" sends the reader to Grafana;
+  "invalid middleware type or middleware does not exist" sends them to the
+  middleware that did not load, which is where the fault is. It also covers
+  gotcha #44, where a router names a middleware whose container is gone.
+
+  An unreachable API is reported as unverifiable rather than passed off as
+  healthy, and a box with no Traefik says so instead of alerting forever.
+
+---
+
 ## [v3.42.0] - 2026-09-16
 
 ### Fixed

@@ -1537,3 +1537,33 @@ _repair_body() {
     n=$(echo "$body" | grep -c 'experimental:')
     [ "$n" -ge 2 ] || { echo "there is no fallback when the source is absent"; false; }
 }
+
+# Everything the resource watchdog looks at is container state, and the outage
+# that prompted this check had every container healthy: Traefik failed to load
+# a plugin, disabled every router naming one, and grafana and portainer served
+# 404 for hours with nothing anywhere reporting a fault.
+@test "the watchdog checks Traefik routing, not only container state" {
+    local f="${REPO_ROOT}/lib/watchdog.sh"
+    grep -q '"routes|' "$f" \
+        || { echo "no routes monitor is registered, so nothing is ever pushed"; false; }
+    grep -q '^check_routes$' "$f" \
+        || { echo "check_routes is defined but never called"; false; }
+    awk '/^check_routes\(\)/,/^}/' "$f" | grep -q 'api/http/routers' \
+        || { echo "it does not ask Traefik what it is actually routing"; false; }
+}
+
+# The reason is the whole value. "grafana is 404" sends the reader to Grafana;
+# "invalid middleware type or middleware does not exist" sends them to the
+# middleware that did not load, which is where the fault is.
+@test "the routing check reports the router name and Traefik's own reason" {
+    local body
+    body=$(awk '/^check_routes\(\)/,/^}/' "${REPO_ROOT}/lib/watchdog.sh")
+    echo "$body" | grep -q 'r.get("error")' \
+        || { echo "the error text is dropped, leaving only a count"; false; }
+    echo "$body" | grep -q 'r.get("name"' \
+        || { echo "the router is not named, so the reader cannot tell which is down"; false; }
+    # An unreachable API must not read as healthy routing. Unknown is a real
+    # answer and gets reported as one.
+    echo "$body" | grep -q 'not answering' \
+        || { echo "a Traefik that cannot be asked is not distinguished from one with no faults"; false; }
+}

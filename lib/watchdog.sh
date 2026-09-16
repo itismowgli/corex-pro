@@ -67,6 +67,7 @@ WATCHDOG_CHECKS=(
     "disk|Disk Space|Free space on the OS disk and the data SSD."
     "containers|Container Health|Containers that should be running and are not, are unhealthy, were OOM-killed, or are restart-looping."
     "shed|Thermal Shedding|Whether the thermal guardian currently has services stopped."
+    "routes|Traefik Routing|Routers Traefik has disabled. Names the router and the reason, neither of which container state can show."
 )
 
 watchdog_install() {
@@ -512,6 +513,79 @@ check_shed() {
     fi
 }
 
+# ── Check: Traefik routing ──────────────────────────────────────────────────
+# Every container can be healthy while the box serves 404, and nothing else
+# here can see it. Measured: Traefik came up in a DNS gap, failed to download
+# a plugin, disabled plugins entirely, and every router naming one entered an
+# error state. Grafana and Portainer answered 404 for hours while both
+# containers reported healthy the whole time.
+#
+# A disabled router is also what a missing middleware produces (gotcha #44), so
+# this covers more than the one incident that prompted it. Traefik reports both
+# the state and the reason, and the reason is the whole value: "grafana is 404"
+# sends you to Grafana, and "invalid middleware type or middleware does not
+# exist" sends you to the middleware that did not load.
+check_routes() {
+    local nl=$'\n'
+    docker inspect traefik >/dev/null 2>&1 || {
+        push routes up "No Traefik on this box, so there is nothing to route." 0
+        return
+    }
+    local body
+    body=$(curl -s --connect-timeout 3 --max-time 8 \
+        http://127.0.0.1:8080/api/http/routers 2>/dev/null)
+    # Unreachable is reported rather than guessed at. check_containers owns a
+    # Traefik that is down; this says routing cannot be verified, which is a
+    # different fact and the one to know before trusting anything else here.
+    if [[ -z "$body" ]]; then
+        push routes down \
+            "Traefik is not answering, so no route can be checked.${nl}Its API is on 127.0.0.1:8080, and it is off or the container is down.${nl}Check: docker logs traefik"
+        return
+    fi
+    # python3 rather than grep, because the reason is a JSON array of strings
+    # and it is the part worth reading. A body that will not parse is its own
+    # finding: the first line is the count, or the word PARSE.
+    local out
+    out=$(printf '%s' "$body" | python3 -c '
+import json, sys
+try:
+    routers = json.load(sys.stdin)
+    if not isinstance(routers, list):
+        raise ValueError
+except Exception:
+    print("PARSE")
+    sys.exit(0)
+bad = [r for r in routers if r.get("status") != "enabled"]
+print("%d %d" % (len(bad), len(routers)))
+for r in bad[:6]:
+    reasons = r.get("error") or ["no reason given"]
+    print("%s: %s" % (r.get("name", "?"), "; ".join(reasons)))
+' 2>/dev/null)
+
+    local head
+    head=$(printf '%s' "$out" | head -1)
+    if [[ "$head" != *" "* ]]; then
+        push routes down \
+            "Traefik answered something that is not a list of routers.${nl}Check: curl -s http://127.0.0.1:8080/api/http/routers"
+        return
+    fi
+    local n total
+    n=${head%% *}
+    total=${head##* }
+    [[ "$n" =~ ^[0-9]+$ ]] || n=0
+    [[ "$total" =~ ^[0-9]+$ ]] || total=0
+
+    if (( n > 0 )); then
+        local detail
+        detail=$(printf '%s' "$out" | tail -n +2)
+        push routes down \
+            "Traefik has disabled ${n} of ${total} routes, so those addresses answer 404.${nl}${detail}${nl}The containers behind them can be perfectly healthy, which is why nothing else here reports it. Check: docker logs traefik" \
+            "$n"
+    else
+        push routes up "All ${total} Traefik routes are live." 0
+    fi
+}
+
 # ── Run every check ─────────────────────────────────────────────────────────
 # Each is independent. A check that errors must not stop the rest, which is why
 # there is no `set -e` and no `&&` chaining here.
@@ -521,6 +595,7 @@ check_memory
 check_disk
 check_containers
 check_shed
+check_routes
 exit 0
 WGEOF
 }
