@@ -43,6 +43,107 @@ adguard_firewall() {
     ufw allow 5353/udp comment 'mDNS (Avahi/Bonjour)'       2>/dev/null || true
 }
 
+# Add the maintained CoreX filter baseline to an AdGuard configuration that
+# has completed the first-run wizard.  The wizard enables only AdGuard's one
+# default list; that is a useful start, but it leaves a lot of app telemetry,
+# trackers and less common ad networks untouched.
+#
+# Multi PRO is HaGeZi's balanced, recommended list.  The full TIF security list
+# needs at least 2 GB in AdGuard Home, so CoreX uses TIF Mini: it keeps the
+# high-value phishing/malware coverage without turning DNS into the largest
+# process on a small home server.  Existing lists, rewrites and user rules are
+# preserved.  Fixed high IDs avoid AdGuard's built-in registry IDs; if an
+# existing custom list already uses one, the next free ID is selected.
+#
+# AdGuard owns and periodically rewrites its YAML, so it must be stopped for
+# the atomic replacement.  The caller is adguard_deploy(), which starts it
+# again immediately through `docker compose up`.
+_adguard_seed_filter_lists() {
+    local yaml="$1"
+    [[ -s "$yaml" ]] || return 0
+
+    local pro_url="https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/adblock/pro.txt"
+    local tif_url="https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/adblock/tif.mini.txt"
+    local add_pro="yes" add_tif="yes"
+    grep -Fq "$pro_url" "$yaml" && add_pro="no"
+    grep -Fq "$tif_url" "$yaml" && add_tif="no"
+
+    if [[ "$add_pro" == "no" && "$add_tif" == "no" ]]; then
+        return 0
+    fi
+
+    # Refuse to guess at an unfamiliar schema.  This anchor has been stable
+    # across AdGuard Home releases and keeps the new entries in `filters:`.
+    if ! grep -q '^whitelist_filters:' "$yaml"; then
+        log_warning "AdGuard filter lists were not changed: unfamiliar config schema"
+        return 0
+    fi
+
+    local pro_id=900001 tif_id=900002
+    while grep -Eq "^[[:space:]]+id: ${pro_id}$" "$yaml"; do
+        pro_id=$((pro_id + 1))
+    done
+    [[ "$tif_id" -le "$pro_id" ]] && tif_id=$((pro_id + 1))
+    while grep -Eq "^[[:space:]]+id: ${tif_id}$" "$yaml"; do
+        tif_id=$((tif_id + 1))
+    done
+
+    local was_running="" tmp="${yaml}.corex.$$"
+    if declare -f container_running >/dev/null 2>&1 && container_running adguard; then
+        was_running="yes"
+        docker stop adguard >/dev/null 2>&1 || {
+            log_warning "AdGuard filter lists were not changed: could not stop AdGuard safely"
+            return 0
+        }
+    fi
+
+    # Keep one pre-change recovery copy, with the original permissions (the
+    # YAML contains the administrator password hash).  `cp -p` also gives the
+    # temporary file the right owner and mode before the atomic rename.
+    [[ -e "${yaml}.corex-before-filters.bak" ]] \
+        || cp -p "$yaml" "${yaml}.corex-before-filters.bak" 2>/dev/null \
+        || true
+    if ! cp -p "$yaml" "$tmp" 2>/dev/null; then
+        [[ "$was_running" == "yes" ]] && docker start adguard >/dev/null 2>&1 || true
+        log_warning "AdGuard filter lists were not changed: could not create a safe copy"
+        return 0
+    fi
+
+    if ! awk \
+        -v add_pro="$add_pro" -v pro_url="$pro_url" -v pro_id="$pro_id" \
+        -v add_tif="$add_tif" -v tif_url="$tif_url" -v tif_id="$tif_id" '
+        /^whitelist_filters:/ {
+            if (add_pro == "yes") {
+                print "  - enabled: true"
+                print "    url: " pro_url
+                print "    name: HaGeZi Multi PRO"
+                print "    id: " pro_id
+            }
+            if (add_tif == "yes") {
+                print "  - enabled: true"
+                print "    url: " tif_url
+                print "    name: HaGeZi Threat Intelligence Feeds Mini"
+                print "    id: " tif_id
+            }
+        }
+        { print }
+    ' "$yaml" > "$tmp"; then
+        rm -f "$tmp"
+        [[ "$was_running" == "yes" ]] && docker start adguard >/dev/null 2>&1 || true
+        log_warning "AdGuard filter lists were not changed: could not build the updated config"
+        return 0
+    fi
+
+    if ! mv "$tmp" "$yaml"; then
+        rm -f "$tmp"
+        [[ "$was_running" == "yes" ]] && docker start adguard >/dev/null 2>&1 || true
+        log_warning "AdGuard filter lists were not changed: could not replace the config"
+        return 0
+    fi
+
+    log_success "AdGuard filter baseline enabled (HaGeZi Multi PRO + TIF Mini)"
+}
+
 # Point the host's own resolver at AdGuard, once AdGuard can answer.
 #
 # The public resolvers written during deploy are a bootstrap step: AdGuard is
@@ -186,6 +287,7 @@ adguard_deploy() {
         else
             log_warning "Could not read the admin port from ${yaml}, assuming 3000"
         fi
+        _adguard_seed_filter_lists "$yaml"
     else
         log_info "AdGuard first run, the wizard will listen on port 3000"
     fi
@@ -242,7 +344,10 @@ services:
     deploy:
       resources:
         limits:
-          memory: 256m
+          # Compiling the two CoreX filter subscriptions can briefly need more
+          # than the steady-state footprint.  The old 256 MB cap made that an
+          # avoidable DNS outage during list updates.
+          memory: 512m
           cpus: "0.5"
         reservations:
           memory: 64m

@@ -1350,6 +1350,45 @@ _repair_body() {
         || { echo "the gate is after the wait, so the wait still happens"; false; }
 }
 
+# The setup wizard ships with one default list.  Repair is the reproducible
+# path that upgrades an existing install, so the stronger baseline has to be
+# applied from deploy without replacing custom filters, rewrites or user rules.
+@test "adguard repair seeds the maintained filter baseline idempotently" {
+    local work yaml
+    work=$(mktemp -d /tmp/corex-adguard-filter-XXXXXX)
+    yaml="${work}/AdGuardHome.yaml"
+    cat > "$yaml" <<'YAMLEOF'
+filters:
+  - enabled: true
+    url: https://example.test/custom.txt
+    name: My custom list
+    id: 7
+whitelist_filters: []
+user_rules:
+  - '@@||allowed.example^'
+filtering:
+  filtering_enabled: true
+YAMLEOF
+
+    log_success() { :; }
+    log_warning() { echo "$*" >&2; }
+    container_running() { return 1; }
+    docker() { return 0; }
+    source "${REPO_ROOT}/lib/services/adguard.sh"
+
+    _adguard_seed_filter_lists "$yaml"
+    _adguard_seed_filter_lists "$yaml"
+
+    [ "$(grep -c 'adblock/pro.txt' "$yaml")" -eq 1 ]
+    [ "$(grep -c 'adblock/tif.mini.txt' "$yaml")" -eq 1 ]
+    grep -q 'https://example.test/custom.txt' "$yaml"
+    grep -q "@@||allowed.example" "$yaml"
+    [ -f "${yaml}.corex-before-filters.bak" ]
+    ! grep -q 'adblock/pro.txt' "${yaml}.corex-before-filters.bak"
+
+    rm -rf "$work"
+}
+
 # ─── Video containers, and the LAN mask ──────────────────────────────────────
 
 # A rewrap copies streams; a conversion decodes and re-encodes them. On this

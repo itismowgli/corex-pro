@@ -300,10 +300,29 @@ to 80 once the wizard finishes, and CoreX detects the change by reading
 After that, run `sudo bash corex-manage.sh lan-setup`. It adds the wildcard DNS
 rewrite automatically and prints what to change on your router.
 
+On the first repair after the setup wizard, CoreX also enables a stronger,
+maintained filter baseline: HaGeZi Multi PRO for ads, trackers and telemetry,
+plus the size-optimized HaGeZi TIF Mini list for phishing and malware. Existing
+custom filters, allow rules and DNS rewrites are preserved. Apply it to an
+existing installation with:
+
+```bash
+sudo corex manage repair adguard
+```
+
+DNS blocking removes ads only when the ad is served from a domain that can be
+blocked without also blocking the content. YouTube serves video ads through
+the same infrastructure as videos, so AdGuard Home cannot reliably remove
+YouTube in-stream ads on every device. Use a browser content blocker, a
+TV-specific client, or YouTube Premium for that final layer; adding guessed
+YouTube domains to DNS filters commonly breaks playback instead.
+
 One thing to avoid: do not set a second DNS server alongside AdGuard on your
 devices. Queries race, some go to the fallback, and those come back with
 internet addresses instead of your server's, so local traffic silently starts
-going out and back again.
+going out and back again. Also disable per-device Private DNS / Secure DNS /
+DNS-over-HTTPS when it points somewhere other than this AdGuard instance,
+because encrypted DNS bypasses the router setting completely.
 
 ### cloudflared
 

@@ -6,6 +6,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.45.0] - 2026-09-18
+
+### Added
+- **AdGuard repairs now install a strong, resource-safe filtering baseline.**
+  The live server had filtering enabled but only AdGuard Home's single default
+  list, leaving many app ads, trackers and telemetry domains untouched.  Once
+  the setup wizard has produced `AdGuardHome.yaml`, deploy and repair preserve
+  every existing list, allow rule, rewrite and setting while atomically adding
+  HaGeZi Multi PRO and the size-optimized TIF Mini security list.  Repeated
+  repairs are idempotent, and a permission-preserving pre-change backup remains
+  beside the configuration for recovery.
+
+  The full TIF list documents a 2 GB AdGuard Home requirement and does not fit
+  this service. TIF Mini retains 186k high-value threat entries; the container
+  memory ceiling rises from 256 MB to 512 MB to cover update-time compilation
+  without risking a network-wide DNS outage. The manual now also states the
+  DNS-layer limit plainly: YouTube serves ads and videos from shared domains,
+  so reliable YouTube in-stream blocking requires a client-side solution.
+
+---
+
 ## [v3.44.1] - 2026-09-16
 
 ### Fixed
