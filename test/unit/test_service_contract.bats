@@ -1680,3 +1680,50 @@ YAMLEOF
     echo "$body" | grep -q 'corex-watchdog.sh' \
         || { echo "it never pushes a beat, so the window is still empty"; false; }
 }
+
+@test "the blackbox is read with grep -a, so a NUL run cannot hide the crash" {
+    # An unclean shutdown leaves a run of NUL bytes in blackbox.log, which is
+    # the one file that survives to explain it. grep without -a calls such a
+    # file binary and stops at the first run, so both readers named a sample
+    # from before an OLDER crash: boot-repair reported one 11 days stale and
+    # `corex manage health` one 10 days stale, each presented as the last
+    # reading before the machine died.
+    #
+    # It matters on a pipe as much as on the file. awk passes NULs straight
+    # through, so `awk ... file | grep` trips the same detection.
+    local offenders=""
+    local f
+    for f in "${REPO_ROOT}/lib/selfheal.sh" "${REPO_ROOT}/corex-manage.sh"; do
+        # Comment lines are stripped first: a check has to read the code that
+        # runs, not the prose describing it.
+        grep -v '^[[:space:]]*#' "$f" \
+            | grep -nE "grep +-[A-Za-z]*E? *'?temp=" \
+            | grep -vE "grep +-[A-Za-z]*a[A-Za-z]*E?" \
+            | grep -q . && offenders+=" $(basename "$f")"
+    done
+    [ -z "$offenders" ] || {
+        echo "blackbox.log read without grep -a, in:$offenders"
+        echo "Fix: grep -aE, on the file and on any pipe carrying its bytes."
+        false
+    }
+}
+
+@test "a blackbox log with a NUL run still yields its last sample" {
+    # The behaviour the flag buys, measured rather than asserted about source.
+    local log="${BATS_TEST_TMPDIR}/blackbox.log"
+    {
+        printf '2026-09-15T11:47:41+05:30 temp=52.2C load=0.53 containers=26\n'
+        printf '\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000'
+        printf '2026-09-25T07:07:36+05:30 temp=59.8C load=0.07 containers=28\n'
+    } > "$log"
+
+    local got
+    got=$(grep -aE 'temp=' "$log" 2>/dev/null | tail -1)
+    [[ "$got" == *"2026-09-25T07:07:36"* ]] \
+        || { echo "got a stale sample: $got"; false; }
+
+    # And through the pipe shape corex-manage.sh uses.
+    got=$(awk '$1 < "2026-09-25T11:00:00"' "$log" 2>/dev/null | grep -aE 'temp=' | tail -1)
+    [[ "$got" == *"2026-09-25T07:07:36"* ]] \
+        || { echo "stale through the awk pipe: $got"; false; }
+}

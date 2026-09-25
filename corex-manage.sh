@@ -1144,8 +1144,13 @@ cmd_health() {
         local boot_ts pre_sample
         boot_ts=$(date -d "$(uptime -s)" +%Y-%m-%dT%H:%M:%S 2>/dev/null)
         if [[ -n "$boot_ts" ]]; then
+            # grep -a is load-bearing, and it matters on the pipe just as it
+            # does on the file: an unclean shutdown leaves a run of NUL bytes
+            # in the log, awk passes them straight through, and grep then calls
+            # the stream binary and stops there. Without it this printed a
+            # sample from before an OLDER crash as the pre-crash evidence.
             pre_sample=$(awk -v b="$boot_ts" '$1 < b' \
-                /mnt/corex-data/blackbox.log 2>/dev/null | grep -E 'temp=' | tail -1)
+                /mnt/corex-data/blackbox.log 2>/dev/null | grep -aE 'temp=' | tail -1)
         fi
         if [[ -n "${pre_sample:-}" ]]; then
             echo "      Last health sample before it died:"
@@ -1618,33 +1623,58 @@ print(json.dumps({'rules': lines}))" 2>/dev/null)
     done < <(state_list_installed)
 
     # ── Step 1: Router DNS ────────────────────────────────────────────────────
+    # The secondary is presented as a choice rather than a warning, because
+    # both answers cost something and only the operator can price them. Naming
+    # one resolver and forbidding a fallback makes this box the only resolver
+    # on the network, so the whole house loses DNS the moment it goes down.
+    # The race a fallback reintroduces is real (gotcha #14), but it is a race
+    # only on devices that ask DNS at all, which Step 3 removes.
     echo ""
-    echo -e "${BOLD}── Step 1: Router DNS (easiest — covers all devices automatically) ─────────${NC}"
+    echo -e "${BOLD}── Step 1: Router DNS (covers every device automatically) ──────────────────${NC}"
     echo ""
     echo "  In your router's DHCP / DNS settings, set:"
     echo -e "    Primary DNS:   ${GREEN}${SERVER_IP}${NC}"
     echo ""
-    echo -e "  ${YELLOW}WARNING:${NC} Do NOT set a secondary/fallback DNS (like 1.1.1.1 or 8.8.8.8)."
-    echo "  If you do, some devices will race both DNS servers and may get"
-    echo "  Cloudflare's IP from the fallback instead of your LAN IP."
-    echo "  If AdGuard goes down, you can temporarily set 1.1.1.1 as DNS."
+    echo "  Every device that joins the network then resolves *.${DOMAIN}"
+    echo "  straight to this server, and gets AdGuard's filtering for free."
     echo ""
-    echo "  Every device that joins your network will resolve"
-    echo "  *.${DOMAIN} directly to this server without any extra steps."
+    echo -e "  ${BOLD}The secondary DNS is a real choice. Both answers cost something.${NC}"
+    echo ""
+    echo -e "  ${BOLD}Leave it blank${NC} and this server is the only resolver on the network."
+    echo "  Nothing races it, so *.${DOMAIN} always resolves to the LAN address."
+    echo "  The cost is that when this server is off, every device loses DNS and"
+    echo "  the house has no working internet until you change the router back"
+    echo "  by hand. Most home routers do not resolve anything themselves, so"
+    echo "  there is no fallback waiting behind this setting."
+    echo ""
+    echo -e "  ${BOLD}Set a public resolver${NC} (1.1.1.1 or 8.8.8.8) and the internet keeps"
+    echo "  working while this server is down. The cost is that some devices ask"
+    echo "  both and take whichever answers first, so *.${DOMAIN} resolves to the"
+    echo "  Cloudflare edge a good share of the time. Browsing still works. Large"
+    echo "  uploads do not: the tunnel refuses a request body over 100MB, so"
+    echo "  Immich and Nextcloud uploads fail, and they fail only sometimes,"
+    echo "  which is harder to recognise than a clean failure."
+    echo ""
+    echo -e "  ${GREEN}Recommended:${NC} set the secondary, then take the race away from the"
+    echo "  devices that matter using Step 3. A device with a hosts entry never"
+    echo "  sends a DNS query for these names, so it cannot lose a race, and a"
+    echo "  phone with its app pointed at the IP does not look the name up at all."
     echo ""
 
     # ── Step 2: Per-device DNS ────────────────────────────────────────────────
     echo -e "${BOLD}── Step 2: Per-Device DNS (if you cannot change router settings) ───────────${NC}"
     echo ""
-    echo -e "  Set ${GREEN}${SERVER_IP}${NC} as the ONLY DNS server (no secondary):"
+    echo -e "  Set ${GREEN}${SERVER_IP}${NC} as the primary DNS server:"
     echo ""
     echo "  macOS:   System Settings → Network → Wi-Fi → Details → DNS → ${SERVER_IP}"
     echo "  Windows: Control Panel → Network → Adapter → IPv4 → DNS: ${SERVER_IP}"
     echo "  iPhone:  Settings → Wi-Fi → (network) → Configure DNS → Manual → ${SERVER_IP}"
     echo "  Android: Settings → Wi-Fi → (network) → IP Settings → Static → DNS: ${SERVER_IP}"
     echo ""
-    echo -e "  ${YELLOW}Important:${NC} Remove any secondary DNS server. A fallback DNS like"
-    echo "  1.1.1.1 will return Cloudflare IPs and defeat the LAN fast-path."
+    echo -e "  ${YELLOW}Important:${NC} the same trade as Step 1 applies here. A secondary"
+    echo "  resolver keeps this device online when the server is down, and it"
+    echo "  also lets this device resolve *.${DOMAIN} to the Cloudflare edge."
+    echo "  Add the hosts entry in Step 3 and the secondary stops mattering."
     echo ""
 
     # ── Step 3: Hosts file fallback ───────────────────────────────────────────
@@ -1653,11 +1683,17 @@ print(json.dumps({'rules': lines}))" 2>/dev/null)
     # can act on it. The /etc/hosts file is checked BEFORE any DNS query is made,
     # so it cannot be intercepted by VPN software. Safe to add, easy to remove.
     if [[ -n "$HOSTS_LINES" ]]; then
-        echo -e "${BOLD}── Step 3: Hosts File (required if you use Tailscale or a VPN app) ────────${NC}"
+        echo -e "${BOLD}── Step 3: Pin the fast path per device (what makes a secondary safe) ─────${NC}"
         echo ""
-        echo "  VPN apps like Tailscale and ClearVPN install a kernel-level Network"
-        echo "  Extension that intercepts DNS before it reaches AdGuard — even after"
-        echo "  following Steps 1 and 2. The hosts file bypasses this completely."
+        echo "  The hosts file is read before any DNS query is sent, so a name"
+        echo "  listed here cannot resolve to the Cloudflare edge no matter which"
+        echo "  resolver answered, which VPN is running, or whether this server is"
+        echo "  reachable at all. That is what lets you keep a secondary DNS in"
+        echo "  Step 1 without giving up the LAN fast path."
+        echo ""
+        echo "  It also covers the case nothing else does: VPN apps like Tailscale"
+        echo "  and ClearVPN install a network extension that intercepts DNS before"
+        echo "  AdGuard ever sees it."
         echo ""
         echo "  It is safe to add: it only affects the listed hostnames, changes"
         echo "  nothing else on your system, and can be removed at any time."
@@ -1682,6 +1718,43 @@ print(json.dumps({'rules': lines}))" 2>/dev/null)
         echo "  '# CoreX Pro LAN fast-path' and '# End CoreX Pro LAN fast-path'."
         echo ""
     fi
+
+    # Phones cannot edit a hosts file, and only Immich can be reached by
+    # address: it publishes 2283 on the host, while Nextcloud is reachable
+    # only through Traefik, which routes on the Host header and answers 404
+    # to a request made to a bare IP. So the split DNS rule is the general
+    # answer for a phone, and the IP is the specific one for Immich.
+    echo -e "${BOLD}── Step 3b: Phones and tablets ────────────────────────────────────────────${NC}"
+    echo ""
+    echo "  A phone has no hosts file. Two things work instead."
+    echo ""
+    echo "  Point the app at the address rather than the name. Immich publishes"
+    echo -e "  its own port, so set its server URL to ${GREEN}http://${SERVER_IP}:2283${NC}."
+    echo "  It never looks the name up, so it cannot be sent through the tunnel,"
+    echo "  and the 100MB upload limit stops applying. Nextcloud has no published"
+    echo "  port and is reachable only by hostname, so it needs the rule below."
+    echo ""
+    if command -v tailscale &>/dev/null; then
+        local ts_ip
+        ts_ip=$(tailscale ip -4 2>/dev/null | head -1)
+        # Not a ${var:-default}: an apostrophe inside that expansion opens a
+        # quote in bash's parser even within double quotes, and the error is
+        # then reported hundreds of lines away.
+        [[ -n "$ts_ip" ]] || ts_ip="the tailscale address of this server"
+        echo "  If you run Tailscale, give it a split DNS rule so that only this"
+        echo "  domain goes to this server and everything else keeps using the"
+        echo "  phone's normal resolver:"
+        echo ""
+        echo "    Tailscale admin console > DNS > Nameservers > Add nameserver > Custom"
+        echo -e "      Nameserver:          ${GREEN}${ts_ip}${NC}"
+        echo -e "      Restrict to domain:  ${GREEN}${DOMAIN}${NC}"
+        echo ""
+        echo "  That holds the fast path at home and over the tailnet away from"
+        echo "  home, and it leaves the rest of the phone's DNS alone, so this"
+        echo "  server going down costs the phone this domain and nothing else."
+        echo ""
+    fi
+
 
     # ── Step 4: Browser Configuration ─────────────────────────────────────────
     # Chrome and Chromium-based browsers have two features that bypass the DNS

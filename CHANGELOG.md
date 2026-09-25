@@ -6,6 +6,50 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.46.0] - 2026-09-25
+
+### Fixed
+- **The blackbox log was read in the one way that hides a crash.**
+  `blackbox.log` is the only evidence that survives an unclean shutdown, and
+  an unclean shutdown is exactly what leaves a run of NUL bytes in it. Both
+  readers used `grep` without `-a`, so grep classified the file as binary,
+  stopped at the first such run, and reported a health sample from before an
+  older crash as the last reading before the machine died.
+
+  Measured on a box that had just gone down hard: 21,515 of 62,071 lines were
+  read, `corex-boot-repair` named a sample 11 days stale and
+  `corex manage health` one 10 days stale, both presented as pre-crash
+  evidence. It matters on a pipe as much as on the file, because awk passes
+  the NUL bytes straight through to the next command. Both call sites now use
+  `grep -aE`, and a unit test fails when either loses the flag.
+
+### Changed
+- **`lan-setup` no longer asks you to make this server the only resolver.**
+  The previous instruction was to set the server as primary DNS and leave the
+  secondary blank, because a fallback resolver races AdGuard and returns the
+  Cloudflare edge for the LAN hostnames. That is true, and it left every
+  device on the network with no DNS at all whenever this server was off, which
+  on a typical home router means no internet until someone changes the setting
+  back by hand. Most home routers resolve nothing themselves, so there is no
+  fallback waiting behind that setting.
+
+  Step 1 now states both costs and recommends setting the secondary, because
+  the race can be removed per device while the outage cannot. A hosts entry is
+  read before any DNS query is sent, so a listed name cannot resolve to the
+  edge whatever answered first, which is what makes a secondary safe. The
+  hosts step is no longer described as a workaround for VPN software.
+
+  A new step covers phones, which have no hosts file. Immich publishes its own
+  port, so pointing the app at `http://SERVER_IP:2283` skips name resolution
+  entirely and with it the tunnel's 100MB body limit. Nextcloud publishes no
+  port and is reachable only by hostname, so it needs a Tailscale split DNS
+  rule instead: that sends only this domain to the server and leaves the rest
+  of the phone's DNS alone, so the server going down costs the phone this
+  domain and nothing else. The rule is printed with this server's tailnet
+  address filled in when Tailscale is installed.
+
+---
+
 ## [v3.45.0] - 2026-09-18
 
 ### Added

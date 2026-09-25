@@ -51,7 +51,11 @@ if [[ -f "$MARK" ]]; then
     UNCLEAN=true
     say "PREVIOUS SHUTDOWN WAS UNCLEAN (power loss, thermal trip, or hang)"
     # Surface the last health sample before the crash — the actual diagnostic.
-    last_sample=$(grep -E 'temp=' "$LOG" 2>/dev/null | tail -1)
+    # -a is load-bearing. Every unclean shutdown leaves a run of NUL bytes in
+    # this log, so without it grep calls the file binary, stops at the first
+    # such run and reports a sample from before an OLDER crash. Measured here:
+    # 21515 lines read instead of 62071, naming a sample 11 days stale.
+    last_sample=$(grep -aE 'temp=' "$LOG" 2>/dev/null | tail -1)
     [[ -n "$last_sample" ]] && say "last sample before crash: ${last_sample}"
 else
     say "previous shutdown was clean"

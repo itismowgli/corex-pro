@@ -28,7 +28,7 @@ learning nginx, SSL, Docker networking, or Linux hardening.
 - Re-run on existing server = health-check + repair broken services only
 - No live server required for testing (Docker-in-Docker + bats)
 
-**Current version:** v3.44.1
+**Current version:** v3.46.0
 **Current service modules:** 21 (Traefik, AdGuard, Portainer, Nextcloud,
 Immich, Vaultwarden, Stalwart Mail, Coolify, n8n, Cal.com, Time Machine,
 Uptime Kuma + Grafana + Prometheus (monitoring), Ollama + OpenWebUI +
@@ -2951,6 +2951,76 @@ rather than lost pushes: a consequence of being down, not the cause of it.
 to answer, and runs one watchdog cycle, so the window is refreshed before
 Kuma's first check rather than up to a minute later on the timer. Both writers
 go through it.
+
+### 73. grep without -a on the one file that survives a crash
+
+`/mnt/corex-data/blackbox.log` exists to explain an unclean shutdown, and an
+unclean shutdown is what puts a run of NUL bytes in it. GNU grep sees those
+bytes, decides the input is binary, and stops emitting there. So the two
+readers that answer "what was the machine doing when it died" both answered
+with a sample from before an *older* crash:
+
+| Reader | Reported | Truth |
+|---|---|---|
+| `corex-boot-repair` | 2026-09-14T19:50 | 2026-09-25T07:07 |
+| `corex manage health` | 2026-09-15T11:47 | 2026-09-25T07:07 |
+
+Measured on the file itself: 21,515 lines emitted without `-a`, 62,071 with
+it. The answer degrades further with every unclean shutdown, because each one
+adds another NUL run earlier in the file than the evidence you want.
+
+**It applies to a pipe as much as to a file.** `corex manage health` runs
+`awk ... blackbox.log | grep -E 'temp='`, and awk passes the NUL bytes
+straight through, so grep trips the same detection on stdin. Reading the file
+with `tr -d '\000'` or `grep -a` both work; nothing in the file is lost.
+
+The wider shape is gotcha #50's: the tool reported an answer rather than an
+error, so there was nothing to notice. A diagnostic that cannot fail cannot
+report, and this one was quietly wrong precisely when it was being read.
+
+### 74. One resolver on the LAN is one resolver too few
+
+Gotcha #14 says a secondary DNS defeats the LAN fast path, which is true and
+was measured: clients ask both, take whichever answers first, and
+`photos.DOMAIN` resolves to the Cloudflare edge a good share of the time,
+where the tunnel refuses an upload body over 100MB (gotcha #69). So
+`lan-setup` told operators to leave the secondary blank.
+
+That instruction has a cost nobody priced. This box is then the only resolver
+on the network, and a home router usually resolves nothing itself, so the
+entire house loses DNS the moment the box goes down. Confirmed here: the
+gateway at the LAN address answered no query at all, it only hands out DHCP
+options. A hard crash therefore took the internet with it, and the remedy was
+to reconfigure the router by hand.
+
+The two costs are not symmetric, which is what decides it. **The race can be
+removed per device; the outage cannot.** A hosts entry is consulted before any
+DNS query is sent, so a listed name cannot resolve to the edge whatever won
+the race, whatever VPN is running, and whether or not the box is up. With the
+fast path pinned that way, a public secondary costs nothing and keeps the
+house online.
+
+Three details worth keeping.
+
+**A phone has no hosts file**, so it needs one of two other things. Immich
+publishes 2283 on the host, so pointing the app at the address skips name
+resolution and the 100MB limit together. Nextcloud publishes no port and is
+reachable only through Traefik, which routes on the Host header and answers
+404 to a request made to a bare IP, so for that one the answer is a Tailscale
+split DNS rule: only this domain goes to the box, the rest of the phone's DNS
+is untouched, and the box going down costs the phone this domain alone.
+
+**Publishing the LAN address in public DNS would also work and is not done.**
+A record like `*.lan.DOMAIN A 192.168.29.50` makes every resolver agree, which
+removes the race outright, and all three major public resolvers were measured
+returning an RFC1918 answer rather than filtering it. It is rejected because
+it puts the internal addressing in public DNS for anyone to read, which is a
+disclosure the hosts file does not require.
+
+**Do not test a resolver theory from the box.** `getent hosts` there returned
+`::` for a service hostname, which reads as a block and is the deliberate AAAA
+rewrite that kills the IPv6 bypass (gotcha #11). The A record was correct the
+whole time. Query the record type you mean, with `dig`.
 
 ## What NOT to Do
 
