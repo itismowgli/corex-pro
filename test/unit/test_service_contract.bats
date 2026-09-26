@@ -1727,3 +1727,55 @@ YAMLEOF
     [[ "$got" == *"2026-09-25T07:07:36"* ]] \
         || { echo "stale through the awk pipe: $got"; false; }
 }
+
+@test "no module decides a branch with a long producer piped into grep -q" {
+    # grep -q exits at the first match. A producer that is still writing then
+    # takes SIGPIPE, and every caller here runs under `set -o pipefail`, so the
+    # pipeline reports 141 and the branch reads as "no match" on a box that
+    # matches. Measured with systemctl list-unit-files: exit 141 with pipefail,
+    # 0 without. ups_status took that branch and reported an installed UPS
+    # module as MISSING.
+    #
+    # Only producers whose output can exceed the pipe buffer are listed. A
+    # short one (docker ps, lsusb) finishes writing before grep closes the
+    # pipe, which is why those call sites are not a defect.
+    local offenders=""
+    local f
+    for f in "${REPO_ROOT}"/lib/*.sh "${REPO_ROOT}"/lib/services/*.sh \
+             "${REPO_ROOT}/corex-manage.sh"; do
+        [ -f "$f" ] || continue
+        grep -v '^[[:space:]]*#' "$f" \
+            | grep -qE "(systemctl list-unit|journalctl|dpkg -l|docker image ls|apt list)[^|]*\| *grep -q" \
+            && offenders+=" $(basename "$f")"
+    done
+    [ -z "$offenders" ] || {
+        echo "long producer piped into grep -q, in:$offenders"
+        echo "Fix: capture to a variable, or read the file directly. Under"
+        echo "pipefail the pipeline returns 141 and the test reads as false."
+        false
+    }
+}
+
+@test "ups_status separates no UPS attached from a UPS that stopped answering" {
+    # An installed module awaiting hardware must not read as a permanent fault:
+    # an alert that never clears is the bug in gotchas #29 and #72. It must
+    # also not read as HEALTHY, because nothing is protecting anything.
+    # Comments are stripped first. The function documents the pipeline it
+    # replaced, and a check that reads prose instead of code cannot fail
+    # correctly: the first version of this test failed on its own comment.
+    local body
+    body=$(sed -n '/^ups_status()/,/^}/p' "${REPO_ROOT}/lib/services/ups.sh" \
+           | grep -v '^[[:space:]]*#')
+    [ -n "$body" ] || { echo "ups_status not found"; false; }
+
+    echo "$body" | grep -q 'ups.conf' \
+        || { echo "it never checks whether a device was configured"; false; }
+    if echo "$body" | grep -q 'systemctl list-unit-files'; then
+        echo "it still decides on a SIGPIPE-prone pipeline"
+        false
+    fi
+    local n
+    n=$(echo "$body" | grep -c 'MISSING')
+    [ "$n" -ge 2 ] \
+        || { echo "no separate answer for 'NUT absent' and 'no device'"; false; }
+}

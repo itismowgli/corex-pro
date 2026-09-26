@@ -23,6 +23,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
   the NUL bytes straight through to the next command. Both call sites now use
   `grep -aE`, and a unit test fails when either loses the flag.
 
+- **The UPS module reported itself missing on a box where it was installed.**
+  `ups_status` decided one branch with `systemctl list-unit-files | grep -q`.
+  grep -q exits at the first match, systemctl then takes SIGPIPE, and every
+  caller of the module runs under `set -o pipefail`, so the pipeline returned
+  141 and the branch read as "no unit file" on a box that had one. Measured on
+  the server: exit 141 with pipefail, 0 without.
+
+  The branch is gone rather than repaired. NUT installs cleanly with no device
+  configured, which is what deploy leaves behind when no UPS is attached, so
+  the status now asks whether a device was written to `ups.conf`. No device
+  reads as MISSING, because nothing is being protected and a permanent
+  UNHEALTHY is an alert that can never clear. A configured device that stops
+  answering still reads as UNHEALTHY, which is a real fault.
+
 ### Changed
 - **`lan-setup` no longer asks you to make this server the only resolver.**
   The previous instruction was to set the server as primary DNS and leave the

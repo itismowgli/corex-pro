@@ -264,15 +264,28 @@ ups_status() {
         echo "MISSING"
         return 0
     fi
+    # NUT installs cleanly with no device configured, which is exactly what
+    # deploy leaves behind when no UPS is attached. Nothing is being protected
+    # then, and reporting UNHEALTHY would alert forever about hardware that was
+    # never connected, so that state reads as MISSING until a device is written.
+    #
+    # This also replaces a `systemctl list-unit-files | grep -q` that could not
+    # work here: grep -q exits at the first match, systemctl takes SIGPIPE, and
+    # every caller of this module runs under `set -o pipefail`, so the pipeline
+    # reported 141 and the branch read as "no unit file" on a box that had one.
+    # Measured: exit 141 with pipefail, 0 without.
+    if ! grep -q "^\[${_UPS_DEV_NAME}\]" "${_UPS_CONF_DIR}/ups.conf" 2>/dev/null; then
+        echo "MISSING"
+        return 0
+    fi
+
     # upsmon is the component that actually protects the data. If the driver
     # cannot reach the UPS, report UNHEALTHY even when the units are up.
     if systemctl is-active --quiet nut-monitor 2>/dev/null \
        && upsc "${_UPS_DEV_NAME}@localhost" ups.status &>/dev/null; then
         echo "HEALTHY"
-    elif systemctl list-unit-files 2>/dev/null | grep -q '^nut-monitor'; then
-        echo "UNHEALTHY"
     else
-        echo "MISSING"
+        echo "UNHEALTHY"
     fi
 }
 

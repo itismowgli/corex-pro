@@ -3022,6 +3022,34 @@ disclosure the hosts file does not require.
 rewrite that kills the IPv6 bypass (gotcha #11). The A record was correct the
 whole time. Query the record type you mean, with `dig`.
 
+### 75. grep -q kills the producer, and pipefail turns that into a false answer
+
+`grep -q` exits the moment it matches. Anything still writing to that pipe
+takes SIGPIPE and dies with 141, and under `set -o pipefail` the pipeline
+reports 141, so a branch testing it reads as "no match" on a machine that
+matches. Measured on this box:
+
+```
+set -o pipefail;  systemctl list-unit-files | grep -q '^nut-monitor'  -> 141
+set +o pipefail;  systemctl list-unit-files | grep -q '^nut-monitor'  -> 0
+```
+
+`ups_status` used exactly that, so a box with NUT installed and the unit files
+present reported the UPS module as MISSING. Every caller runs under pipefail,
+so it could never have worked.
+
+**Output size is what decides whether a call site is affected.** A producer
+whose output fits the 64KB pipe buffer finishes writing and exits 0 before
+grep closes anything, which is why the many `docker ps --format ... | grep -q`
+call sites in this repo are correct and were left alone. `systemctl
+list-unit-files`, `journalctl` and `dpkg -l` are the ones to watch. Do not
+rewrite the short ones on the strength of the theory: measure the call site.
+
+The general shape is gotcha #50's again. The pipeline returned an answer
+rather than an error, and the answer was a plausible one, so there was nothing
+to notice. It surfaced only because the module was installed on a box where
+the correct answer was known in advance.
+
 ## What NOT to Do
 
 These are firm constraints. Violating them breaks existing installations.
