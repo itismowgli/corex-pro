@@ -424,6 +424,12 @@ export type UpdateState =
   | "update"
   | "stale-tag"
   | "newer-release"
+  /**
+   * Upstream is ahead and the module says not to follow it, with a reason.
+   * A decision already taken, so it is shown quietly and offers no action:
+   * advertising it would be asking the operator to break the service.
+   */
+  | "held"
   | "unknown"
   | "current"
   | "pinned"
@@ -435,6 +441,8 @@ export type ImageUpdate = {
   age_days?: number
   /** The higher version upstream has published, when state is newer-release. */
   newer?: string
+  /** Why a held version is not taken. */
+  reason?: string
 }
 
 export type ServiceUpdate = {

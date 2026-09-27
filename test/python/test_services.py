@@ -85,7 +85,11 @@ portainer_deploy
         result = self.run_service('portainer', 'portainer_deploy')
         self.assertEqual(result.returncode, 0, result.stderr)
         compose = (self.base/'compose/portainer/docker-compose.yml').read_text()
-        self.assertIn('portainer/portainer-ce:2.45.0', compose)
+        # Pinned to an exact release, not to a floating tag. The version
+        # itself is not asserted: this broke on a legitimate bump to 2.45.1,
+        # which made a correct change look like a regression and says nothing
+        # about the property that matters.
+        self.assertRegex(compose, r'portainer/portainer-ce:\d+\.\d+\.\d+\b')
         self.assertNotIn('portainer/portainer-ce:latest', compose)
         self.assertNotIn('sablier.enable=true', compose)
 

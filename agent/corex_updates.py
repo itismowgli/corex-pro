@@ -187,6 +187,71 @@ def remote_digest(host, repo, tag):
         return None, "unreachable"
 
 
+REPO_ROOT = os.environ.get("COREX_REPO_ROOT", "/opt/corex-pro")
+
+
+def _version_tuple(tag):
+    """(1, 2, 3) from v1.2.3, or None when it is not a plain version."""
+    m = _SEMVER.match(tag or "")
+    if m is None:
+        return None
+    return (int(m.group(2)), int(m.group(3)), int(m.group(4)))
+
+
+def service_holds(service):
+    """Upstream versions this module deliberately does not take.
+
+    A pin can be below upstream on purpose, and the reason belongs next to
+    the pin rather than in this file. Without it the dashboard advertises an
+    upgrade that is known to break the service, which is worse than silence:
+    it asks the operator to do damage.
+
+    Read as static metadata the same way the wizard reads SERVICE_NAME, so a
+    module gains a hold with no change here.
+    """
+    path = os.path.join(REPO_ROOT, "lib", "services", "%s.sh" % service)
+    holds = []
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            body = fh.read()
+    except OSError:
+        return holds
+    m = re.search(r'^SERVICE_HOLDS="(.*?)"\s*$', body, re.M | re.S)
+    if not m:
+        return holds
+    for line in m.group(1).split("\n"):
+        # Written with literal backslash-t, as SERVICE_MONITORS is.
+        parts = [p.strip() for p in re.split(r"\\t|\t", line) if p.strip()]
+        if len(parts) >= 2:
+            holds.append({"repo": parts[0], "version": parts[1],
+                          "reason": parts[2] if len(parts) > 2 else ""})
+    return holds
+
+
+def held_reason(holds, ref, newer):
+    """The reason this newer version is not offered, or None.
+
+    Matches at or above the named version, so a hold does not have to be
+    restated for every release upstream makes afterwards.
+    """
+    if not newer:
+        return None
+    base = ref.split("@", 1)[0]
+    base = base.rsplit(":", 1)[0] if ":" in base.rsplit("/", 1)[-1] else base
+    want = _version_tuple(newer)
+    for h in holds:
+        if not base.endswith(h["repo"]) and h["repo"] not in base:
+            continue
+        held = _version_tuple(h["version"])
+        if held is None or want is None:
+            if newer == h["version"]:
+                return h["reason"]
+            continue
+        if want >= held:
+            return h["reason"]
+    return None
+
+
 # Tags that are names rather than versions, and so are expected to move.
 MOVING_TAGS = {
     "latest", "stable", "release", "main", "master", "edge",
@@ -390,8 +455,11 @@ def check_image(ref):
 
 # The order matters: the worst news about any image in a stack is the news
 # about the stack.
+# "held" ranks with "current" on purpose: it is a decision already taken, not
+# news waiting for one, so it must not outrank a real update in a stack and
+# must not make a healthy service look like it needs attention.
 _RANK = {"update": 4, "stale-tag": 3, "newer-release": 2, "unknown": 1,
-         "current": 0, "pinned": 0}
+         "current": 0, "pinned": 0, "held": 0}
 
 
 def check_service(service):
@@ -400,6 +468,22 @@ def check_service(service):
         return {"service": service, "state": "unknown", "images": [],
                 "note": "no compose file, or it names no images"}
     rows = [check_image(ref) for ref in images]
+
+    # A version the module deliberately does not take is not an update
+    # waiting. Offering it asks the operator to break the service, and the
+    # reason lives beside the pin rather than here.
+    holds = service_holds(service)
+    if holds:
+        for r in rows:
+            if r.get("state") != "newer-release":
+                continue
+            reason = held_reason(holds, r["image"], r.get("newer"))
+            if reason:
+                r["state"] = "held"
+                r["reason"] = reason
+                r["note"] = "%s is held at this version. %s" % (
+                    r["image"].rsplit("/", 1)[-1].rsplit(":", 1)[0], reason)
+
     worst = max(rows, key=lambda r: _RANK.get(r["state"], 0))
     moved = [r for r in rows if r["state"] == "update"]
     note = worst["note"]

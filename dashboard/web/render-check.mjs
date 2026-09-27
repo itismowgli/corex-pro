@@ -189,7 +189,10 @@ const METRICS = {
     checking: false,
     services: {
       nextcloud: { service: "nextcloud", state: "update", note: "34 now points at sha256:9f1c2a", images: [{ image: "nextcloud:34", state: "update", note: "34 now points at sha256:9f1c2a" }] },
-      traefik: { service: "traefik", state: "current", note: "v3.6 is current", images: [{ image: "traefik:v3.6", state: "current", note: "v3.6 is current" }] },
+      // Held on purpose: upstream is ahead and the module says not to follow,
+      // with a reason. Must render as a decision with nothing to press, not
+      // as an update waiting.
+      traefik: { service: "traefik", state: "held", note: "whiteboard is held at this version.", images: [{ image: "ghcr.io/nextcloud-releases/whiteboard:v1.5.9", state: "held", note: "held", newer: "v2.0.0", reason: "v2.0.0 needs the Nextcloud whiteboard app at 2.x, and the app installed here is 1.5.9." }] },
       // Pinned and current for its tag, while upstream published a higher
       // version. The card must show the version and must NOT offer an Update
       // button, because pulling a pinned tag changes nothing.
@@ -316,9 +319,15 @@ const EXPECT = {
   // The running version on a card. Proves the version line rendered rather
   // than the tab merely mounting, and "v3.1.0" appears in no fixture note, so
   // only the version chip can produce it.
-  // Two things at once: the running version chip, and the pinned-but-behind
-  // group, whose whole point is that it offers no Update button.
-  updates: "A newer release exists",
+  // Three things this tab has been wrong about, each asserted separately.
+  // The group that offers nothing to press:
+  updates: "Held back on purpose",
+  // The image the note is actually about. The card used to show the service's
+  // main container tag beside a note about a different image entirely.
+  updatesImage: "immich-server:v3.1.0",
+  // The one control that fixes everything, which used to be hidden whenever
+  // fewer than two things were waiting.
+  updatesButton: "Update everything",
   catalogue: "Gitea",
 }
 

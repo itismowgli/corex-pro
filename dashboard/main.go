@@ -1041,7 +1041,11 @@ func updateAllHandler(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	res, err := agentCall(map[string]interface{}{"action": "update", "service": "all"}, 60*time.Second)
+	// update-everything, not update+all. A version CoreX pins lives in the
+	// service module, so a service can only reach it once the repository has
+	// been updated; updating the services alone pulls the tags the old
+	// modules name and reports success (gotcha #78). One button, both halves.
+	res, err := agentCall(map[string]interface{}{"action": "update-everything"}, 60*time.Second)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, err.Error())
 		return
@@ -1050,7 +1054,7 @@ func updateAllHandler(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadGateway, agentString(res, "error"))
 		return
 	}
-	job := jobFromAgent(res, "update all")
+	job := jobFromAgent(res, "update everything")
 	if job.ID != "" {
 		job.State = "running"
 	}

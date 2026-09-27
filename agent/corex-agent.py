@@ -104,6 +104,10 @@ ACTIONS = {
     "restart": (["restart"],           True,  True),
     "repair":  (["repair"],            True,  True),
     "update":  (["update"],            True,  True),
+    # One press: CoreX itself, then every service. Separate from "update"
+    # because a version CoreX pins only reaches a service after the
+    # repository is updated, so the order is the whole point.
+    "update-everything": (["update-everything"], False, True),
     "cleanup": (["cleanup"],           False, True),
     # Read-only, so it belongs on the whitelist rather than being run by the
     # caller. The dashboard used to shell out to `corex-manage cleanup
@@ -155,7 +159,11 @@ POWER_DELAY = 4
 MAINT_TASKS = ("backup", "cleanup", "timemachine", "os-upgrade")
 MAINT_SCRIPT = "/usr/local/bin/corex-maintenance.sh"
 
-JOB_TIMEOUT = {"update": 1800, "repair": 900, "cleanup": 900}
+# update-everything is a git pull followed by every service in turn, and a
+# full run on this box pulls for twenty or more of them, so it gets more room
+# than a single service update.
+JOB_TIMEOUT = {"update": 1800, "update-everything": 3600,
+               "repair": 900, "cleanup": 900}
 DEFAULT_TIMEOUT = 300
 MAX_JOB_HISTORY = 60
 

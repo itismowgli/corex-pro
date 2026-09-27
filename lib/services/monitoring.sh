@@ -821,7 +821,7 @@ services:
   prometheus:
     # Pinned, not :latest. A moving tag carries a major upgrade in unannounced
     # (gotcha #19) and can also stop moving without saying so (gotcha #26).
-    image: prom/prometheus:v3.14.0
+    image: prom/prometheus:v3.15.0
     container_name: prometheus
     restart: unless-stopped
     # Loopback, not every interface. A published port bypasses UFW entirely:

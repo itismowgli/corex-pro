@@ -9,6 +9,12 @@ SERVICE_NEEDS_EMAIL=false
 SERVICE_RAM_MB=1024
 SERVICE_DISK_GB=5
 SERVICE_FIREWALL_SPECS=()
+# Upstream versions CoreX deliberately does not take, one per line, tab
+# separated as image repo, version, reason. Anything at or above the named
+# version is reported as held rather than offered, so the dashboard stops
+# advertising an upgrade that is known not to work here.
+SERVICE_HOLDS="ghcr.io/ridafkih/keeper-standalone\t2.21.7\t2.21.x migrates timestamps to timestamptz and refuses to start unless its embedded Postgres is on UTC. This container takes the box timezone, so the server reports Asia/Kolkata and the migration would move every stored time by that offset. Set the embedded server to UTC first."
+
 SERVICE_DESCRIPTION="Sync personal, work and Nextcloud calendars through Google, Outlook or CalDAV. Runs continuously so calendar changes keep syncing."
 SERVICE_MONITORS="Keeper	https://keeper.${DOMAIN:-}	[\"200-299\",\"307\"]"
 # Held at 2.18.7 deliberately. 2.21.x migrates timestamps to timestamptz and

@@ -78,12 +78,15 @@ export function UpdatesTab({
   const behind = services.filter(
     (s) => updates?.services?.[s.name]?.state === "newer-release",
   )
+  // A decision already taken, so it is not news and offers nothing to press.
+  const held = services.filter((s) => updates?.services?.[s.name]?.state === "held")
   const unknown = services.filter((s) => {
     const st = updates?.services?.[s.name]?.state
     return (
       st !== "update" &&
       st !== "stale-tag" &&
       st !== "newer-release" &&
+      st !== "held" &&
       st !== "current" &&
       st !== "pinned"
     )
@@ -154,13 +157,20 @@ export function UpdatesTab({
                 ? "No check has run yet."
                 : `Checked ${ago(updates.checked_at)}.`}
           </p>
+          <p className="text-muted-foreground text-xs">
+            Update everything updates CoreX first, then every service, which is
+            what lets a version CoreX pins actually arrive.
+          </p>
         </div>
-        {waiting.length > 1 && (
-          <Button size="sm" disabled={disabled} onClick={onUpdateAll}>
-            <RefreshCwIcon />
-            Update all {waiting.length}
-          </Button>
-        )}
+        {/* Always offered, not only when more than one thing is waiting.
+            It updates CoreX and then every service, so it is also how a
+            version CoreX pins arrives: pressing it is never wrong, and
+            hiding it whenever the count is 0 or 1 made the one control that
+            fixes everything the hardest one to find. */}
+        <Button size="sm" disabled={disabled} onClick={onUpdateAll}>
+          <RefreshCwIcon />
+          Update everything
+        </Button>
       </div>
 
       {waiting.length === 0 ? (
@@ -192,11 +202,8 @@ export function UpdatesTab({
             <span className="text-muted-foreground ml-1.5 font-normal">{behind.length}</span>
           </h3>
           <p className="text-muted-foreground text-xs">
-            These are pinned to an exact version and are current for it, so pulling
-            changes nothing. The version is set by the CoreX service module, so the
-            way to move is to update CoreX itself with{" "}
-            <code className="font-mono">corex update</code> and then repair the
-            service.
+            Pinned to an exact version by CoreX, and current for it. Update
+            everything is what moves these, because it updates CoreX first.
           </p>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {behind.map((svc) => (
@@ -206,6 +213,37 @@ export function UpdatesTab({
                 update={updates?.services?.[svc.name]}
                 busy={activeName === svc.name}
                 output={running && activeName === svc.name ? sliceFor(running.output, svc.name) : ""}
+                disabled={disabled}
+                onAction={onAction}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Deliberately not offered. The module names the version it will not
+          take and why, so this reads as a decision rather than as something
+          the reader has to chase. Advertising these asked the operator to
+          break a working service: keeper 2.21.7 crash-looped here, and the
+          whiteboard v2.0.0 needs a Nextcloud app version that is not
+          installed. */}
+      {held.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <h3 className="text-sm font-medium">
+            Held back on purpose
+            <span className="text-muted-foreground ml-1.5 font-normal">{held.length}</span>
+          </h3>
+          <p className="text-muted-foreground text-xs">
+            Upstream is ahead and CoreX does not follow it here. Nothing to do.
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {held.map((svc) => (
+              <UpdateCard
+                key={svc.name}
+                svc={svc}
+                update={updates?.services?.[svc.name]}
+                busy={activeName === svc.name}
+                output=""
                 disabled={disabled}
                 onAction={onAction}
               />
@@ -259,10 +297,16 @@ function UpdateCard({
   // Read from the job's own output rather than timed or guessed, so the bar
   // cannot disagree with what the command is actually doing (gotcha #50).
   const prog = busy ? updateProgress(output) : null
-  // The version upstream published, carried per image because a stack can
-  // have several and only some of them pinned.
-  const newer = update?.images?.find((i) => i.newer)?.newer
+  // The image the note is actually about, which in a stack is usually not
+  // the service's main container. Monitoring showed the tag "latest" beside a
+  // note about prom/prometheus, and Nextcloud showed "34" beside a note about
+  // the whiteboard: three different things on one card.
+  const row = update?.images?.find((i) => i.state === "newer-release" || i.state === "held")
+  const newer = row?.newer
   const behind = update?.state === "newer-release"
+  const isHeld = update?.state === "held"
+  // "whiteboard:v1.5.9" rather than the whole registry path.
+  const rowName = row ? row.image.split("/").pop() : null
   return (
     <Card className="gap-3">
       <CardHeader>
@@ -282,11 +326,12 @@ function UpdateCard({
         {/* The version in hand. The registry can say a newer image exists but
             not what it will call itself, so this states where you are rather
             than inventing a "to" half it would have to guess at. */}
-        {svc.version && (
+        {(rowName || svc.version) && (
           <span className="text-muted-foreground inline-flex min-w-0 items-center gap-1 font-mono text-xs">
             <TagIcon className="size-3 shrink-0" />
-            <span className="truncate" title="Image tag currently running">
-              {svc.version}
+            <span className="truncate" title={row ? row.image : "Image tag currently running"}>
+              {rowName ?? svc.version}
+              {newer && <span className="text-foreground"> {"->"} {newer}</span>}
             </span>
           </span>
         )}
@@ -317,15 +362,17 @@ function UpdateCard({
           </div>
         )}
         <div>
-          {behind ? (
-            // No Update button here on purpose. This image is pinned, so a
-            // pull fetches the same thing it already has, and a button that
-            // reports success while changing nothing is the fault in gotcha
-            // #50. The version lives in the module, so CoreX has to move it.
+          {isHeld ? (
+            // A decision already taken. Nothing to press, and the reason is
+            // the only thing worth saying.
+            <p className="text-muted-foreground text-xs break-words">{row?.reason}</p>
+          ) : behind ? (
+            // No per-card button: this image is pinned, so a pull fetches
+            // what it already has and would report success while changing
+            // nothing (gotcha #50). Update everything is the control that
+            // can move it, because it updates CoreX first.
             <p className="text-muted-foreground text-xs">
-              Pinned, so pulling changes nothing. Run{" "}
-              <code className="font-mono">corex update</code>, then{" "}
-              <code className="font-mono">corex manage repair {svc.name}</code>.
+              Pinned by CoreX. Update everything is what can move it.
             </p>
           ) : (
             <Button

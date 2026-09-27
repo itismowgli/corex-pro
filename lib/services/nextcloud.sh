@@ -30,6 +30,9 @@ SERVICE_NEEDS_DOMAIN=true
 SERVICE_NEEDS_EMAIL=false
 SERVICE_RAM_MB=2048
 SERVICE_DISK_GB=10
+# See the note in keeper.sh for the format.
+SERVICE_HOLDS="ghcr.io/nextcloud-releases/whiteboard\tv2.0.0\tv2.0.0 needs the Nextcloud whiteboard app at 2.x, and the app installed here is 1.5.9. The container has to match the app, so taking the newest tag would break a working service. Check with: occ app:list | grep whiteboard"
+
 SERVICE_DESCRIPTION="Sync files, calendar, and contacts across all your devices. Unlimited storage on your own hardware. Replaces Google Drive, iCloud, Dropbox."
 
 # Uptime Kuma check, seeded by lib/kuma.sh so it is recreated on a fresh

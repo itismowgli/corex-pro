@@ -86,6 +86,61 @@ class RankTest(unittest.TestCase):
         self.assertGreater(u._RANK['newer-release'], u._RANK['unknown'])
         self.assertGreater(u._RANK['unknown'], u._RANK['current'])
 
+class HoldsTest(unittest.TestCase):
+    """A pin can sit below upstream on purpose, and saying so is the point.
+
+    Before this, the dashboard advertised keeper 2.21.7 and the Nextcloud
+    whiteboard v2.0.0. Both were measured to break this box: keeper
+    crash-looped eight times because its embedded Postgres is not on UTC, and
+    the whiteboard container has to match a Nextcloud app that is still 1.5.9.
+    Offering an upgrade that is known not to work is worse than silence.
+    """
+
+    def setUp(self):
+        self._root = u.REPO_ROOT
+        u.REPO_ROOT = str(pathlib.Path(__file__).resolve().parents[2])
+
+    def tearDown(self):
+        u.REPO_ROOT = self._root
+
+    def test_the_modules_that_hold_a_version_declare_it(self):
+        for svc in ("keeper", "nextcloud"):
+            holds = u.service_holds(svc)
+            self.assertTrue(holds, "%s declares no hold" % svc)
+            for h in holds:
+                self.assertTrue(h["repo"], svc)
+                self.assertTrue(h["version"], svc)
+                # A hold with no reason is just a silent refusal.
+                self.assertTrue(len(h["reason"]) > 20, "%s: no reason given" % svc)
+
+    def test_a_module_without_holds_returns_none(self):
+        self.assertEqual(u.service_holds("traefik"), [])
+
+    def test_the_named_version_and_anything_above_it_is_held(self):
+        holds = u.service_holds("keeper")
+        ref = "ghcr.io/ridafkih/keeper-standalone:2.18.7"
+        self.assertTrue(u.held_reason(holds, ref, "2.21.7"))
+        self.assertTrue(u.held_reason(holds, ref, "2.22.0"), "a later release must stay held")
+        self.assertTrue(u.held_reason(holds, ref, "3.0.0"))
+
+    def test_a_version_below_the_hold_is_not_held(self):
+        holds = u.service_holds("keeper")
+        ref = "ghcr.io/ridafkih/keeper-standalone:2.18.7"
+        self.assertIsNone(u.held_reason(holds, ref, "2.19.0"))
+
+    def test_a_hold_applies_only_to_its_own_image(self):
+        # nextcloud holds the whiteboard, not the Nextcloud image itself, and
+        # a module can ship several images.
+        holds = u.service_holds("nextcloud")
+        self.assertTrue(
+            u.held_reason(holds, "ghcr.io/nextcloud-releases/whiteboard:v1.5.9", "v2.0.0"))
+        self.assertIsNone(u.held_reason(holds, "nextcloud:34", "35"))
+
+    def test_held_ranks_with_current_so_it_is_not_news(self):
+        # It must not outrank a real update in the same stack, nor make a
+        # healthy service look like it needs attention.
+        self.assertEqual(u._RANK["held"], u._RANK["current"])
+        self.assertLess(u._RANK["held"], u._RANK["update"])
 
 if __name__ == '__main__':
     unittest.main()

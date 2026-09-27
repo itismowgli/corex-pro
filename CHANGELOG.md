@@ -6,6 +6,53 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.50.0] - 2026-09-27
+
+### Fixed
+- **The Updates tab advertised two upgrades that were measured to break this
+  box.** Keeper 2.21.7 crash-looped eight times, and the Nextcloud whiteboard
+  v2.0.0 needs a Nextcloud app version that is not installed. Both were shown
+  as available with instructions to apply them. Offering an upgrade that is
+  known not to work is worse than saying nothing: it asks the operator to do
+  the damage.
+
+  A module can now declare `SERVICE_HOLDS`, naming an image, the version it
+  will not take, and why. The reason lives beside the pin rather than in the
+  checker. Anything at or above the named version is reported as held, so a
+  hold does not have to be restated for every release upstream makes
+  afterwards, and it is scoped to one image: the Nextcloud module holds the
+  whiteboard without holding Nextcloud itself.
+
+  Held ranks with current rather than above it, so a held version cannot make
+  a healthy service look like it needs attention, and it is drawn in its own
+  quiet group with nothing to press.
+
+- **A card named one image and described another.** Monitoring showed the tag
+  `latest` beside a note about `prom/prometheus:v3.14.0`, and Nextcloud showed
+  `34` beside a note about the whiteboard. The version chip came from the
+  service's main container while the note came from whichever image in the
+  stack had moved. The card now names the image the note is about and shows
+  the move, for example `whiteboard:v1.5.9 -> v2.0.0`.
+
+### Changed
+- **One button, always offered: Update everything.**
+  It was hidden unless more than one service was waiting, which made the one
+  control that fixes everything the hardest to find, and it only updated
+  services. It now runs `corex manage update-everything`: CoreX itself first,
+  then every service. That order is the whole point, because a version CoreX
+  pins lives in the service module and a service cannot reach it until the
+  repository has been updated.
+
+  The second half runs through `exec` rather than as a call, because the
+  first half has just rewritten the running script and bash reads a script
+  incrementally as it executes.
+
+  The per-card instructions to run two shell commands are gone. A pinned
+  service says what it is and which control moves it.
+
+- **Prometheus moves from v3.14.0 to v3.15.0.** Its only deprecation is
+  `--log.level`, which CoreX does not pass.
+
 ## [v3.49.1] - 2026-09-27
 
 ### Fixed

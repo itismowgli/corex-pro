@@ -626,6 +626,32 @@ PYEOF
     return 0
 }
 
+# Everything one press can fix: CoreX itself, then every service.
+#
+# The two halves are separate commands for a reason. A version CoreX pins
+# lives in the module, so a service can only reach it after the repository is
+# updated; running the services first would pull the tags the old modules
+# name and report success (gotcha #78).
+cmd_update_everything() {
+    local cli="${SCRIPT_DIR}/corex.sh"
+    if [[ -f "$cli" ]]; then
+        log_step "Updating CoreX itself, so any version it ships arrives in this run..."
+        # --force because there is no terminal behind the dashboard or the
+        # agent, and plain `update` exits 1 without one.
+        bash "$cli" update --force \
+            || log_warning "CoreX did not update, carrying on with the services as they are"
+    else
+        log_warning "corex.sh is not at ${cli}, so only the services are updated"
+    fi
+
+    # exec, not a call. The step above has just rewritten this very script,
+    # and bash reads a script incrementally as it executes, so carrying on
+    # here resumes at a byte offset inside different content (gotcha #48).
+    # Replacing the process reads the new file from the start.
+    log_step "Updating every installed service..."
+    exec bash "${SCRIPT_DIR}/corex-manage.sh" update --all
+}
+
 # The images a service module declares, as literal text in the module file.
 #
 # Only literal refs are read. A module that builds its image name from a
@@ -3496,6 +3522,7 @@ main() {
         disk)         cmd_disk "$@" ;;
         cold)         source "${SCRIPT_DIR}/lib/cold.sh"; cold_manage "$@" ;;
         cleanup)      cmd_cleanup "$@" ;;
+        update-everything) cmd_update_everything ;;
         lan-setup)    cmd_lan_setup ;;
         network-tune)  cmd_network_tune ;;
         network-check) cmd_network_check ;;
