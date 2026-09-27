@@ -793,7 +793,7 @@ services:
     # :2.5.3, so a box tracking :latest sat ten months behind while every
     # corex manage update reported success. A moving tag that stops moving is
     # the inverse of gotcha #19 and just as silent.
-    image: louislam/uptime-kuma:2.5.3
+    image: louislam/uptime-kuma:2.5.5
     container_name: uptime-kuma
     restart: unless-stopped
     ports: ["3001:3001"]

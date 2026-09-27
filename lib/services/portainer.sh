@@ -85,7 +85,7 @@ services:
   portainer:
     # Pin the deployed release so a routine repair cannot apply an unreviewed
     # database migration or behavior change from the floating latest tag.
-    image: portainer/portainer-ce:2.45.0
+    image: portainer/portainer-ce:2.45.1
     container_name: portainer
     restart: unless-stopped
     ports: ["9443:9443"]

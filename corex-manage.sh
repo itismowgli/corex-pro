@@ -626,6 +626,18 @@ PYEOF
     return 0
 }
 
+# The images a service module declares, as literal text in the module file.
+#
+# Only literal refs are read. A module that builds its image name from a
+# variable is skipped rather than guessed at, because a wrong answer here
+# triggers an unnecessary recreate of a working service.
+_module_images() {
+    local svc="$1" module="${SCRIPT_DIR}/lib/services/${svc}.sh"
+    [[ -f "$module" ]] || return 0
+    grep -oE '^[[:space:]]*image:[[:space:]]*[A-Za-z0-9][^[:space:]$]*' "$module" \
+        | sed -E 's/^[[:space:]]*image:[[:space:]]*//'
+}
+
 _update_single() {
     local svc="$1"
     local dir="${DOCKER_ROOT}/${svc}"
@@ -635,6 +647,26 @@ _update_single() {
     fi
 
     log_info "Updating ${svc}..."
+
+    # A pin shipped in a CoreX release lands in the module file, while
+    # `docker compose pull` reads the compose file on disk, which deploy wrote
+    # when the service was installed. So an update after `corex update` pulled
+    # the tag that was already here and reported success, and the new version
+    # never arrived. Regenerate first when the two disagree; that is gotcha
+    # #22's rule applied to the one command people run to get fixes.
+    local want have stale=""
+    have=$(docker compose -f "${dir}/docker-compose.yml" config --images 2>/dev/null || true)
+    while IFS= read -r want; do
+        [[ -n "$want" ]] || continue
+        grep -qxF -- "$want" <<< "$have" || stale="yes"
+    done < <(_module_images "$svc")
+    if [[ -n "$stale" ]]; then
+        log_info "${svc}: the compose file is older than the module, regenerating it"
+        if ! _run_service_fn "$svc" "repair"; then
+            log_warning "${svc}: could not regenerate the compose file"
+            return 1
+        fi
+    fi
 
     # Record what each image resolves to now, so the report afterwards can say
     # which ones actually moved. The previous shortcut here compared one

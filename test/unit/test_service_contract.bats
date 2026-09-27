@@ -791,12 +791,17 @@ _repair_body() {
     # image was enough to skip the rest. monitoring ships five and ai three,
     # and the one it always checked (node-exporter) rarely changes, so
     # uptime-kuma sat ten months behind while every run reported success.
-    local body
-    body=$(awk '/^_update_single\(\)/,/^}/' "${REPO_ROOT}/corex-manage.sh")
-    run bash -c "echo '$body' | grep -c 'config --images 2>/dev/null | head -1'"
-    [ "$output" = "0" ]
+    # Comments are stripped and the body is never re-quoted into a bash -c
+    # string. It used to be, and an apostrophe in a comment then broke the
+    # quoting and failed the test with nothing wrong in the code: a check
+    # that reads prose, which is gotcha #71.
+    local body n
+    body=$(sed -n '/^_update_single()/,/^}/p' "${REPO_ROOT}/corex-manage.sh" \
+           | grep -v '^[[:space:]]*#')
+    n=$(printf '%s\n' "$body" | grep -cF 'config --images 2>/dev/null | head -1' || true)
+    [ "$n" = "0" ]
     # It must iterate the images.
-    echo "$body" | grep -q 'while IFS= read -r img'
+    printf '%s\n' "$body" | grep -q 'while IFS= read -r img'
 }
 
 @test "update fails when the pull or the restart fails" {
@@ -1778,4 +1783,51 @@ YAMLEOF
     n=$(echo "$body" | grep -c 'MISSING')
     [ "$n" -ge 2 ] \
         || { echo "no separate answer for 'NUT absent' and 'no device'"; false; }
+}
+
+@test "update regenerates a compose file older than the module" {
+    # A pin shipped in a CoreX release lands in the module file. `docker
+    # compose pull` reads the compose file on disk, which deploy wrote when
+    # the service was installed, so without this an update after `corex
+    # update` pulls the tag already present and reports success while the new
+    # version never arrives. That is gotcha #22 in the one command people run
+    # to pick up fixes.
+    local body
+    body=$(sed -n '/^_update_single()/,/^}/p' "${REPO_ROOT}/corex-manage.sh" \
+           | grep -v '^[[:space:]]*#')
+    [ -n "$body" ] || { echo "_update_single not found"; false; }
+
+    echo "$body" | grep -q '_module_images' \
+        || { echo "it never compares the module against the compose file"; false; }
+    # The regeneration has to happen before the pull, or the pull fetches the
+    # tag the stale file names.
+    local regen pull
+    regen=$(echo "$body" | grep -n '_run_service_fn' | head -1 | cut -d: -f1)
+    pull=$(echo "$body" | grep -n 'compose .*pull' | head -1 | cut -d: -f1)
+    [ -n "$regen" ] && [ -n "$pull" ] || { echo "missing regenerate or pull"; false; }
+    [ "$regen" -lt "$pull" ] \
+        || { echo "it regenerates after pulling, so the pull used the old file"; false; }
+}
+
+@test "_module_images reads literal refs and skips ones built from a variable" {
+    # A wrong answer here recreates a working service for no reason, so the
+    # conservative direction is to skip anything it cannot read literally.
+    local body
+    body=$(sed -n '/^_module_images()/,/^}/p' "${REPO_ROOT}/corex-manage.sh")
+    [ -n "$body" ] || { echo "_module_images not found"; false; }
+
+    # Against a real module: immich names three literal images plus redis.
+    local out
+    out=$(grep -oE '^[[:space:]]*image:[[:space:]]*[A-Za-z0-9][^[:space:]$]*' \
+            "${REPO_ROOT}/lib/services/immich.sh" | sed -E 's/^[[:space:]]*image:[[:space:]]*//')
+    echo "$out" | grep -q 'immich-server:' \
+        || { echo "it did not read immich-server"; false; }
+
+    # Against keeper, whose image comes from a variable: nothing, not '${KEEPER_IMAGE}'.
+    local kout
+    kout=$(grep -oE '^[[:space:]]*image:[[:space:]]*[A-Za-z0-9][^[:space:]$]*' \
+            "${REPO_ROOT}/lib/services/keeper.sh" | sed -E 's/^[[:space:]]*image:[[:space:]]*//' || true)
+    echo "$kout" | grep -q 'KEEPER_IMAGE' \
+        && { echo "it returned a variable name as though it were an image"; false; }
+    true
 }

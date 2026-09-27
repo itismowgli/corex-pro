@@ -6,6 +6,42 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.49.0] - 2026-09-27
+
+### Fixed
+- **A version shipped by a CoreX release never reached the box through
+  `update`.** The pin lives in the service module; `docker compose pull` reads
+  the compose file on disk, which deploy wrote when the service was installed.
+  So after `corex update` brought new code down, `corex manage update` pulled
+  the tag that was already there and reported success, and the new version
+  arrived only if someone happened to run `repair`. Every pin bump this
+  project has ever shipped was silent in that way.
+
+  `_update_single` now compares the images the module declares against the
+  ones the compose file names, and regenerates before pulling when they
+  disagree. Only literal refs are read: a module that builds its image name
+  from a variable is skipped rather than guessed at, because a wrong answer
+  recreates a working service for nothing. That leaves Keeper needing an
+  explicit repair, which is the conservative direction.
+
+### Changed
+- **Six services move to the versions upstream has published.**
+  Found by the check added in v3.48.0, which is the first time any of them
+  were visible: Immich v3.1.0 to v3.2.2, Keeper 2.18.7 to 2.21.7, Uptime Kuma
+  2.5.3 to 2.5.5, Portainer 2.45.0 to 2.45.1, Sablier 1.17.0 to 1.18.0, and
+  the Nextcloud whiteboard v1.5.3 to v1.5.9.
+
+  The whiteboard is deliberately not taken to v2.0.0, which is what the check
+  reported as newest. That release requires Nextcloud 31 or later, which is
+  satisfied here, but the server has to match the whiteboard app installed
+  inside Nextcloud, and that app is 1.5.9. Taking the newest tag would have
+  broken a working service, which is why the check reports what exists and
+  leaves the choice to a person.
+
+  Sablier's one breaking change in 1.18.0 concerns custom themes and CoreX
+  configures none. Keeper is the one with no published release notes, so it
+  is the only bump here taken without reading them.
+
 ## [v3.48.0] - 2026-09-27
 
 ### Added

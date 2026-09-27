@@ -21,7 +21,7 @@ sablier_deploy() {
     cat > "${DOCKER_ROOT}/sablier/docker-compose.yml" <<'DCEOF'
 services:
   sablier:
-    image: sablierapp/sablier:1.17.0
+    image: sablierapp/sablier:1.18.0
     container_name: corex-sablier
     restart: unless-stopped
     command:
