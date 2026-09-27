@@ -52,7 +52,7 @@ services:
     # database provided, so every start failed with "No vector extension
     # found" and the photo library was down. Bump this deliberately, checking
     # the release notes for database requirements. See CLAUDE.md gotcha #19.
-    image: ghcr.io/immich-app/immich-server:v3.1.0
+    image: ghcr.io/immich-app/immich-server:v3.2.2
     container_name: immich-server
     restart: unless-stopped
     ports: ["2283:2283"]
@@ -100,7 +100,7 @@ services:
 
   immich-machine-learning:
     # Must track the server version exactly.
-    image: ghcr.io/immich-app/immich-machine-learning:v3.1.0
+    image: ghcr.io/immich-app/immich-machine-learning:v3.2.2
     container_name: immich-ml
     restart: unless-stopped
     volumes: ["model-cache:/cache"]

@@ -201,6 +201,57 @@ MOVING_TAGS = {
 PINNED_VERSION = re.compile(r"^v?\d+\.\d+\.\d+")
 
 
+# A tag that is a plain three-part version, which is what CoreX pins to.
+_SEMVER = re.compile(r"^(v?)(\d+)\.(\d+)\.(\d+)$")
+
+
+def newer_release(host, repo, tag, budget=24):
+    """The newest release published above a pinned tag, found by probing.
+
+    Listing tags is not an option. ghcr holds more than 20000 for
+    immich-server and pages 1000 at a time, so a full enumeration is twenty
+    or more requests for one image, and the page that holds v3.x is not
+    reached at all. Probing only the versions that could come next is a
+    handful of HEAD requests, costs the same on every registry, and stops as
+    soon as one is missing.
+
+    Majors first, then minors, then patches. That order cannot stop early on
+    a line that has moved on, and from v3.1.0 it reaches v3.2.2 in six
+    probes. A registry that stops answering part way returns None rather than
+    the best found so far, because a partial climb is a wrong answer rather
+    than a small one.
+    """
+    m = _SEMVER.match(tag)
+    if m is None:
+        return None
+    prefix = m.group(1)
+    major, minor, patch = int(m.group(2)), int(m.group(3)), int(m.group(4))
+
+    state = {"spent": 0, "lost": False}
+
+    def exists(a, b, c):
+        if state["spent"] >= budget or state["lost"]:
+            return False
+        state["spent"] += 1
+        digest, problem = remote_digest(host, repo, "%s%d.%d.%d" % (prefix, a, b, c))
+        if problem == "unreachable":
+            state["lost"] = True
+            return False
+        return bool(digest)
+
+    while exists(major + 1, 0, 0):
+        major, minor, patch = major + 1, 0, 0
+    while exists(major, minor + 1, 0):
+        minor, patch = minor + 1, 0
+    while exists(major, minor, patch + 1):
+        patch += 1
+
+    if state["lost"]:
+        return None
+    found = "%s%d.%d.%d" % (prefix, major, minor, patch)
+    return None if found == tag else found
+
+
 def tag_moves(tag):
     """Whether upstream is expected to rebuild this tag in place.
 
@@ -307,6 +358,18 @@ def check_image(ref):
         return {"image": ref, "state": "update", "local": local[0],
                 "note": "%s now points at %s" % (tag, remote[:19])}
 
+    # A pinned tag cannot move, so the question is not whether it has: it is
+    # whether the line it was pinned from has gone on without it. That is news
+    # a pin should not hide, and it is different from "this tag went stale",
+    # which is about a moving tag that stopped.
+    if not tag_moves(tag):
+        newer = newer_release(host, repo, tag)
+        if newer:
+            return {"image": ref, "state": "newer-release", "local": _base,
+                    "newer": newer,
+                    "note": ("%s is pinned and current, and upstream has since "
+                             "published %s" % (tag, newer))}
+
     # Only worth asking about a tag that is meant to move.
     if tag_moves(tag):
         built = tag_last_built(host, repo, tag)
@@ -327,7 +390,8 @@ def check_image(ref):
 
 # The order matters: the worst news about any image in a stack is the news
 # about the stack.
-_RANK = {"update": 3, "stale-tag": 2, "unknown": 1, "current": 0, "pinned": 0}
+_RANK = {"update": 4, "stale-tag": 3, "newer-release": 2, "unknown": 1,
+         "current": 0, "pinned": 0}
 
 
 def check_service(service):

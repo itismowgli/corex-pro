@@ -190,7 +190,10 @@ const METRICS = {
     services: {
       nextcloud: { service: "nextcloud", state: "update", note: "34 now points at sha256:9f1c2a", images: [{ image: "nextcloud:34", state: "update", note: "34 now points at sha256:9f1c2a" }] },
       traefik: { service: "traefik", state: "current", note: "v3.6 is current", images: [{ image: "traefik:v3.6", state: "current", note: "v3.6 is current" }] },
-      immich: { service: "immich", state: "unknown", note: "could not ask ghcr.io about release", images: [] },
+      // Pinned and current for its tag, while upstream published a higher
+      // version. The card must show the version and must NOT offer an Update
+      // button, because pulling a pinned tag changes nothing.
+      immich: { service: "immich", state: "newer-release", note: "v3.1.0 is pinned and current, and upstream has since published v3.2.2", images: [{ image: "ghcr.io/immich-app/immich-server:v3.1.0", state: "newer-release", note: "upstream has since published v3.2.2", newer: "v3.2.2" }] },
       coolify: { service: "coolify", state: "stale-tag", note: "latest is current but has not been rebuilt in 310 days", images: [], },
     },
   },
@@ -313,7 +316,9 @@ const EXPECT = {
   // The running version on a card. Proves the version line rendered rather
   // than the tab merely mounting, and "v3.1.0" appears in no fixture note, so
   // only the version chip can produce it.
-  updates: "v3.1.0",
+  // Two things at once: the running version chip, and the pinned-but-behind
+  // group, whose whole point is that it offers no Update button.
+  updates: "A newer release exists",
   catalogue: "Gitea",
 }
 

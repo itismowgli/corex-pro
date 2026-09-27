@@ -6,6 +6,42 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.48.0] - 2026-09-27
+
+### Added
+- **A pinned image that has fallen behind now says so.**
+  The update check asked one question, "has this tag moved", which a pinned
+  tag never does. So Immich sat on v3.1.0 while upstream published v3.2.2 and
+  the dashboard reported it as current, which was true of the tag and
+  misleading about the service. Pinning is deliberate and the check was right
+  not to call it stale (that noise is what v3.26.0 removed), but "a newer
+  version exists" is a different question and a real one.
+
+  `newer_release` probes rather than lists. Enumerating tags is not viable:
+  ghcr holds over 20000 for immich-server and pages 1000 at a time, so a full
+  listing is twenty or more requests per image and does not even reach the
+  v3 line. Probing the versions that could come next climbs majors, then
+  minors, then patches, and stops as soon as one is absent. Measured against
+  the live registry: v3.1.0 to v3.2.2 in six requests and 2.3 seconds.
+
+  It is reported as its own state rather than folded into "update", and the
+  card deliberately offers no Update button, because the pin lives in the
+  service module: pulling would fetch the image it already has and report
+  success, which is the fault v3.39.0 was written about. The card names the
+  two commands that do move it.
+
+  A registry that stops answering part way through a climb returns nothing
+  rather than the best found so far, because a partial answer here is wrong
+  rather than merely incomplete.
+
+### Changed
+- **Immich moves from v3.1.0 to v3.2.2.**
+  Server and machine learning are pinned together because they have to match.
+  Upstream documents no breaking changes across v3.2.0, v3.2.1 and v3.2.2, no
+  database or vector extension requirement, and no manual step beyond an
+  optional facial recognition reset for cluster groups. The Postgres image is
+  unchanged.
+
 ## [v3.47.0] - 2026-09-27
 
 ### Added

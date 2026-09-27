@@ -25,7 +25,7 @@ export function updateCount(services: Service[], updates: Updates | null): numbe
   if (!updates) return 0
   return services.filter((s) => {
     const st = updates.services?.[s.name]?.state
-    return st === "update" || st === "stale-tag"
+    return st === "update" || st === "stale-tag" || st === "newer-release"
   }).length
 }
 
@@ -72,9 +72,21 @@ export function UpdatesTab({
     const st = updates?.services?.[s.name]?.state
     return st === "update" || st === "stale-tag"
   })
+  // Its own group. A pull will not deliver these, so they must not sit beside
+  // cards whose Update button works, which is gotcha #50's rule: a control
+  // that offers something has to be the control that delivers it.
+  const behind = services.filter(
+    (s) => updates?.services?.[s.name]?.state === "newer-release",
+  )
   const unknown = services.filter((s) => {
     const st = updates?.services?.[s.name]?.state
-    return st !== "update" && st !== "stale-tag" && st !== "current" && st !== "pinned"
+    return (
+      st !== "update" &&
+      st !== "stale-tag" &&
+      st !== "newer-release" &&
+      st !== "current" &&
+      st !== "pinned"
+    )
   })
   const disabled = !!busy || locked
 
@@ -173,6 +185,35 @@ export function UpdatesTab({
         </div>
       )}
 
+      {behind.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <h3 className="text-sm font-medium">
+            A newer release exists
+            <span className="text-muted-foreground ml-1.5 font-normal">{behind.length}</span>
+          </h3>
+          <p className="text-muted-foreground text-xs">
+            These are pinned to an exact version and are current for it, so pulling
+            changes nothing. The version is set by the CoreX service module, so the
+            way to move is to update CoreX itself with{" "}
+            <code className="font-mono">corex update</code> and then repair the
+            service.
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {behind.map((svc) => (
+              <UpdateCard
+                key={svc.name}
+                svc={svc}
+                update={updates?.services?.[svc.name]}
+                busy={activeName === svc.name}
+                output={running && activeName === svc.name ? sliceFor(running.output, svc.name) : ""}
+                disabled={disabled}
+                onAction={onAction}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* An unreachable registry is not "up to date", and flattening it into
           one would be the same mistake as a check that cannot fail. */}
       {unknown.length > 0 && (
@@ -218,6 +259,10 @@ function UpdateCard({
   // Read from the job's own output rather than timed or guessed, so the bar
   // cannot disagree with what the command is actually doing (gotcha #50).
   const prog = busy ? updateProgress(output) : null
+  // The version upstream published, carried per image because a stack can
+  // have several and only some of them pinned.
+  const newer = update?.images?.find((i) => i.newer)?.newer
+  const behind = update?.state === "newer-release"
   return (
     <Card className="gap-3">
       <CardHeader>
@@ -228,7 +273,10 @@ function UpdateCard({
           {busy ? (
             <Loader2Icon className="text-muted-foreground size-4 shrink-0 animate-spin" />
           ) : (
-            update?.state === "update" && <Badge variant="warn">New image</Badge>
+            <>
+              {update?.state === "update" && <Badge variant="warn">New image</Badge>}
+              {behind && newer && <Badge variant="warn">{newer}</Badge>}
+            </>
           )}
         </CardTitle>
         {/* The version in hand. The registry can say a newer image exists but
@@ -269,18 +317,30 @@ function UpdateCard({
           </div>
         )}
         <div>
-          <Button
-            size="xs"
-            variant={update?.state === "update" ? "default" : "secondary"}
-            disabled={disabled}
-            onClick={() => {
-              if (!window.confirm(`Pull the latest image for ${svc.label} and restart it?`)) return
-              onAction(svc, "update")
-            }}
-          >
-            <RefreshCwIcon />
-            Update
-          </Button>
+          {behind ? (
+            // No Update button here on purpose. This image is pinned, so a
+            // pull fetches the same thing it already has, and a button that
+            // reports success while changing nothing is the fault in gotcha
+            // #50. The version lives in the module, so CoreX has to move it.
+            <p className="text-muted-foreground text-xs">
+              Pinned, so pulling changes nothing. Run{" "}
+              <code className="font-mono">corex update</code>, then{" "}
+              <code className="font-mono">corex manage repair {svc.name}</code>.
+            </p>
+          ) : (
+            <Button
+              size="xs"
+              variant={update?.state === "update" ? "default" : "secondary"}
+              disabled={disabled}
+              onClick={() => {
+                if (!window.confirm(`Pull the latest image for ${svc.label} and restart it?`)) return
+                onAction(svc, "update")
+              }}
+            >
+              <RefreshCwIcon />
+              Update
+            </Button>
+          )}
         </div>
       </CardContent>
     </Card>

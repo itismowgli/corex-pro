@@ -414,13 +414,27 @@ export type Metrics = {
  * button on a failed lookup would take a working button away over a network
  * blip.
  */
-export type UpdateState = "update" | "stale-tag" | "unknown" | "current" | "pinned"
+/**
+ * "newer-release" is a pinned image that is current for its tag while
+ * upstream has published a higher version. It is deliberately separate from
+ * "update": pulling will not deliver it, because the pin lives in the CoreX
+ * module, so the action is to update CoreX rather than to pull the image.
+ */
+export type UpdateState =
+  | "update"
+  | "stale-tag"
+  | "newer-release"
+  | "unknown"
+  | "current"
+  | "pinned"
 
 export type ImageUpdate = {
   image: string
   state: UpdateState
   note: string
   age_days?: number
+  /** The higher version upstream has published, when state is newer-release. */
+  newer?: string
 }
 
 export type ServiceUpdate = {
