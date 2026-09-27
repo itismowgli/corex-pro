@@ -6,6 +6,49 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.47.0] - 2026-09-27
+
+### Added
+- **Every service card shows the version it is running.**
+  The dashboard could say a service was healthy and that a newer image
+  existed, and never what you were on. `/api/services` now carries the tag of
+  the image each container was created from, read for every container
+  including stopped ones in a single call, and the Services and Updates cards
+  show it.
+
+  It is the image tag rather than the application's own build number on
+  purpose: reading the latter means asking a service that may be the reason
+  you opened the page. A container whose image has since been untagged reports
+  no version at all rather than a confident "latest", which is what the first
+  version of the parser did with the bare image IDs this box has left over
+  from removed stacks.
+
+- **Updates show per-service progress while they run.**
+  A running update reported one spinner and an opaque log. Each card now shows
+  what its own service is doing, read from the update's own output so the bar
+  cannot disagree with the command: how many images are ready, how many layers
+  on a single-image service, then the container being recreated and started.
+  "Update all" is one job covering every service in turn, so the card being
+  worked on is found from the output rather than guessed.
+
+- **The thermal thresholds are drawn rather than only named.**
+  The Health tab stated "Warns at 80C, sheds load at 85C, hardware cuts power
+  around 97C" and left the reader to place the current reading among them, on
+  the one measure this hardware actually fails by. A band gauge now shows it.
+
+  This adds `@microcharts/react`, the UI's only chart dependency, which is
+  compatible with the no-CDN rule rather than an exception to it: that rule is
+  about fetching at runtime, and Vite bundles this into the same binary. The
+  hand-drawn `spark.tsx` still draws every time series. Measured cost of the
+  one chart: 2.04 kB gzipped, with the stylesheet adding nothing measurable.
+
+### Fixed
+- **The Updates tab could never show that a service was busy.**
+  It received `busy={runningAction}` while `runService` sets `busy`, and the
+  two never hold the same kind of value: `runningAction` carries a maintenance
+  task or a box level action, never a service name. Each card compared its own
+  name against it, so the spinner was unreachable for the life of the tab.
+
 ## [v3.46.0] - 2026-09-25
 
 ### Fixed

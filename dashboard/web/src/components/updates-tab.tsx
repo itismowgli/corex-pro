@@ -1,9 +1,11 @@
-import { ArrowUpCircleIcon, Loader2Icon, PackageIcon, RefreshCwIcon } from "lucide-react"
+import { ArrowUpCircleIcon, Loader2Icon, PackageIcon, RefreshCwIcon, TagIcon } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import type { OsUpdates, Service, ServiceAction, ServiceUpdate, Updates } from "@/lib/api"
+import { Meter } from "@/components/ui/spark"
+import type { Job, OsUpdates, Service, ServiceAction, ServiceUpdate, Updates } from "@/lib/api"
+import { currentTarget, sliceFor, updateProgress } from "@/lib/progress"
 
 /**
  * What has a new version, in one place.
@@ -39,6 +41,7 @@ export function UpdatesTab({
   updates,
   os,
   busy,
+  job,
   locked,
   onAction,
   onUpdateAll,
@@ -48,11 +51,23 @@ export function UpdatesTab({
   updates: Updates | null
   os: OsUpdates | null
   busy: string | null
+  job: Job | null
   locked: boolean
   onAction: (svc: Service, action: ServiceAction) => void
   onUpdateAll: () => void
   onOsUpgrade: () => void
 }) {
+  /**
+   * Which card the running job belongs to.
+   *
+   * A single update sets busy to that service. "Update all" is one job
+   * covering every service in turn, so the service is read from the output
+   * instead, which is the only thing that knows where the run has got to.
+   */
+  const running = job?.state === "running" ? job : null
+  const named = busy && services.some((s) => s.name === busy) ? busy : null
+  const activeName = named ?? (running ? currentTarget(running.output) : null)
+
   const waiting = services.filter((s) => {
     const st = updates?.services?.[s.name]?.state
     return st === "update" || st === "stale-tag"
@@ -149,7 +164,8 @@ export function UpdatesTab({
               key={svc.name}
               svc={svc}
               update={updates?.services?.[svc.name]}
-              busy={busy === svc.name}
+              busy={activeName === svc.name}
+              output={running && activeName === svc.name ? sliceFor(running.output, svc.name) : ""}
               disabled={disabled}
               onAction={onAction}
             />
@@ -171,7 +187,8 @@ export function UpdatesTab({
                 key={svc.name}
                 svc={svc}
                 update={updates?.services?.[svc.name]}
-                busy={busy === svc.name}
+                busy={activeName === svc.name}
+                output={running && activeName === svc.name ? sliceFor(running.output, svc.name) : ""}
                 disabled={disabled}
                 onAction={onAction}
               />
@@ -187,15 +204,20 @@ function UpdateCard({
   svc,
   update,
   busy,
+  output,
   disabled,
   onAction,
 }: {
   svc: Service
   update: ServiceUpdate | undefined
   busy: boolean
+  output: string
   disabled: boolean
   onAction: (svc: Service, action: ServiceAction) => void
 }) {
+  // Read from the job's own output rather than timed or guessed, so the bar
+  // cannot disagree with what the command is actually doing (gotcha #50).
+  const prog = busy ? updateProgress(output) : null
   return (
     <Card className="gap-3">
       <CardHeader>
@@ -209,9 +231,43 @@ function UpdateCard({
             update?.state === "update" && <Badge variant="warn">New image</Badge>
           )}
         </CardTitle>
+        {/* The version in hand. The registry can say a newer image exists but
+            not what it will call itself, so this states where you are rather
+            than inventing a "to" half it would have to guess at. */}
+        {svc.version && (
+          <span className="text-muted-foreground inline-flex min-w-0 items-center gap-1 font-mono text-xs">
+            <TagIcon className="size-3 shrink-0" />
+            <span className="truncate" title="Image tag currently running">
+              {svc.version}
+            </span>
+          </span>
+        )}
       </CardHeader>
       <CardContent className="flex flex-col gap-2">
-        {update?.note && <p className="text-muted-foreground text-xs break-words">{update.note}</p>}
+        {update?.note && !prog && (
+          <p className="text-muted-foreground text-xs break-words">{update.note}</p>
+        )}
+        {prog && (
+          <div className="flex flex-col gap-1">
+            <div className="text-muted-foreground flex items-baseline justify-between gap-2 text-xs">
+              <span className="truncate">{prog.detail}</span>
+              {prog.pct !== null && <span className="shrink-0 font-mono">{prog.pct}%</span>}
+            </div>
+            {prog.pct !== null ? (
+              <Meter
+                value={prog.pct}
+                max={100}
+                tone={prog.phase === "failed" ? "danger" : "neutral"}
+              />
+            ) : (
+              // Docker has not said how many layers there are yet, so a
+              // determinate bar here would be a number with nothing behind it.
+              <div className="bg-muted h-1.5 w-full overflow-hidden rounded-full">
+                <div className="bg-muted-foreground/40 h-full w-1/3 animate-pulse rounded-full" />
+              </div>
+            )}
+          </div>
+        )}
         <div>
           <Button
             size="xs"

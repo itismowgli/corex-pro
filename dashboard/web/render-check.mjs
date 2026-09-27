@@ -70,12 +70,16 @@ const SERVICES = [
     urls: ["https://nextcloud.example.com"],
     container: "nextcloud",
     enabled: true,
+    version: "34",
   },
   // No browsable address. The server sends null here, not [], and this row is
   // the whole reason this fixture exists.
-  { name: "traefik", label: "Traefik", status: "HEALTHY", urls: null, container: "traefik", enabled: true },
-  { name: "coolify", label: "Coolify", status: "DISABLED", urls: null, container: "coolify", enabled: false },
-  { name: "immich", label: "Immich", status: "UNHEALTHY", urls: ["https://photos.example.com"], container: "immich-server", enabled: true },
+  { name: "traefik", label: "Traefik", status: "HEALTHY", urls: null, container: "traefik", enabled: true, version: "v3.6" },
+  // Empty version on purpose: a container whose image has since been untagged
+  // has none, and the card must simply omit the line rather than print a
+  // confident wrong answer like "latest".
+  { name: "coolify", label: "Coolify", status: "DISABLED", urls: null, container: "coolify", enabled: false, version: "" },
+  { name: "immich", label: "Immich", status: "UNHEALTHY", urls: ["https://photos.example.com"], container: "immich-server", enabled: true, version: "v3.1.0" },
 ]
 
 const STATE = {
@@ -306,6 +310,10 @@ const EXPECT = {
   // Not just the card: the sentence the check writes above the grid, which
   // only appears when an update payload arrived.
   services: "Update available",
+  // The running version on a card. Proves the version line rendered rather
+  // than the tab merely mounting, and "v3.1.0" appears in no fixture note, so
+  // only the version chip can produce it.
+  updates: "v3.1.0",
   catalogue: "Gitea",
 }
 

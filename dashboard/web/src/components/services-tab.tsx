@@ -7,6 +7,7 @@ import {
   RotateCcwIcon,
   ScrollTextIcon,
   SquareIcon,
+  TagIcon,
   WrenchIcon,
 } from "lucide-react"
 
@@ -308,6 +309,23 @@ function ServiceCard({
           </span>
         </CardTitle>
         <div className="flex min-w-0 flex-col gap-0.5">
+          {/* The image tag, which is the only version this box can state as
+              fact. "latest" is shown as itself rather than resolved: a moving
+              tag is exactly the case where the name and the thing it points at
+              are different questions (gotcha #26). */}
+          {svc.version && (
+            <span
+              className="text-muted-foreground inline-flex min-w-0 items-center gap-1 font-mono text-xs"
+              title={
+                svc.version === "latest"
+                  ? "Image tag. A moving tag, so what it points at can change without this changing."
+                  : "Image tag the container was created from"
+              }
+            >
+              <TagIcon className="size-3 shrink-0" />
+              <span className="truncate">{svc.version}</span>
+            </span>
+          )}
           {svc.urls?.length ? (
             svc.urls.map((u) => (
               <a

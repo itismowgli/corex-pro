@@ -5,12 +5,16 @@ import { cn } from "@/lib/utils"
 /**
  * Small time-series charts, drawn as inline SVG.
  *
- * No charting library on purpose. This dashboard embeds everything it needs
- * in one binary and fetches nothing at runtime, because it is the page you
- * open when the box is in trouble, and a stylesheet on a CDN is unavailable
- * exactly then. A line, an area and a threshold band is the whole requirement,
- * and that is thirty lines of path arithmetic against three hundred kilobytes
- * of dependency.
+ * Hand drawn, because a line, an area and a threshold band is the whole
+ * requirement here and that is thirty lines of path arithmetic.
+ *
+ * The rule this obeys is that the dashboard fetches nothing at runtime: it is
+ * the page you open when the box is in trouble, and a stylesheet on a CDN is
+ * unavailable exactly then (gotcha #35). That rule is about the network, not
+ * about dependencies. `ui/band-gauge.tsx` does use `@microcharts/react` for
+ * the one shape this file cannot draw, a value among qualitative bands, and
+ * Vite bundles it into the same binary. Measured cost of that chart: 2.04 kB
+ * gzipped.
  */
 
 export type Point = { x: number; y: number }

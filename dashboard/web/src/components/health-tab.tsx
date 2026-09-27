@@ -8,6 +8,7 @@ import {
 } from "lucide-react"
 
 import { Ansi } from "@/lib/ansi"
+import { BandGauge } from "@/components/ui/band-gauge"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -104,6 +105,18 @@ export function HealthTab({
                   : `Warns at ${warnAt}°C, sheds load at ${shedAt}°C, hardware cuts power around ${m?.thermal.emergency_c ?? 97}°C.`
               }
             />
+            {/* The bands the sentence above names, drawn. Which band the
+                reading sits in is the question, and a number plus three other
+                numbers makes the reader do that arithmetic. */}
+            {temp != null && (
+              <BandGauge
+                value={temp}
+                bands={[warnAt, shedAt, m?.thermal.emergency_c ?? 97]}
+                max={Math.max(100, m?.thermal.emergency_c ?? 97)}
+                title={`CPU ${temp.toFixed(1)}°C against the warn, shed and emergency thresholds`}
+                className="px-1"
+              />
+            )}
             <Row
               label="Peak in the last two hours"
               value={peak == null ? "-" : `${peak.toFixed(1)}°C`}

@@ -69,6 +69,12 @@ type ServiceInfo struct {
 	URLs      []string `json:"urls"`
 	Container string   `json:"container"`
 	Enabled   bool     `json:"enabled"`
+	// Version is the tag of the image the container was created from, which
+	// is the only version this box can state as fact. Immich and Nextcloud
+	// report a build of their own inside the application, but reading that
+	// needs a call per service against an app that may be down, and a
+	// dashboard must not depend on a sick service to say what version it is.
+	Version string `json:"version"`
 }
 
 // hostInfo is what the System tab shows, plus whether the buttons can work at
@@ -514,6 +520,76 @@ func getRunningContainers() map[string]bool {
 	return result
 }
 
+// containerImages maps container name to the image reference it was created
+// from, for every container including stopped ones, in a single call. A
+// switched-off service still has a version, and `docker ps` without -a would
+// report it as having none.
+func containerImages() map[string]string {
+	result := map[string]string{}
+	out, err := runCmd("docker", "ps", "-a", "--format", "{{.Names}}\t{{.Image}}")
+	if err != nil {
+		return result
+	}
+	for _, line := range strings.Split(out, "\n") {
+		name, image, ok := strings.Cut(strings.TrimSpace(line), "\t")
+		if ok && name != "" {
+			result[name] = image
+		}
+	}
+	return result
+}
+
+// isHexID reports whether a reference is a bare Docker image ID rather than a
+// name. Short form is 12 hex characters, full form is 64.
+func isHexID(s string) bool {
+	if len(s) != 12 && len(s) != 64 {
+		return false
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// imageVersion pulls the human version out of an image reference.
+//
+// Splitting on the last colon is wrong on its own twice over: a registry may
+// carry a port (`registry:5000/app`), and a pinned image names a digest
+// (`repo@sha256:...`) rather than a tag. So a digest is reported as a short
+// sha, and a colon only counts as a tag separator when nothing after it is a
+// path separator.
+func imageVersion(ref string) string {
+	if ref == "" {
+		return ""
+	}
+	if repo, digest, ok := strings.Cut(ref, "@"); ok {
+		_ = repo
+		if _, hex, found := strings.Cut(digest, ":"); found && len(hex) >= 12 {
+			return hex[:12]
+		}
+		return ""
+	}
+	i := strings.LastIndex(ref, ":")
+	if i < 0 {
+		// A container whose image has since been untagged reports a bare
+		// image ID here, and this box has several from removed stacks.
+		// Calling that "latest" would be a confident wrong answer, so an
+		// untagged image is reported as having no version at all.
+		if isHexID(ref) {
+			return ""
+		}
+		// Otherwise no tag means Docker resolved it as :latest.
+		return "latest"
+	}
+	tag := ref[i+1:]
+	if tag == "" || strings.Contains(tag, "/") {
+		return "latest"
+	}
+	return tag
+}
+
 func containerExists(name string) bool {
 	out, err := runCmd("docker", "ps", "-a", "--filter", "name=^/"+name+"$", "--format", "{{.Names}}")
 	if err != nil {
@@ -596,6 +672,7 @@ func cachedModuleStatus() map[string]string {
 
 func getServices(state CoreXState) []ServiceInfo {
 	running := getRunningContainers()
+	images := containerImages()
 	var svcs []ServiceInfo
 
 	// Health belongs to the service modules, which know more than "is the
@@ -646,6 +723,7 @@ func getServices(state CoreXState) []ServiceInfo {
 			URLs:      urls,
 			Container: container,
 			Enabled:   entry.Enabled,
+			Version:   imageVersion(images[container]),
 		})
 	}
 

@@ -700,7 +700,13 @@ function Dashboard({
               services={services.data ?? []}
               updates={overview.data?.metrics?.updates ?? null}
               os={overview.data?.metrics?.os_updates ?? null}
-              busy={runningAction}
+              // busy, not runningAction. runService sets busy to the service
+              // name and never touches runningAction, so the per service
+              // spinner and progress in this tab could never appear: the card
+              // compared its own name against a value that only ever holds a
+              // maintenance task or a box level action.
+              busy={busy ?? runningAction}
+              job={job}
               locked={locked}
               onAction={runService}
               onUpdateAll={() => void runBox("update-all")}

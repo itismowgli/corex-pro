@@ -11,6 +11,14 @@ export type Service = {
   urls: string[]
   container: string
   enabled: boolean
+  /**
+   * The tag of the image the container was made from, so "34" for Nextcloud
+   * and "v3.1.0" for Immich. Empty when the image has since been untagged,
+   * which is honest: there is then no version to state. It is deliberately
+   * not the application's own build number, because reading that means asking
+   * a service that may be the reason you opened this page.
+   */
+  version: string
 }
 
 export type State = {
