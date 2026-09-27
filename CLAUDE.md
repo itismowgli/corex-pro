@@ -28,7 +28,7 @@ learning nginx, SSL, Docker networking, or Linux hardening.
 - Re-run on existing server = health-check + repair broken services only
 - No live server required for testing (Docker-in-Docker + bats)
 
-**Current version:** v3.46.0
+**Current version:** v3.47.0
 **Current service modules:** 21 (Traefik, AdGuard, Portainer, Nextcloud,
 Immich, Vaultwarden, Stalwart Mail, Coolify, n8n, Cal.com, Time Machine,
 Uptime Kuma + Grafana + Prometheus (monitoring), Ollama + OpenWebUI +
@@ -3087,6 +3087,32 @@ trap from the opposite direction. Read the kernel log, not the flag.
 footprint.** Immich's server is 4g now, machine learning 3g, the database 1g.
 The CPU limit stays at one core, because these are different budgets: memory
 starvation kills the service, and CPU is what heats the machine (gotcha #31).
+
+### 77. A prop that can never match is a feature that never ran
+
+The Updates tab passed `busy={runningAction}` to every card, and each card
+asked whether `busy === svc.name`. `runService` sets `busy`; it never touches
+`runningAction`, which only ever holds a maintenance task name or a box level
+action. So the comparison could not be true for any service, and the
+per-service spinner was unreachable for the whole life of the tab.
+
+Nothing failed. The tab rendered, the update ran, the job panel showed its
+output, and the only symptom was an absence: no feedback on the card you
+pressed. An absence is what no check in this repo was looking for, because
+`render-check.mjs` mounts a tab and asserts what it draws, not what it draws
+only while something is running.
+
+**Two values named after the same idea are the thing to distrust.** `busy` and
+`runningAction` both mean "something is happening", hold the same type, and
+are set on different paths. Renaming would have prevented it; so would
+passing one value and deriving the other.
+
+The related lesson is where the check went. The card now shows progress read
+from the job's own output, so the fixture that proves it is a piece of real
+`docker compose` output, and `progress-check.mjs` asserts the phase it should
+produce. That is testable without a running update, which is why it exists at
+all: the previous behaviour could only be seen by pressing a button on a live
+box and watching for something that was never going to appear.
 
 ## What NOT to Do
 
