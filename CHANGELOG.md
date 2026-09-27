@@ -6,6 +6,45 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.49.1] - 2026-09-27
+
+### Fixed
+- **`_module_images` read the caller's variable, not its own.**
+  It declared `local svc="$1" module=".../${svc}.sh"` in one statement, and
+  bash evaluates those right hand sides against the enclosing scope, so the
+  path held whatever `svc` the caller had. That is gotcha #58, written a
+  second time in this repo.
+
+  What makes it worth a release of its own is that it appeared to work. The
+  only caller runs inside a loop whose own `svc` holds the same service name,
+  so the four regenerations observed on the live box were correct by
+  coincidence. Called from anywhere else it returned nothing, which a check
+  that reports "nothing is stale" hides completely.
+
+  A test now scans every shell file for the shape rather than the result,
+  because with a matching caller variable the result is indistinguishable
+  from correct. It found one other candidate, a second assignment after a
+  semicolon, which is a separate statement and correct, so the check stops at
+  the first `;`.
+
+- **Both greps in `_module_images` tolerate no match.**
+  grep exits 1 when it matches nothing, which is the normal case for a module
+  that names its image only one of the two ways. Under `set -e` the function
+  stopped after the first grep and returned nothing at all.
+
+### Changed
+- **Keeper is held at 2.18.7 rather than 2.21.7.**
+  2.21.x migrates timestamps to `timestamptz` and refuses to start while its
+  embedded Postgres is not on UTC. The container takes the box timezone, so
+  the server reports Asia/Kolkata, and the image stops rather than converting
+  because doing so would move every stored timestamp by that offset. It
+  crash-looped eight times on this box without touching the schema, and
+  2.18.7 came straight back.
+
+  Refusing is the right behaviour and the choice belongs to an operator, so
+  the pin stays and the module records what moving it requires: set the
+  embedded server to UTC first, so the conversion is a no-op.
+
 ## [v3.49.0] - 2026-09-27
 
 ### Fixed

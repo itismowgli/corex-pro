@@ -632,10 +632,27 @@ PYEOF
 # variable is skipped rather than guessed at, because a wrong answer here
 # triggers an unnecessary recreate of a working service.
 _module_images() {
-    local svc="$1" module="${SCRIPT_DIR}/lib/services/${svc}.sh"
+    # Two statements, not one. A variable referenced in the same `local` that
+    # declares it expands to whatever the ENCLOSING scope holds, not to the
+    # value being assigned (gotcha #58). Written as one line this read the
+    # caller's `svc`, which in the update loop happens to be the same service,
+    # so it worked here and returned nothing from anywhere else.
+    local svc="$1"
+    local module="${SCRIPT_DIR}/lib/services/${svc}.sh"
     [[ -f "$module" ]] || return 0
+    # `|| true` on both: grep exits 1 when it matches nothing, which is the
+    # normal case for a module that names its image only one of the two ways.
+    # Without it the function stops after the first grep under `set -e`, so
+    # keeper returned nothing at all.
     grep -oE '^[[:space:]]*image:[[:space:]]*[A-Za-z0-9][^[:space:]$]*' "$module" \
-        | sed -E 's/^[[:space:]]*image:[[:space:]]*//'
+        | sed -E 's/^[[:space:]]*image:[[:space:]]*//' || true
+    # Also the default inside a ${VAR:-ref} override, which is how keeper
+    # names its image. Without this that module is skipped for ever, which is
+    # the same silent miss this whole check exists to stop. Only a value that
+    # looks like a ref with a tag is taken; anything else is left alone.
+    grep -oE '\$\{[A-Za-z_][A-Za-z0-9_]*:-[A-Za-z0-9][^}]*\}' "$module" \
+        | sed -E 's/^\$\{[A-Za-z_][A-Za-z0-9_]*:-//; s/\}$//' \
+        | grep -E '^[A-Za-z0-9][A-Za-z0-9._/-]*:[A-Za-z0-9][A-Za-z0-9._-]*$' || true
 }
 
 _update_single() {

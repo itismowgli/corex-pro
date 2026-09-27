@@ -1809,25 +1809,66 @@ YAMLEOF
         || { echo "it regenerates after pulling, so the pull used the old file"; false; }
 }
 
-@test "_module_images reads literal refs and skips ones built from a variable" {
-    # A wrong answer here recreates a working service for no reason, so the
-    # conservative direction is to skip anything it cannot read literally.
-    local body
-    body=$(sed -n '/^_module_images()/,/^}/p' "${REPO_ROOT}/corex-manage.sh")
-    [ -n "$body" ] || { echo "_module_images not found"; false; }
+@test "_module_images reads every module's real image, including keeper's" {
+    # The real function, sourced into this shell, so the test cannot pass
+    # against a pattern the code no longer uses.
+    eval "$(sed -n '/^_module_images()/,/^}/p' "${REPO_ROOT}/corex-manage.sh")"
+    SCRIPT_DIR="${REPO_ROOT}"
 
-    # Against a real module: immich names three literal images plus redis.
-    local out
-    out=$(grep -oE '^[[:space:]]*image:[[:space:]]*[A-Za-z0-9][^[:space:]$]*' \
-            "${REPO_ROOT}/lib/services/immich.sh" | sed -E 's/^[[:space:]]*image:[[:space:]]*//')
-    echo "$out" | grep -q 'immich-server:' \
-        || { echo "it did not read immich-server"; false; }
+    local out line
+    for svc in immich keeper monitoring; do
+        out=$(_module_images "$svc")
+        [ -n "$out" ] || { echo "_module_images returned nothing for $svc"; false; }
+        while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            # Never a variable name presented as an image, and every line has
+            # to look like a real ref with a tag.
+            case "$line" in *'$'*) echo "$svc: unexpanded variable: $line"; false ;; esac
+            echo "$line" | grep -qE '^[A-Za-z0-9][A-Za-z0-9._/-]*:[A-Za-z0-9][A-Za-z0-9._-]*$' \
+                || { echo "$svc: not an image ref: $line"; false; }
+        done <<< "$out"
+    done
 
-    # Against keeper, whose image comes from a variable: nothing, not '${KEEPER_IMAGE}'.
-    local kout
-    kout=$(grep -oE '^[[:space:]]*image:[[:space:]]*[A-Za-z0-9][^[:space:]$]*' \
-            "${REPO_ROOT}/lib/services/keeper.sh" | sed -E 's/^[[:space:]]*image:[[:space:]]*//' || true)
-    echo "$kout" | grep -q 'KEEPER_IMAGE' \
-        && { echo "it returned a variable name as though it were an image"; false; }
-    true
+    # keeper names its image through ${KEEPER_IMAGE:-...}. Skipping that form
+    # meant the module could never be seen as stale, which is the same silent
+    # miss the whole check exists to stop.
+    _module_images keeper | grep -q 'keeper-standalone:' \
+        || { echo "keeper's image was not read"; false; }
+}
+
+@test "no local statement reads a variable it declares in the same statement" {
+    # bash evaluates the right hand sides against the ENCLOSING scope, so
+    # `local svc="$1" module=".../${svc}.sh"` puts the caller's svc in the
+    # path, not the one being assigned. That is gotcha #58, and it has now
+    # been written twice in this repo. The second time it appeared to work,
+    # because its only caller ran inside a loop whose own `svc` happened to
+    # hold the same value, so the result was indistinguishable from correct.
+    #
+    # The shape is asserted, not the result, for exactly that reason. One awk
+    # pass rather than a subshell per line: the obvious version spawned
+    # thousands and took longer than the rest of the suite together.
+    local offenders
+    offenders=$(awk '
+        /^[[:space:]]*local[[:space:]]+[A-Za-z_][A-Za-z0-9_]*=/ {
+            line = $0
+            sub(/;.*/, "", line)          # a second statement is not this one
+            if (!match(line, /^[[:space:]]*local[[:space:]]+[A-Za-z_][A-Za-z0-9_]*=/)) next
+            head = substr(line, RSTART, RLENGTH)
+            rest = substr(line, RSTART + RLENGTH)
+            name = head
+            sub(/^[[:space:]]*local[[:space:]]+/, "", name)
+            sub(/=$/, "", name)
+            # Only a further assignment in the same statement can read it.
+            if (rest !~ /[ \t][A-Za-z_][A-Za-z0-9_]*=/) next
+            if (rest ~ ("\\$\\{" name "[}:/]") || rest ~ ("\\$" name "[^A-Za-z0-9_]"))
+                printf " %s:%s", FILENAME, name
+        }
+    ' "${REPO_ROOT}"/corex-manage.sh "${REPO_ROOT}"/corex.sh \
+      "${REPO_ROOT}"/lib/*.sh "${REPO_ROOT}"/lib/services/*.sh)
+
+    [ -z "$offenders" ] || {
+        echo "a local statement reads a variable it declares, in:$offenders"
+        echo "Fix: declare each on its own line."
+        false
+    }
 }

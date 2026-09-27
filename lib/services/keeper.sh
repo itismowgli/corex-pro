@@ -11,7 +11,18 @@ SERVICE_DISK_GB=5
 SERVICE_FIREWALL_SPECS=()
 SERVICE_DESCRIPTION="Sync personal, work and Nextcloud calendars through Google, Outlook or CalDAV. Runs continuously so calendar changes keep syncing."
 SERVICE_MONITORS="Keeper	https://keeper.${DOMAIN:-}	[\"200-299\",\"307\"]"
-KEEPER_IMAGE="${KEEPER_IMAGE:-ghcr.io/ridafkih/keeper-standalone:2.21.7}"
+# Held at 2.18.7 deliberately. 2.21.x migrates timestamps to timestamptz and
+# refuses to start while its embedded Postgres server is not on UTC, which it
+# is not here: the container takes the box timezone, so the server reports
+# Asia/Kolkata and the migration would move every stored timestamp by that
+# offset. The image says so itself and stops rather than converting, which is
+# the right behaviour and leaves the choice to a person.
+#
+# To move: set the embedded server to UTC (ALTER SYSTEM SET timezone = 'UTC',
+# then reload) so the conversion is a no-op, and only then raise this pin.
+# Verified on this box: 2.21.7 crash-looped eight times without touching the
+# schema, and 2.18.7 came straight back.
+KEEPER_IMAGE="${KEEPER_IMAGE:-ghcr.io/ridafkih/keeper-standalone:2.18.7}"
 
 keeper_dirs() {
     mkdir -p "${DOCKER_ROOT}/keeper" "${DATA_ROOT}/keeper-db"
