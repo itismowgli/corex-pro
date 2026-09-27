@@ -3050,6 +3050,44 @@ rather than an error, and the answer was a plausible one, so there was nothing
 to notice. It surfaced only because the module was installed on a box where
 the correct answer was known in advance.
 
+### 76. A resource limit has to hold the peak, and the kernel names the process
+
+Every CoreX container carries a memory limit, added so one service cannot take
+the machine down. Immich's was 1g, which is comfortable for the node process
+at rest (about 440MB) and impossible for what that container actually does: a
+video upload queues a transcode in the same cgroup, and ffmpeg wants 600 to
+780MB on top.
+
+So a phone backup killed the service it was backing up to. Seven kills in
+three days, four ffmpeg and three the server, and the three that took the
+server aborted every upload in flight, which the phone reports as a failed
+backup and retries from the beginning. The backup could never finish, and each
+attempt looked like a network problem.
+
+Three things made it hard to see.
+
+**The kernel names the process, not the service.** The log says
+`task=ffmpeg` or `task=immich`, so it reads as an ffmpeg bug rather than as a
+container that is out of budget. The line that settles it is
+`constraint=CONSTRAINT_MEMCG`, which says the container's own limit did this
+and not the host. Measured at the same moment: 24GB available, 13GB free.
+
+**Immich's own log blames the right thing in the wrong words.**
+`Error occurred during transcoding: ffmpeg was killed with signal SIGKILL` is
+an application reporting that something killed its child, which is true and
+says nothing about who. `Error: Request aborted` on the API side is the same
+event seen from the other end.
+
+**`OOMKilled` on the container is sticky and was false anyway.** It is set
+only when the cgroup kills PID 1, so a container whose ffmpeg is killed every
+few minutes carries `OOMKilled=false` and looks healthy, which is gotcha #29's
+trap from the opposite direction. Read the kernel log, not the flag.
+
+**The rule: set a limit from the container's peak work, not its idle
+footprint.** Immich's server is 4g now, machine learning 3g, the database 1g.
+The CPU limit stays at one core, because these are different budgets: memory
+starvation kills the service, and CPU is what heats the machine (gotcha #31).
+
 ## What NOT to Do
 
 These are firm constraints. Violating them breaks existing installations.

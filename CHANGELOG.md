@@ -23,6 +23,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
   the NUL bytes straight through to the next command. Both call sites now use
   `grep -aE`, and a unit test fails when either loses the flag.
 
+- **Immich was killed by its own memory limit whenever a phone backed up.**
+  `immich-server` held a 1g cap, which covers the node process at rest, about
+  440MB, and nothing else. A video upload queues a transcode in the same
+  container, ffmpeg wants 600 to 780MB, and the cgroup then killed whichever
+  it reached first. When it took ffmpeg the transcode failed; when it took the
+  server every upload in flight aborted, the phone retried from the start, and
+  the backup never finished.
+
+  Every kill was `CONSTRAINT_MEMCG` while the host had 24GB available and 13GB
+  free, so nothing was short of memory and the limit was the whole of the
+  fault. Measured over three days: seven kills, four of them ffmpeg and three
+  the server itself, against `Error: Request aborted` in the API log at the
+  same moments.
+
+  The server now has 4g, machine learning 3g and the database 1g, which are
+  ceilings rather than reservations and total about 8g on a 31.5GB machine.
+  Machine learning was raised for a related symptom: at 1g its workers were
+  recycled under load and the server logged "failed for all URLs" for face
+  detection and smart search, so those jobs were lost rather than delayed. The
+  CPU limit stays at one core, because transcoding is the hottest thing this
+  hardware does and a backup only needs the upload to finish.
+
 - **The UPS module reported itself missing on a box where it was installed.**
   `ups_status` decided one branch with `systemctl list-unit-files | grep -q`.
   grep -q exits at the first match, systemctl then takes SIGPIPE, and every

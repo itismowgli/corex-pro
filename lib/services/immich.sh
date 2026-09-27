@@ -76,10 +76,21 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1g
+          # 1g could not hold the node process, about 440MB at rest, and the
+          # ffmpeg that a video upload queues behind it. The cgroup killed
+          # whichever it reached first: ffmpeg at 600 to 780MB RSS, or the
+          # server itself, and killing the server aborts every upload in
+          # flight, so a phone backup restarts and never finishes. Every kill
+          # was CONSTRAINT_MEMCG while the host had 24GB available, so the
+          # limit was the entire problem and nothing was actually short of
+          # memory.
+          memory: 4g
+          # One core on purpose. Transcoding is the hottest thing this
+          # hardware does (gotcha #31), and a backup only needs the upload to
+          # finish: the transcode is a background job and can trail behind it.
           cpus: "1.0"
         reservations:
-          memory: 256m
+          memory: 512m
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.immich.rule=Host(\`photos.${DOMAIN}\`)"
@@ -100,10 +111,15 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1g
+          # Has to hold buffalo_l and ViT-B-32 at the same time. At 1g the
+          # workers were recycled under upload load and the server logged
+          # "failed for all URLs" for face detection and smart search on
+          # freshly uploaded assets, so those jobs were lost rather than
+          # delayed.
+          memory: 3g
           cpus: "1.0"
         reservations:
-          memory: 256m
+          memory: 512m
 
   immich-redis:
     image: redis:alpine
@@ -150,10 +166,11 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512m
+          # Postgres and the vector index that smart search queries.
+          memory: 1g
           cpus: "1.0"
         reservations:
-          memory: 128m
+          memory: 256m
 
 volumes:
   model-cache:
