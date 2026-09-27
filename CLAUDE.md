@@ -28,7 +28,7 @@ learning nginx, SSL, Docker networking, or Linux hardening.
 - Re-run on existing server = health-check + repair broken services only
 - No live server required for testing (Docker-in-Docker + bats)
 
-**Current version:** v3.47.0
+**Current version:** v3.49.0
 **Current service modules:** 21 (Traefik, AdGuard, Portainer, Nextcloud,
 Immich, Vaultwarden, Stalwart Mail, Coolify, n8n, Cal.com, Time Machine,
 Uptime Kuma + Grafana + Prometheus (monitoring), Ollama + OpenWebUI +
@@ -3113,6 +3113,51 @@ from the job's own output, so the fixture that proves it is a piece of real
 produce. That is testable without a running update, which is why it exists at
 all: the previous behaviour could only be seen by pressing a button on a live
 box and watching for something that was never going to appear.
+
+### 78. The pin is in the module, the pull reads the compose file
+
+A version bump ships in `lib/services/<svc>.sh`. `docker compose pull` reads
+`${DOCKER_ROOT}/<svc>/docker-compose.yml`, which deploy wrote when the service
+was installed and which nothing rewrites on an update. So after `corex update`
+brought the new code down, `corex manage update` pulled the tag that was
+already there, logged success, and the new version arrived only if someone
+happened to run `repair` afterwards.
+
+Every pin this project has ever bumped was silent in that way, which is why it
+went unnoticed: the command reported exactly what it had done, and what it had
+done was nothing. Gotcha #22's rule, anything CoreX generates is regenerated
+on repair, had never been applied to the one command people run to pick up
+fixes.
+
+`_update_single` compares the images the module declares against the ones the
+compose file names and regenerates before pulling when they differ. Order
+matters: regenerating after the pull would pull against the stale file, so the
+unit test asserts the line numbers, not merely that both calls exist.
+
+**Read literal refs only.** `keeper` is `image: ${KEEPER_IMAGE}`, so it is
+skipped rather than guessed at, and needs an explicit repair. A false positive
+here force-recreates a healthy service for nothing, which is worse than a
+missed one that a repair fixes.
+
+### 79. Newest is not the right version when something else is paired to it
+
+The pinned-version check reported the Nextcloud whiteboard as v1.5.3 with
+v2.0.0 available, and v2.0.0 is genuinely newest. Taking it would have broken
+a working service.
+
+The container has to match the whiteboard **app installed inside Nextcloud**,
+and `occ app:list` gave that as 1.5.9, so the correct target was v1.5.9. The
+Nextcloud version requirement that the release notes lead with, 31 or later,
+was satisfied all along and is not the constraint that mattered.
+
+```bash
+docker exec -u 33 nextcloud php occ app:list | grep -i whiteboard
+```
+
+So a check that finds newer versions must report what exists and leave the
+choice to a person. Anything that auto-applied "newest" would have taken this
+one, and the same applies to any sidecar paired with an app version: the
+pairing is the constraint, not the tag.
 
 ## What NOT to Do
 
