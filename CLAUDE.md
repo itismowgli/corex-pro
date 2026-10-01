@@ -28,7 +28,7 @@ learning nginx, SSL, Docker networking, or Linux hardening.
 - Re-run on existing server = health-check + repair broken services only
 - No live server required for testing (Docker-in-Docker + bats)
 
-**Current version:** v3.52.0
+**Current version:** v3.53.1
 **Current service modules:** 21 (Traefik, AdGuard, Portainer, Nextcloud,
 Immich, Vaultwarden, Stalwart Mail, Coolify, n8n, Cal.com, Time Machine,
 Uptime Kuma + Grafana + Prometheus (monitoring), Ollama + OpenWebUI +
@@ -3223,6 +3223,17 @@ title, meta strings joined with middle dots, and an arrow appended to text.
 `render-check.mjs` asserts one substring per tab that only a panel reading its
 fixture can produce. Health and Network had none, so rewriting them would have
 been checked only as "it still mounts", which is gotcha #37 exactly.
+
+**A contains-check cannot see a duplicate.** A held card printed its reason
+twice, once from the service note (which embeds it) and once from the image
+row, and every assertion passed because the text was present. `ONCE` in
+`render-check.mjs` asserts a substring appears exactly once, which is the only
+shape of check that can catch a panel rendering one sentence from two sources.
+
+**And the fixture has to embed what the server embeds.** That duplication was
+invisible for a further reason: the fixture's `note` did not contain the
+reason, while the agent's does. A fixture that is tidier than the real payload
+tests a payload nobody sends.
 
 ## What NOT to Do
 
