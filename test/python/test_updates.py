@@ -136,11 +136,15 @@ class HoldsTest(unittest.TestCase):
             u.held_reason(holds, "ghcr.io/nextcloud-releases/whiteboard:v1.5.9", "v2.0.0"))
         self.assertIsNone(u.held_reason(holds, "nextcloud:34", "35"))
 
-    def test_held_ranks_with_current_so_it_is_not_news(self):
-        # It must not outrank a real update in the same stack, nor make a
-        # healthy service look like it needs attention.
-        self.assertEqual(u._RANK["held"], u._RANK["current"])
+    def test_held_outranks_current_but_never_real_news(self):
+        # Equal to current, a stack holding one image reported whichever row
+        # max reached first, so the Nextcloud whiteboard's hold was invisible
+        # while keeper's showed: the same decision, reported or not depending
+        # on what else happened to be in the stack.
+        self.assertGreater(u._RANK["held"], u._RANK["current"])
+        self.assertLess(u._RANK["held"], u._RANK["unknown"])
         self.assertLess(u._RANK["held"], u._RANK["update"])
+        self.assertLess(u._RANK["held"], u._RANK["newer-release"])
 
 class RepoRootTest(unittest.TestCase):
     """Where the modules are found, which decides whether holds work at all.

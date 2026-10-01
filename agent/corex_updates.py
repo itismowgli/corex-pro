@@ -479,11 +479,13 @@ def check_image(ref):
 
 # The order matters: the worst news about any image in a stack is the news
 # about the stack.
-# "held" ranks with "current" on purpose: it is a decision already taken, not
-# news waiting for one, so it must not outrank a real update in a stack and
-# must not make a healthy service look like it needs attention.
-_RANK = {"update": 4, "stale-tag": 3, "newer-release": 2, "unknown": 1,
-         "current": 0, "pinned": 0, "held": 0}
+# "held" sits above "current" and below everything actionable. Equal to
+# current, a stack holding one image reported whichever row `max` happened to
+# reach first, so the Nextcloud whiteboard's hold was invisible while keeper's
+# showed: the same decision, reported or not depending on what else was in the
+# stack. It must never outrank real news, which is why it is below "unknown".
+_RANK = {"update": 5, "stale-tag": 4, "newer-release": 3, "unknown": 2,
+         "held": 1, "current": 0, "pinned": 0}
 
 
 def check_service(service):
