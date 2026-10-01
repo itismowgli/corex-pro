@@ -6,6 +6,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.52.1] - 2026-10-01
+
+### Fixed
+- **The command palette offered an action and sent you where it no longer
+  was.** "Update every service" routed to System, and v3.52.0 moved that
+  control to Updates. The name was wrong twice over, because it also updates
+  CoreX itself now. It reads "Update everything" and goes to Updates, which is
+  the button it runs: an action keeps one name through the whole flow.
+
+  Found by diffing the served bundle against what the release was supposed to
+  have removed, which is worth repeating after any change that moves a
+  control: the build cannot see a reference that still compiles.
+
 ## [v3.52.0] - 2026-10-01
 
 ### Changed

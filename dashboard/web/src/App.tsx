@@ -428,7 +428,11 @@ function Dashboard({
       { id: "run:network-check", label: "Check the network and certificates", to: "network", action: "network-check" },
       { id: "run:route-list", label: "List the Traefik routes", to: "network", action: "route-list" },
       { id: "run:cleanup-preview", label: "Preview what a cleanup would reclaim", to: "storage", action: "cleanup-preview" },
-      { id: "run:update-all", label: "Update every service", to: "system", action: "update-all" },
+      // Same name and same destination as the button it runs. It said "Update
+      // every service" and sent you to System, where that control no longer
+      // exists, and it now updates CoreX as well as the services, so the old
+      // name was wrong twice over. An action keeps one name through the flow.
+      { id: "run:update-all", label: "Update everything", to: "updates", action: "update-all" },
     ].map((c) => ({
       id: c.id,
       group: "Run",
