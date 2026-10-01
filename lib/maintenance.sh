@@ -180,7 +180,18 @@ TM_DATA=/mnt/corex-data/timemachine-data
 : "${MAINTENANCE_MAX_TEMP_C:=85}"
 : "${MAINTENANCE_BACKUP_CORES:=2}"
 
-log() { echo "$(date '+%Y-%m-%dT%H:%M:%S%z') maintenance: $*" >> "$LOG"; }
+# To the log file and to stdout.
+#
+# stdout is what a caller sees. The agent runs this script to serve "Run now",
+# captured its output, got nothing because every line went to the file, and
+# reported "nothing was due" for a task that had just run for seventy seconds
+# and succeeded. Under systemd the second copy lands in the journal, which
+# costs nothing and is where someone would look anyway.
+log() {
+    local line="$(date '+%Y-%m-%dT%H:%M:%S%z') maintenance: $*"
+    echo "$line" >> "$LOG"
+    echo "$line"
+}
 
 [[ "$MAINTENANCE_ENABLED" == "true" ]] || exit 0
 
@@ -553,7 +564,12 @@ for task in $TASKS; do
     output="$(run_governed "task_${task//-/_}" 2>&1)"
     rc=$?
     elapsed=$(( $(date +%s) - started ))
-    summary="$(echo "$output" | tr -d '\r' | grep -v '^[[:space:]]*$' | tail -3 | tr '\n' ' ')"
+    # Escape codes stripped here, not at the reader. This document is data
+    # that a web page renders into a paragraph, so a stored "\033[1;33m[WARN]"
+    # is shown literally, which is the fault gotcha #37 is about appearing in
+    # the maintenance history rather than the storage report.
+    summary="$(echo "$output" | tr -d '\r' | sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g' \
+               | grep -v '^[[:space:]]*$' | tail -3 | tr '\n' ' ')"
     [[ -n "$summary" ]] || summary="no output"
 
     if (( rc == 0 )); then

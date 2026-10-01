@@ -1872,3 +1872,34 @@ YAMLEOF
         false
     }
 }
+
+@test "the maintenance runner reports to stdout, not only to its log file" {
+    # The agent runs this script to serve Run now and shows what it captured.
+    # Every line went to the log file, so it captured nothing and reported
+    # "nothing was due" for a task that had just run for seventy seconds and
+    # succeeded. Every task was affected, not one.
+    local body
+    body=$(sed -n '/^log() {/,/^}/p' "${REPO_ROOT}/lib/maintenance.sh" \
+           | grep -v '^[[:space:]]*#')
+    [ -n "$body" ] || { echo "the runner's log() is gone"; false; }
+    echo "$body" | grep -q '>> *"\$LOG"' \
+        || { echo "it no longer writes to the log file"; false; }
+    # A bare echo, which is the stdout copy.
+    echo "$body" | grep -qE '^[[:space:]]*echo "\$line"[[:space:]]*$' \
+        || { echo "it writes nothing to stdout, so a caller sees nothing"; false; }
+}
+
+@test "the maintenance history stores text, not escape codes" {
+    # maintenance.json is read by the dashboard and rendered into a paragraph,
+    # so a stored escape sequence is shown literally. That is gotcha #37
+    # appearing in the history rather than in the storage report.
+    # grep for "x1b" rather than "1b\[": the pattern in the file is \x1b\[,
+    # so a backslash sits between them and an unanchored "1b[" matches
+    # nothing. The first version of this test failed for that reason while
+    # the code it checks was correct.
+    local line
+    line=$(grep -n 'summary="\$(echo' -A1 "${REPO_ROOT}/lib/maintenance.sh")
+    [ -n "$line" ] || { echo "the summary line is gone"; false; }
+    echo "$line" | grep -q 'x1b' \
+        || { echo "the summary is stored without stripping escape codes"; false; }
+}

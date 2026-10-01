@@ -6,6 +6,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.54.1] - 2026-10-01
+
+### Fixed
+- **Run now said "nothing was due" for a task that had just run.**
+  Every line the maintenance runner produces went to its log file and none to
+  stdout. The agent runs that script to serve Run now and shows what it
+  captured, which was nothing, so it fell back to a message meaning the
+  opposite of what happened. Measured on this box: the update check ran for
+  seventy seconds, reported "18 checked, 1 with a new image, 2 held" into the
+  log and the history, and the panel said nothing was due. Every task was
+  affected, not one.
+
+  The runner writes to both now. Under systemd the second copy lands in the
+  journal, which costs nothing and is where someone would look anyway.
+
+- **The history stored escape codes.** `maintenance.json` is read by the
+  dashboard and rendered into a paragraph, so a stored `\033[1;33m[WARN]` is
+  shown literally. That is the fault behind the old storage report, appearing
+  in the maintenance history instead. The summary is stripped when it is
+  written, because the document is data rather than terminal output.
+
 ## [v3.54.0] - 2026-10-01
 
 ### Fixed
