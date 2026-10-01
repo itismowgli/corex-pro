@@ -359,7 +359,12 @@ function UpdateCard({
         )}
       </CardHeader>
       <CardContent className="flex flex-col gap-2">
-        {update?.note && !prog && (
+        {/* Not on a held card. The service note for a hold is already
+            "<image> is held at this version. <reason>", and the body below
+            prints the reason, so both together said the same thing twice with
+            a redundant prefix: the version line above this has just named the
+            image. */}
+        {update?.note && !prog && !isHeld && (
           <p className="text-muted-foreground text-small break-words">{update.note}</p>
         )}
         {prog && (

@@ -195,7 +195,10 @@ const METRICS = {
       // Held on purpose: upstream is ahead and the module says not to follow,
       // with a reason. Must render as a decision with nothing to press, not
       // as an update waiting.
-      traefik: { service: "traefik", state: "held", note: "whiteboard is held at this version.", images: [{ image: "ghcr.io/nextcloud-releases/whiteboard:v1.5.9", state: "held", note: "held", newer: "v2.0.0", reason: "v2.0.0 needs the Nextcloud whiteboard app at 2.x, and the app installed here is 1.5.9." }] },
+      // The note embeds the reason, exactly as the agent writes it. It did
+      // not here, which is why this check could not see the card printing the
+      // reason twice: once from the note and once from the body.
+      traefik: { service: "traefik", state: "held", note: "whiteboard is held at this version. v2.0.0 needs the Nextcloud whiteboard app at 2.x, and the app installed here is 1.5.9.", images: [{ image: "ghcr.io/nextcloud-releases/whiteboard:v1.5.9", state: "held", note: "held", newer: "v2.0.0", reason: "v2.0.0 needs the Nextcloud whiteboard app at 2.x, and the app installed here is 1.5.9." }] },
       // Pinned and current for its tag, while upstream published a higher
       // version. The card must show the version and must NOT offer an Update
       // button, because pulling a pinned tag changes nothing.
@@ -307,6 +310,13 @@ function mount(url, me, withData = true, width = 1280) {
 }
 
 // Substrings that prove a panel read its fixture rather than only mounting.
+// Substrings that must appear exactly once on a tab.
+const ONCE = {
+  // The held reason. The card printed it from the service note and again from
+  // the image row, so the same paragraph appeared twice under one heading.
+  updates: "needs the Nextcloud whiteboard app at 2.x",
+}
+
 const EXPECT = {
   system: "enp2s0",
   maintenance: "Never run",
@@ -417,6 +427,16 @@ for (const tab of TABS) {
   // consequence panel on the page: it has to name the interface it read.
   if (withData && EXPECT[tab] && !text.includes(EXPECT[tab])) {
     failures.push("mounted but did not show " + JSON.stringify(EXPECT[tab]))
+  }
+  // Text that must appear exactly once. A panel that renders the same
+  // sentence from two sources reads as a stutter and no "does it contain"
+  // assertion can see it.
+  if (withData && ONCE[tab]) {
+    const needle = ONCE[tab]
+    const n = text.split(needle).length - 1
+    if (n !== 1) {
+      failures.push(`expected ${JSON.stringify(needle)} exactly once, saw it ${n} times`)
+    }
   }
   // Extra assertions for a tab that answers more than one question. Keyed
   // "<tab>Something" so one tab can carry several without a second table.

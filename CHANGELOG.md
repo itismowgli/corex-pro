@@ -6,6 +6,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.53.1] - 2026-10-01
+
+### Fixed
+- **A held card printed its reason twice.** The service note for a hold is
+  already "<image> is held at this version. <reason>", and the card body
+  prints the reason as well, so the same paragraph appeared twice under one
+  heading with a redundant prefix: the line above it has just named the image
+  and the version it is held at. The note is no longer drawn on a held card.
+
+  The render check could not see it, because the fixture's note did not embed
+  the reason the way the agent's does. It does now, and a new assertion
+  requires that text to appear exactly once: a panel rendering the same
+  sentence from two sources reads as a stutter, and no "does it contain" check
+  can ever catch that.
+
 ## [v3.53.0] - 2026-10-01
 
 ### Fixed
