@@ -148,7 +148,7 @@ export function CommandPalette({
               return (
                 <React.Fragment key={item.id}>
                   {heading && (
-                    <p className="text-muted-foreground px-2.5 pt-3 pb-1 text-micro font-medium tracking-wide uppercase first:pt-1">
+                    <p className="text-muted-foreground px-2.5 pt-3 pb-1 text-micro font-medium first:pt-1">
                       {heading}
                     </p>
                   )}

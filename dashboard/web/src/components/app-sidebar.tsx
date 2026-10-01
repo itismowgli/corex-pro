@@ -38,33 +38,14 @@ export function SidebarBody({
   const groups = navGroups(authEnabled)
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 py-3">
-      <div className={cn("flex items-center gap-2 px-3", collapsed && "justify-center px-2")}>
-        {!collapsed && (
-          <span className="text-muted-foreground truncate text-micro font-medium tracking-wide uppercase">
-            Sections
-          </span>
-        )}
-        {onToggleCollapse && (
-          <Button
-            size="icon"
-            variant="ghost"
-            className={cn("size-8", !collapsed && "ml-auto")}
-            onClick={onToggleCollapse}
-            aria-label={collapsed ? "Expand the sidebar" : "Collapse the sidebar"}
-            title={collapsed ? "Expand the sidebar" : "Collapse the sidebar"}
-          >
-            <PanelLeftIcon />
-          </Button>
-        )}
-      </div>
 
-      <div className={cn("px-3", collapsed && "px-2")}>
+      <div className={cn("flex items-center gap-1 px-3", collapsed && "flex-col px-2")}>
         <button
           type="button"
           onClick={onOpenPalette}
           title="Search or jump to a section"
           className={cn(
-            "border-input bg-background text-muted-foreground hover:border-ring focus-visible:ring-ring/50 flex h-9 w-full items-center gap-2 rounded-lg border px-2.5 text-body transition-colors duration-(--dur-fast) ease-(--ease) focus-visible:ring-[3px] focus-visible:outline-none",
+            "border-input bg-background text-muted-foreground hover:border-ring focus-visible:ring-ring/50 flex h-8 w-full items-center gap-2 rounded-md border px-2 text-body transition-colors duration-(--dur-fast) ease-(--ease) focus-visible:ring-[3px] focus-visible:outline-none",
             collapsed && "justify-center px-0"
           )}
         >
@@ -78,6 +59,18 @@ export function SidebarBody({
             </>
           )}
         </button>
+        {onToggleCollapse && (
+          <Button
+            size="icon"
+            variant="ghost"
+            className="size-8 shrink-0"
+            onClick={onToggleCollapse}
+            aria-label={collapsed ? "Expand the sidebar" : "Collapse the sidebar"}
+            title={collapsed ? "Expand the sidebar" : "Collapse the sidebar"}
+          >
+            <PanelLeftIcon />
+          </Button>
+        )}
       </div>
 
       <nav
@@ -85,11 +78,9 @@ export function SidebarBody({
         className={cn("flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-3", collapsed && "px-2")}
       >
         {groups.map((group) => (
-          <div key={group.title} className="grid gap-1">
-            {!collapsed && (
-              <p className="text-muted-foreground px-2 text-micro font-medium tracking-wide uppercase">
-                {group.title}
-              </p>
+          <div key={group.title ?? group.items[0]?.id} className="grid gap-1">
+            {!collapsed && group.title && (
+              <p className="text-muted-foreground px-2 text-micro font-medium">{group.title}</p>
             )}
             {group.items.map(({ id, label, icon: Icon }) => {
               const active = id === tab
@@ -101,7 +92,7 @@ export function SidebarBody({
                   aria-current={active ? "page" : undefined}
                   title={collapsed ? label : undefined}
                   className={cn(
-                    "focus-visible:ring-ring/50 flex h-9 items-center gap-2.5 rounded-lg px-2.5 text-body transition-colors duration-(--dur-fast) ease-(--ease) focus-visible:ring-[3px] focus-visible:outline-none",
+                    "focus-visible:ring-ring/50 flex h-8 items-center gap-2.5 rounded-md px-2 text-body transition-colors duration-(--dur-fast) ease-(--ease) focus-visible:ring-[3px] focus-visible:outline-none",
                     collapsed && "justify-center px-0",
                     active
                       ? "bg-accent text-accent-foreground font-medium"

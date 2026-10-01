@@ -28,11 +28,14 @@ export type NavItem = {
   hint: string
 }
 
-export type NavGroup = { title: string; items: NavItem[] }
+export type NavGroup = {
+  /** Absent for a group that needs no label, which is any group of one. */
+  title?: string
+  items: NavItem[]
+}
 
 const GROUPS: NavGroup[] = [
   {
-    title: "Dashboard",
     items: [
       { id: "overview", label: "Overview", icon: GaugeIcon, hint: "Temperature, load, memory and what is consuming them" },
     ],
@@ -89,6 +92,3 @@ export function navLabel(id: string, authEnabled: boolean | undefined): string {
   return navItems(authEnabled).find((i) => i.id === id)?.label ?? "Overview"
 }
 
-export function navHint(id: string, authEnabled: boolean | undefined): string {
-  return navItems(authEnabled).find((i) => i.id === id)?.hint ?? ""
-}

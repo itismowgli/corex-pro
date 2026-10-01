@@ -46,6 +46,15 @@ const RULES = [
     why: "Use duration-(--dur-fast), duration-(--dur) and ease-(--ease). DESIGN.md, Motion, rules 10 and 11.",
   },
   {
+    name: "all-caps label",
+    // uppercase plus letter-spacing on a small label is the eyebrow: a
+    // tracked-out caption above a block, which is decoration pretending to be
+    // structure. There were five. Literal uppercase data, such as a recovery
+    // code, is a value and is written in the content, not as a class pair.
+    re: /\btracking-[a-z]+\b(?=[^"'`]*\buppercase\b)|\buppercase\b(?=[^"'`]*\btracking-[a-z]+\b)/g,
+    why: "Sentence case. DESIGN.md, Type, rule 6.",
+  },
+  {
     name: "arbitrary spacing",
     // Only size and spacing. data-[state=open] and has-[>svg] are variant
     // syntax, not values, and transition-[width] names a property.
@@ -80,6 +89,15 @@ for (const file of walk(SRC)) {
     let m
     while ((m = rule.re.exec(text)) !== null) {
       const line = text.slice(0, m.index).split("\n").length
+      // An escape hatch that leaves a trace. A rule with no exception at all
+      // gets weakened the first time a real one turns up, and a weakened rule
+      // stops catching the case it was written for. "design-check-allow" on
+      // the line or the one above it is greppable, so the exceptions can be
+      // counted and argued with.
+      const lines = text.split("\n")
+      const here = lines[line - 1] ?? ""
+      const above = lines[line - 2] ?? ""
+      if (here.includes("design-check-allow") || above.includes("design-check-allow")) continue
       failures.push(`${rel}:${line}  ${rule.name}: ${JSON.stringify(m[0])}\n      ${rule.why}`)
     }
   }

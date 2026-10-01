@@ -357,6 +357,7 @@ export function LoginScreen({
                   <Input
                     id="rc-code"
                     autoFocus
+                    /* design-check-allow: a recovery code is uppercase data; the transform is so typing it lower case still matches. */
                     className="font-mono tracking-widest uppercase"
                     value={code}
                     onChange={(e) => setCode(e.target.value)}

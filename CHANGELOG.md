@@ -6,6 +6,51 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.52.0] - 2026-10-01
+
+### Changed
+- **Hierarchy comes from structure, not from 38 identical boxes.**
+  Every screen was a grid of cards with the same radius and the same border
+  whether the content was a list of facts or a thing you act on. Uniform cards
+  carry no information: the chrome tells a reader nothing, so the hierarchy
+  has to be rebuilt by reading every title. It is also the shape a generator
+  reaches for by default.
+
+  Three patterns replace it. A section is a heading and its content, with no
+  chrome, and is now the default. Rows are hairline separated facts, which is
+  the natural form for anything enumerable: ports, host details, disk checks.
+  A card is kept for an object with its own actions, where the box really is
+  around one thing, so Services, Updates, Catalogue and Account keep theirs.
+
+  System, Health and Network are converted. The bundle got smaller.
+
+- **Five all-caps tracked labels are gone.** An eyebrow caption above a block
+  is decoration pretending to be structure, and `design-check.mjs` now fails
+  on the pattern. The single real exception, a recovery code input where the
+  data itself is uppercase, carries a `design-check-allow` marker so the
+  exceptions can be counted rather than quietly multiplying.
+
+- **The page header is one row.** It carried a description under the title on
+  every screen, which the sidebar already implied and which is read once and
+  skipped forever. The same sentence still appears in the command palette,
+  where there is no surrounding page to explain the name.
+
+- **The sidebar lost the label on itself.** "Sections" announced the most
+  obvious element on the page; the collapse control moved onto the search row
+  with the rest of the chrome. Rows are 32px rather than 36px. The group of
+  one called "Dashboard", holding an item called "Overview", lost its title:
+  a group earns a label when it gathers several things.
+
+### Removed
+- **System no longer offers "Update every service".** Updates owns that, and
+  offering the same action from two places under two names is how a reader
+  stops trusting either. System also stopped filing SMART results and the
+  dpkg state in one box called "Disks and packages": two unrelated subjects
+  sharing a heading is what a grid of equal boxes quietly encourages.
+
+- **A dead `navHint` helper and its import**, left behind when the page header
+  stopped taking a description.
+
 ## [v3.51.1] - 2026-10-01
 
 ### Fixed

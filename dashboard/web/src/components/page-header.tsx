@@ -1,31 +1,25 @@
 import * as React from "react"
 
 /**
- * The heading every section opens with.
+ * The line every section opens with.
  *
- * The sidebar says where you are; this says what the page is for and gives
- * the section's own controls a place to sit that is not inside a card title.
- * It is rendered once, in `App.tsx`, from the same list the navigation and
- * the command palette read, so a section cannot be described one way in the
- * palette and another way at the top of its own page.
+ * Title and the section's own controls, on one row. It used to carry a
+ * description under the title as well, on every screen, which is the
+ * "unnecessary label above content" habit: the sidebar already says where you
+ * are, and a sentence explaining the page is read once and then skipped
+ * forever. The same sentence still appears in the command palette, where
+ * there is no surrounding page to explain the name.
  */
 export function PageHeader({
   title,
-  description,
   actions,
 }: {
   title: string
-  description?: React.ReactNode
   actions?: React.ReactNode
 }) {
   return (
-    <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
-      <div className="grid min-w-0 gap-1">
-        <h1 className="truncate text-display font-semibold tracking-tight sm:text-display">{title}</h1>
-        {description && (
-          <p className="text-muted-foreground text-body leading-relaxed">{description}</p>
-        )}
-      </div>
+    <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-4 gap-y-2">
+      <h1 className="text-display min-w-0 truncate font-semibold tracking-tight">{title}</h1>
       {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
     </div>
   )

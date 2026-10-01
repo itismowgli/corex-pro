@@ -174,7 +174,10 @@ const METRICS = {
     { name: "Immich", active: true, type: "http", status: "down", last_check: "2026-09-03 17:45:01", message: "timeout", ping_ms: null },
   ],
   smart: [{ device: "/dev/nvme0n1", status: "PASSED" }, { device: "/dev/sda", status: "not reported" }],
-  dpkg: { clean: true, packages: [] },
+  // Half configured on purpose, like the disk at 94% and the monitor that is
+  // down: this is the state with consequences, and it is the one an upgrade
+  // interrupted by a power cut actually leaves (gotcha #18).
+  dpkg: { clean: false, packages: ["systemd", "libc-bin"] },
   wol: [
     { interface: "enp2s0", supported: true, enabled: false, modes: "d" },
     { interface: "wlp3s0", supported: false, enabled: false, modes: "d" },
@@ -328,6 +331,15 @@ const EXPECT = {
   // The one control that fixes everything, which used to be hidden whenever
   // fewer than two things were waiting.
   updatesButton: "Update everything",
+  // Health and Network were converted from cards to rows and had no content
+  // assertion at all, so the conversion was verified only as "it mounts". A
+  // tab that mounts is not a tab that rendered its data (gotcha #37).
+  // /dev/sda only appears if the SMART rows were built from the fixture.
+  health: "/dev/sda",
+  // The dpkg row, which is its own section now rather than sharing a box.
+  healthPackages: "half configured",
+  // A service address, which only the rows produce.
+  network: "nextcloud.example.com",
   catalogue: "Gitea",
 }
 

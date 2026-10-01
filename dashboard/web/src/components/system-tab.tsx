@@ -1,10 +1,18 @@
-import { CpuIcon, DownloadIcon, KeyRoundIcon, PlugIcon, TerminalIcon } from "lucide-react"
-
-import { CommandPanel } from "@/components/command-panel"
 import { PowerCard } from "@/components/power-card"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table"
+import { Empty, Row, Rows, Section } from "@/components/ui/section"
 import type { Metrics, Port, PowerMode, State } from "@/lib/api"
+
+/**
+ * What this machine is.
+ *
+ * Almost everything here is a fact with a name, so it is a list of facts and
+ * not a grid of boxes. The one framed thing on the page is the power card,
+ * because it is the only control that cannot be undone from here: the
+ * dashboard runs on the machine it would be switching off.
+ *
+ * "Update every service" used to sit here as well as on Updates, offering the
+ * same action from two places under two names. Updates owns it.
+ */
 
 const COMMANDS: [string, string][] = [
   ["Service health", "corex manage status"],
@@ -12,178 +20,116 @@ const COMMANDS: [string, string][] = [
   ["Add a service", "corex manage add <name>"],
   ["Regenerate config and recreate", "corex manage repair <name>"],
   ["Storage report", "corex manage storage"],
-  ["Update every service", "corex manage update --all"],
+  ["Update CoreX and every service", "corex manage update-everything"],
   ["LAN fast path", "corex manage lan-setup"],
-  ["Update CoreX itself", "corex update --force"],
   ["Wake-on-LAN state", "corex manage power"],
 ]
-
-function Row({ k, v }: { k: string; v: string }) {
-  return (
-    <div className="flex items-baseline justify-between gap-4 text-body">
-      <span className="text-muted-foreground">{k}</span>
-      <span className="truncate font-mono text-small" title={v}>
-        {v || "unknown"}
-      </span>
-    </div>
-  )
-}
 
 export function SystemTab({
   state,
   ports,
   metrics,
-  outputs,
-  running,
-  locked,
   powerBusy,
-  onUpdateAll,
   onPower,
 }: {
   state: State | null
   ports: Port[]
   metrics: Metrics | null
-  outputs: Record<string, string>
-  running: string | null
-  locked: boolean
   powerBusy: PowerMode | null
-  onUpdateAll: () => void
   onPower: (mode: PowerMode) => void
 }) {
   const port = state?.ssh_port || "22"
+  const v = (s: string | undefined) => s || "unknown"
+
   return (
-    <div className="flex flex-col gap-3">
-      <div className="grid gap-3 lg:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-body">
-              <CpuIcon className="size-4" />
-              Host
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-2">
-            <Row k="Hostname" v={state?.hostname ?? ""} />
-            <Row k="Server IP" v={state?.server_ip ?? ""} />
-            <Row k="Kernel" v={state?.kernel ?? ""} />
-            <Row k="Uptime" v={state?.uptime ?? ""} />
-            <Row k="Timezone" v={state?.timezone ?? ""} />
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-body">
-              <PlugIcon className="size-4" />
-              Software
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-2">
-            <Row k="CoreX" v={state?.version ? `v${state.version}` : ""} />
-            <Row k="Docker" v={state?.docker ?? ""} />
-            <Row k="Domain" v={state?.domain ?? ""} />
-            <Row k="Action agent" v={state?.agent_ok ? "reachable" : state?.agent_error || "unreachable"} />
-          </CardContent>
-        </Card>
+    <div className="flex flex-col gap-6">
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Section title="Host">
+          <Rows>
+            <Row label="Hostname" value={v(state?.hostname)} />
+            <Row label="Address" value={v(state?.server_ip)} />
+            <Row label="Kernel" value={v(state?.kernel)} />
+            <Row label="Uptime" value={v(state?.uptime)} />
+            <Row label="Timezone" value={v(state?.timezone)} />
+          </Rows>
+        </Section>
+
+        <Section title="Software">
+          <Rows>
+            <Row label="CoreX" value={state?.version ? `v${state.version}` : "unknown"} />
+            <Row label="Docker" value={v(state?.docker)} />
+            <Row label="Domain" value={v(state?.domain)} />
+            <Row
+              label="Action agent"
+              value={state?.agent_ok ? "reachable" : state?.agent_error || "unreachable"}
+              tone={state?.agent_ok ? "ok" : "danger"}
+              hint={
+                state?.agent_ok
+                  ? undefined
+                  : "Every button on this page goes through the agent, so none of them can work until it is."
+              }
+            />
+          </Rows>
+        </Section>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-body">
-            <KeyRoundIcon className="size-4" />
-            SSH access
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-2">
-          {port !== "22" && (
-            <p className="text-warn text-small">
-              SSH listens on {port}, not 22. Port 22 is closed, including in Portainer environments.
-            </p>
-          )}
-          <pre className="term bg-background rounded-md border p-3">
-            ssh YOUR_USERNAME@{state?.server_ip || "SERVER_IP"} -p {port}
-          </pre>
-        </CardContent>
-      </Card>
+      <Section title="SSH">
+        {port !== "22" && (
+          <p className="text-warn text-small">
+            SSH listens on {port}, not 22. Port 22 is closed, including inside Portainer.
+          </p>
+        )}
+        <pre className="term bg-muted/40 rounded-lg px-3 py-2">
+          ssh YOUR_USERNAME@{state?.server_ip || "SERVER_IP"} -p {port}
+        </pre>
+      </Section>
 
       <PowerCard metrics={metrics} busy={powerBusy} onPower={onPower} />
 
-      {ports.length > 0 && (
-        <Card className="gap-0 py-0">
-          <CardHeader className="py-4">
-            <CardTitle className="text-body">Direct ports</CardTitle>
-            <p className="text-muted-foreground text-small">
-              Bypass Traefik. Useful before DNS is set up, or when a certificate is the problem.
-            </p>
-          </CardHeader>
-          <CardContent className="px-0 pb-2">
-            <div className="w-full overflow-x-auto">
-              <Table>
-              <TableBody>
-                {ports.map((p) => (
-                  <TableRow key={p.service + p.url}>
-                    <TableCell className="w-40 font-medium">{p.service}</TableCell>
-                    <TableCell>
-                      {p.url.startsWith("http") ? (
-                        <a
-                          href={p.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="font-mono text-small hover:underline"
-                        >
-                          {p.url}
-                        </a>
-                      ) : (
-                        <span className="font-mono text-small">{p.url}</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground text-small">{p.note}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-              </div>
-          </CardContent>
-        </Card>
-      )}
+      <Section title="Direct ports">
+        <p className="text-muted-foreground text-small">
+          These bypass Traefik, which is what makes them useful before DNS is set up or when a
+          certificate is the problem.
+        </p>
+        {ports.length === 0 ? (
+          <Empty>No service publishes a port of its own.</Empty>
+        ) : (
+          <Rows>
+            {ports.map((p) => (
+              <Row
+                key={p.service + p.url}
+                label={p.service}
+                value={
+                  p.url.startsWith("http") ? (
+                    <a
+                      href={p.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="hover:text-foreground hover:underline"
+                    >
+                      {p.url}
+                    </a>
+                  ) : (
+                    p.url
+                  )
+                }
+                hint={p.note}
+              />
+            ))}
+          </Rows>
+        )}
+      </Section>
 
-      <CommandPanel
-        title="Update every service"
-        description={
-          <>
-            Pulls new images for all installed services and recreates what changed. It reports
-            which images actually moved, because a tag that has stopped moving upstream is
-            otherwise invisible: one image here sat ten months behind while every update run
-            reported success. Run Doctor afterwards.
-          </>
-        }
-        action="update-all"
-        icon={DownloadIcon}
-        buttonLabel="Update all"
-        variant="outline"
-        confirm="Pull new images for every installed service and recreate the ones that changed?"
-        output={outputs["update-all"]}
-        running={running === "update-all"}
-        locked={locked}
-        onRun={onUpdateAll}
-      />
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-body">
-            <TerminalIcon className="size-4" />
-            Commands worth knowing
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-2 sm:grid-cols-2">
+      <Section title="On the command line">
+        <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2">
           {COMMANDS.map(([label, cmd]) => (
-            <div key={cmd} className="flex flex-col gap-1">
+            <div key={cmd} className="flex min-w-0 flex-col gap-0.5">
               <span className="text-muted-foreground text-small">{label}</span>
-              <code className="bg-background rounded-md border px-2 py-1 font-mono text-small">
-                {cmd}
-              </code>
+              <code className="text-foreground truncate font-mono text-small">{cmd}</code>
             </div>
           ))}
-        </CardContent>
-      </Card>
+        </div>
+      </Section>
     </div>
   )
 }

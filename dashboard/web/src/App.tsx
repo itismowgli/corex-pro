@@ -35,7 +35,7 @@ import { Sheet, SheetContent } from "@/components/ui/sheet"
 import { SidebarBody } from "@/components/app-sidebar"
 import { CommandPalette, usePaletteHotkey, type PaletteItem } from "@/components/command-palette"
 import { PageHeader } from "@/components/page-header"
-import { navHint, navItems, navLabel } from "@/lib/nav"
+import { navItems, navLabel } from "@/lib/nav"
 import {
   api,
   auth,
@@ -612,10 +612,7 @@ function Dashboard({
         </header>
 
         <main className="mx-auto flex w-full max-w-[90rem] flex-col gap-4 p-3 sm:p-5">
-          <PageHeader
-            title={navLabel(tab, me?.auth_enabled)}
-            description={navHint(tab, me?.auth_enabled)}
-          />
+          <PageHeader title={navLabel(tab, me?.auth_enabled)} />
 
           {/* Banners and the running job sit under the header, never above the
               navigation. On a phone the nav is the menu button in that header,
@@ -748,11 +745,7 @@ function Dashboard({
               state={state.data}
               ports={ports.data ?? []}
               metrics={overview.data?.metrics ?? null}
-              outputs={outputs}
-              running={runningAction}
-              locked={locked}
               powerBusy={powerBusy}
-              onUpdateAll={() => runBox("update-all")}
               onPower={runPower}
             />
           )}
