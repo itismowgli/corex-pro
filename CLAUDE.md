@@ -28,7 +28,7 @@ learning nginx, SSL, Docker networking, or Linux hardening.
 - Re-run on existing server = health-check + repair broken services only
 - No live server required for testing (Docker-in-Docker + bats)
 
-**Current version:** v3.51.0
+**Current version:** v3.52.0
 **Current service modules:** 21 (Traefik, AdGuard, Portainer, Nextcloud,
 Immich, Vaultwarden, Stalwart Mail, Coolify, n8n, Cal.com, Time Machine,
 Uptime Kuma + Grafana + Prometheus (monitoring), Ollama + OpenWebUI +
@@ -3189,6 +3189,40 @@ it already touched. 255 usages across 32 files were remapped in one pass with
 
 **The check cannot see taste, only vocabulary size.** That is most of what a
 design system is, and it is the part that decays.
+
+### 81. Uniform cards are not a layout, they are the absence of one
+
+The dashboard was 38 `Card` wrappers across ten screens. Every screen was a
+grid of boxes with the same radius and the same border whether the content was
+a list of facts or a thing you act on, so the chrome told a reader nothing and
+the hierarchy had to be rebuilt by reading every title. It also encouraged a
+specific kind of mess: a box called "Disks and packages" holding SMART results
+and the dpkg state, two unrelated subjects sharing a heading because a grid of
+equal boxes always has somewhere to put the leftovers.
+
+`components/ui/section.tsx` holds three patterns, and choosing between them is
+the whole design decision:
+
+| Pattern | Use |
+|---|---|
+| `Section` | a heading and its content, no chrome. The default |
+| `Rows` / `Row` | hairline separated facts: ports, host details, checks |
+| `Card` | an object with its own actions, where the box is around one thing |
+| `Empty` | nothing here, and the action that changes that |
+
+System, Health and Network are converted; Overview, Storage and Maintenance
+are not. Services, Updates, Catalogue and Account keep cards legitimately,
+because their items are objects you act on individually.
+
+**The tells to avoid are specific and were all present.** An all-caps tracked
+label above a block (five of them), a description paragraph under every page
+title, meta strings joined with middle dots, and an arrow appended to text.
+`design-check.mjs` fails on the first of those; the rest are judgement.
+
+**A converted screen needs a content assertion or the conversion is unverified.**
+`render-check.mjs` asserts one substring per tab that only a panel reading its
+fixture can produce. Health and Network had none, so rewriting them would have
+been checked only as "it still mounts", which is gotcha #37 exactly.
 
 ## What NOT to Do
 
