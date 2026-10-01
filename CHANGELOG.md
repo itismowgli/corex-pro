@@ -6,6 +6,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.51.1] - 2026-10-01
+
+### Fixed
+- **The holds added in v3.50.0 did nothing.** The update checker looked for
+  service modules under `/opt/corex-pro`, from an environment variable nothing
+  sets. The repository here is under `/home`, so every lookup missed and
+  `service_holds` returned an empty list, which a checker cannot tell apart
+  from a module that holds nothing. Both deliberately held versions were
+  advertised as available again by the release meant to stop exactly that. It
+  reads the agent's own config now, which is where the answer already was.
+
+- **A held version was reported or hidden depending on the rest of its
+  stack.** "held" ranked equal to "current", so for a stack containing one
+  held image the worst-news pick returned whichever row it reached first.
+  Keeper has one image and reported held; Nextcloud has four and reported
+  current, hiding the whiteboard hold entirely. It now sits above current and
+  below unknown, so a hold is always reported and never outranks something
+  actionable.
+
 ## [v3.51.0] - 2026-10-01
 
 ### Fixed
