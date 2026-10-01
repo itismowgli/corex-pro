@@ -1,18 +1,18 @@
-import * as React from "react"
 import {
   AlertTriangleIcon,
   ArchiveIcon,
   Trash2Icon,
-  CalendarClockIcon,
   HardDriveDownloadIcon,
   LoaderCircleIcon,
   PackageIcon,
   PlayIcon,
+  SearchIcon,
 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Empty, Row, Rows } from "@/components/ui/section"
 import { Ansi } from "@/lib/ansi"
 import type { Maintenance, MaintenanceTask, MaintenanceTaskName } from "@/lib/api"
 import { duration } from "@/lib/format"
@@ -26,12 +26,17 @@ import { duration } from "@/lib/format"
  * every row here reads the runner's own history, a task that has never run
  * says so, and a missing prerequisite is recorded as a failure rather than
  * skipped.
+ *
+ * A task keeps its card, because each one is an object with its own action and
+ * its own history, which is exactly what a card is for. The facts inside it
+ * are rows.
  */
 
 const ICON: Record<MaintenanceTaskName, typeof PlayIcon> = {
   backup: ArchiveIcon,
   cleanup: Trash2Icon,
   timemachine: HardDriveDownloadIcon,
+  updates: SearchIcon,
   "os-upgrade": PackageIcon,
 }
 
@@ -75,6 +80,16 @@ function every(hours: number): string {
   return `every ${hours}h`
 }
 
+/**
+ * The schedule in one phrase. "*" is any hour, so there is no time of day to
+ * name and saying "around 0:00" would be an invented one.
+ */
+function schedule(t: MaintenanceTask): string {
+  if (!t.enabled) return "off"
+  const at = typeof t.hour === "number" ? `, around ${t.hour}:00` : ", whenever it falls due"
+  return `${every(t.interval_h)}${at}`
+}
+
 export function MaintenanceTab({
   data,
   outputs,
@@ -89,67 +104,50 @@ export function MaintenanceTab({
   onRun: (task: MaintenanceTaskName) => void
 }) {
   if (!data) {
-    return (
-      <Card>
-        <CardContent className="text-muted-foreground text-body">
-          Waiting for the agent to report the schedule.
-        </CardContent>
-      </Card>
-    )
+    return <Empty>Waiting for the agent to report the schedule.</Empty>
   }
 
   if (!data.installed) {
     return (
-      <Card className="border-warn/50">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-body">
-            <CalendarClockIcon className="size-4" />
-            Nothing is scheduled
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-2 text-body">
-          <p>
-            Backups, Docker cleanup and the Time Machine check are not running on a schedule on this
-            box. Install the hourly timer over SSH:
-          </p>
-          <pre className="term bg-background rounded-md border p-3">
-            sudo corex manage maintenance setup
-          </pre>
-        </CardContent>
-      </Card>
+      <div className="border-warn/50 flex flex-col gap-2 rounded-lg border px-3 py-3">
+        <p className="font-medium">Nothing is scheduled</p>
+        <p className="text-muted-foreground text-small">
+          Backups, Docker cleanup and the update check are not running on a schedule on this box.
+          Install the hourly timer over SSH:
+        </p>
+        <pre className="term bg-muted/40 rounded-lg px-3 py-2">
+          sudo corex manage maintenance setup
+        </pre>
+      </div>
     )
   }
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-4">
       {!data.timer_active && (
-        <Card className="border-destructive/50">
-          <CardContent className="flex items-start gap-2 text-body">
-            <AlertTriangleIcon className="text-destructive mt-0.5 size-4 shrink-0" />
-            <div>
-              <p className="font-medium">The timer is installed but not running, so nothing is due.</p>
-              <p className="text-muted-foreground mt-1 text-small">
-                Start it with{" "}
-                <code className="text-foreground">
-                  sudo systemctl enable --now corex-maintenance.timer
-                </code>
-                .
-              </p>
-            </div>
-          </CardContent>
-        </Card>
+        <div className="border-destructive/50 flex items-start gap-2 rounded-lg border px-3 py-2">
+          <AlertTriangleIcon className="text-destructive mt-0.5 size-4 shrink-0" />
+          <div>
+            <p className="font-medium">The timer is installed but not running, so nothing is due.</p>
+            <p className="text-muted-foreground text-small">
+              Start it with{" "}
+              <code className="text-foreground">
+                sudo systemctl enable --now corex-maintenance.timer
+              </code>
+              .
+            </p>
+          </div>
+        </div>
       )}
 
       {!data.enabled && (
-        <Card className="border-warn/50">
-          <CardContent className="text-body">
-            <p className="font-medium">Maintenance is switched off in the config.</p>
-            <p className="text-muted-foreground mt-1 text-small">
-              MAINTENANCE_ENABLED=false in /etc/corex/maintenance.conf. The timer still fires and
-              does nothing. Buttons here still work.
-            </p>
-          </CardContent>
-        </Card>
+        <div className="border-warn/50 flex flex-col gap-1 rounded-lg border px-3 py-2">
+          <p className="font-medium">Maintenance is switched off in the config.</p>
+          <p className="text-muted-foreground text-small">
+            MAINTENANCE_ENABLED=false in /etc/corex/maintenance.conf. The timer still fires and
+            does nothing. Buttons here still work.
+          </p>
+        </div>
       )}
 
       {data.tasks.map((t) => {
@@ -160,39 +158,31 @@ export function MaintenanceTab({
         return (
           <Card key={t.name}>
             <CardHeader>
-              <CardTitle className="flex flex-wrap items-center gap-2 text-body">
+              <CardTitle className="flex flex-wrap items-center gap-2">
                 <Icon className="size-4 shrink-0" />
                 {t.label}
                 <Badge variant={o.tone}>{o.text}</Badge>
                 {!t.enabled && <Badge variant="outline">not scheduled</Badge>}
+                <Button
+                  size="xs"
+                  variant="secondary"
+                  className="ml-auto"
+                  disabled={locked || busy}
+                  onClick={() => onRun(t.name)}
+                >
+                  {busy ? <LoaderCircleIcon className="animate-spin" /> : <PlayIcon />}
+                  {busy ? "Running" : "Run now"}
+                </Button>
               </CardTitle>
               <p className="text-muted-foreground text-small">{t.description}</p>
             </CardHeader>
-            <CardContent className="flex flex-col gap-3">
-              <div className="grid gap-1 text-body sm:grid-cols-2">
-                <div className="flex items-baseline justify-between gap-3">
-                  <span className="text-muted-foreground text-small">Schedule</span>
-                  <span className="text-small">
-                    {t.enabled ? `${every(t.interval_h)}, around ${t.hour}:00` : "off"}
-                  </span>
-                </div>
-                <div className="flex items-baseline justify-between gap-3">
-                  <span className="text-muted-foreground text-small">Last run</span>
-                  <span className="text-small">{when(t.last)}</span>
-                </div>
-                {t.last > 0 && (
-                  <div className="flex items-baseline justify-between gap-3">
-                    <span className="text-muted-foreground text-small">Took</span>
-                    <span className="text-small">{duration(t.elapsed)}</span>
-                  </div>
-                )}
-                {t.enabled && t.next > 0 && (
-                  <div className="flex items-baseline justify-between gap-3">
-                    <span className="text-muted-foreground text-small">Due next</span>
-                    <span className="text-small">{when(t.next)}</span>
-                  </div>
-                )}
-              </div>
+            <CardContent className="flex flex-col gap-2">
+              <Rows>
+                <Row label="Schedule" value={schedule(t)} />
+                <Row label="Last run" value={when(t.last)} />
+                {t.last > 0 && <Row label="Took" value={duration(t.elapsed)} />}
+                {t.enabled && t.next > 0 && <Row label="Due next" value={when(t.next)} />}
+              </Rows>
 
               {t.detail && (
                 <p
@@ -208,23 +198,16 @@ export function MaintenanceTab({
 
               {/* A refusal to start is its own thing, shown only when it is
                   the most recent event. It does not reset the clock, so the
-                  row above still describes the last time this really ran. */}
+                  rows above still describe the last time this really ran. */}
               {t.deferred_at > t.last && (
                 <p className="text-warn text-small break-words">
                   Held back {when(t.deferred_at)}: {t.deferred_detail || "the machine was too hot"}
                 </p>
               )}
 
-              <div>
-                <Button size="sm" variant="secondary" disabled={locked || busy} onClick={() => onRun(t.name)}>
-                  {busy ? <LoaderCircleIcon className="animate-spin" /> : <PlayIcon />}
-                  {busy ? "Running" : "Run now"}
-                </Button>
-              </div>
-
               {out && (
                 <div className="w-full overflow-x-auto">
-                  <pre className="term bg-background rounded-md border p-3">
+                  <pre className="term bg-muted/40 rounded-lg px-3 py-2">
                     <Ansi text={out} />
                   </pre>
                 </div>

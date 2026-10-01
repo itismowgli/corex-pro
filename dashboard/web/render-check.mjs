@@ -210,6 +210,10 @@ const METRICS = {
     tasks: [
       { name: "backup", label: "Backup", description: "Restic snapshot.", enabled: true, interval_h: 24, hour: 3, last: 1788400000, next: 1788486400, state: "ok", elapsed: 412, detail: "latest snapshot 2026-09-04T03:07:11+05:30", deferred_at: 0, deferred_detail: "" },
       { name: "cleanup", label: "Docker cleanup", description: "Prune unused images.", enabled: true, interval_h: 168, hour: 4, last: 1788300000, next: 1788904800, state: "failed", elapsed: 9, detail: "cannot find corex-manage.sh", deferred_at: 0, deferred_detail: "" },
+      // hour "*" means any hour. int("*") used to fall back to 0 and the page
+      // announced "around 0:00", an invented time of day for a task that has
+      // none.
+      { name: "updates", label: "Check for updates", description: "Ask the registries what is newer.", enabled: true, interval_h: 6, hour: "*", last: 1788410000, next: 1788431600, state: "ok", elapsed: 12, detail: "18 checked", deferred_at: 0, deferred_detail: "" },
       // Ran a week ago and was declined this morning: the row has to show
       // both, and the deferral must not read as the last run.
       { name: "timemachine", label: "Time Machine check", description: "Share and restart count.", enabled: true, interval_h: 168, hour: 5, last: 1788350000, next: 1788954800, state: "ok", elapsed: 3, detail: "running=true restarts=0", deferred_at: 1788420000, deferred_detail: "deferred, CPU at 91C" },
@@ -306,6 +310,8 @@ function mount(url, me, withData = true, width = 1280) {
 const EXPECT = {
   system: "enp2s0",
   maintenance: "Never run",
+  // The any-hour schedule, which must not render as a clock time.
+  maintenanceAnyHour: "whenever it falls due",
   // Three things at once, because the Storage panel now answers three
   // different questions and each has been silently blank at some point:
   // the divergence between what Docker calls unused and what cleanup will

@@ -482,7 +482,8 @@ export type MaintenanceTask = {
   description: string
   enabled: boolean
   interval_h: number
-  hour: number
+  /** A clock hour, or "*" for a task that runs whenever its interval elapses. */
+  hour: number | string
   // Unix seconds, 0 when it has never run. The page has to say "never" rather
   // than draw a tick for something that has not happened.
   last: number
@@ -497,7 +498,17 @@ export type MaintenanceTask = {
   deferred_detail: string
 }
 
-export type MaintenanceTaskName = "backup" | "cleanup" | "timemachine" | "os-upgrade"
+/**
+ * The names the runner knows. The agent discovers these from the config it
+ * writes rather than from a list, so a task added to the runner appears here
+ * on its own; this union is what the page can give an icon and a verb to.
+ */
+export type MaintenanceTaskName =
+  | "backup"
+  | "cleanup"
+  | "timemachine"
+  | "updates"
+  | "os-upgrade"
 
 export type Maintenance = {
   installed: boolean

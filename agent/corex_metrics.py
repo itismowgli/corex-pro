@@ -690,9 +690,13 @@ def dpkg_clean():
 MAINT_STATE = "/var/lib/corex/maintenance.json"
 MAINT_CONF = "/etc/corex/maintenance.conf"
 
-# task -> how it reads on the page. The runner knows the same four names, so a
-# task added there without a row here appears with its own name rather than
-# disappearing.
+# task -> how it reads on the page.
+#
+# This is only the wording. The task names themselves are discovered from the
+# config the runner writes, because this list used to be the enumeration and
+# the comment above it claimed the opposite: a task added to the runner simply
+# did not appear. `updates` ran on a schedule for a whole release while this
+# page showed four tasks and no sign of a fifth.
 MAINT_TASKS = [
     ("backup", "Backup",
      "A Restic snapshot of every service's data and compose file, then prune "
@@ -703,6 +707,9 @@ MAINT_TASKS = [
     ("timemachine", "Time Machine check",
      "Confirms the share is being written to and the container is not "
      "restart-looping, which no HTTP check can see."),
+    ("updates", "Check for updates",
+     "Asks the registries what is newer, so the Updates page already knows "
+     "when you open it rather than finding out a second later."),
     ("os-upgrade", "OS packages",
      "A supervised apt upgrade, including the kernel packages "
      "unattended-upgrades is told to leave alone. Off unless turned on."),
@@ -740,18 +747,37 @@ def maintenance():
     installed = os.path.exists("/usr/local/bin/corex-maintenance.sh")
     enabled = conf.get("MAINTENANCE_ENABLED", "true") != "false"
 
+    # Every task the runner knows, in the order this file words them, with
+    # anything it does not know appended under its own name.
+    worded = [t[0] for t in MAINT_TASKS]
+    found = set()
+    for k in conf:
+        m = re.match(r"^MAINTENANCE_([A-Z0-9_]+)_INTERVAL_H$", k)
+        if m:
+            found.add(m.group(1).lower().replace("_", "-"))
+    order = worded + sorted(found - set(worded))
+    wording = {t[0]: (t[1], t[2]) for t in MAINT_TASKS}
+
     tasks = []
-    for name, label, desc in MAINT_TASKS:
+    for name in order:
+        if name not in found and name not in wording:
+            continue
+        label, desc = wording.get(name, (name, ""))
         key = name.upper().replace("-", "_")
         row = history.get(name) or {}
         try:
             interval = int(conf.get("MAINTENANCE_%s_INTERVAL_H" % key, 0) or 0)
         except ValueError:
             interval = 0
+        # "*" means any hour: a task cheap enough to run whenever its
+        # interval has elapsed does not want a time of day. Kept as written
+        # rather than coerced, because int("*") fails and the fallback of 0
+        # would have the page announce "around 0:00".
+        raw_hour = conf.get("MAINTENANCE_%s_HOUR" % key, "0") or "0"
         try:
-            hour = int(conf.get("MAINTENANCE_%s_HOUR" % key, 0) or 0)
+            hour = int(raw_hour)
         except ValueError:
-            hour = 0
+            hour = raw_hour.strip()
         last = int(row.get("last", 0) or 0)
         tasks.append({
             "name": name,

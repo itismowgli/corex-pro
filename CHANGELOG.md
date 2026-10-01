@@ -6,6 +6,43 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.53.0] - 2026-10-01
+
+### Fixed
+- **A scheduled task could run for a release without ever appearing.**
+  The agent enumerated a hardcoded list of four maintenance tasks while the
+  comment directly above it claimed a task added to the runner "appears with
+  its own name rather than disappearing". It did not: the loop iterated the
+  list. `updates`, added in v3.51.0, ran on schedule the whole time and the
+  page showed four tasks with no sign of a fifth.
+
+  Task names now come from the config the runner writes, so a task added
+  there appears on its own and the list here is only the wording. A test
+  checks both directions, including that wording exists for no task the runner
+  does not define.
+
+- **An any-hour schedule announced a time of day it does not have.**
+  `int("*")` fails, the fallback was 0, and the page would have said "around
+  0:00" for a task that runs whenever its interval elapses. The hour is kept
+  as written and the schedule reads "whenever it falls due".
+
+### Changed
+- **Overview, Storage and Maintenance follow the screen patterns.**
+  Overview keeps its alarm banner and four live tiles as the one loud thing on
+  the page and drops "Recent findings", which repeated the watchdog log that
+  Health already carries in full; the banner above it already surfaces
+  anything urgent, so the copy was a second, shorter, staler version of a list
+  that lives elsewhere.
+
+  Storage loses "What CoreX writes to", which drew a meter per filesystem
+  directly below the tiles that already carry both of them, with Overview
+  drawing a third copy. Three renderings of two numbers is not three views.
+  Its Docker table stays a table, because four columns compared down the page
+  is what a table is for.
+
+  Maintenance keeps a card per task, since each one is an object with its own
+  action and its own history, and the facts inside became rows.
+
 ## [v3.52.1] - 2026-10-01
 
 ### Fixed

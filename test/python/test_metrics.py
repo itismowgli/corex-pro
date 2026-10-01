@@ -73,3 +73,53 @@ class MetricsTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class MaintenanceDiscoveryTest(unittest.TestCase):
+    """A task added to the runner has to appear on the page.
+
+    The agent used to enumerate a hardcoded list while a comment above it
+    claimed the opposite, so `updates` ran on a schedule for a whole release
+    and the page showed four tasks with no sign of a fifth. The names now come
+    from the config the runner writes.
+    """
+
+    def _conf(self, names):
+        conf = {"MAINTENANCE_ENABLED": "true"}
+        for n in names:
+            key = n.upper().replace("-", "_")
+            conf["MAINTENANCE_%s_ENABLED" % key] = "true"
+            conf["MAINTENANCE_%s_INTERVAL_H" % key] = "24"
+            conf["MAINTENANCE_%s_HOUR" % key] = "3"
+        return conf
+
+    def test_names_come_from_the_config_not_a_list(self):
+        import re
+        conf = self._conf(["backup", "updates", "os-upgrade", "brand-new"])
+        found = set()
+        for k in conf:
+            m = re.match(r"^MAINTENANCE_([A-Z0-9_]+)_INTERVAL_H$", k)
+            if m:
+                found.add(m.group(1).lower().replace("_", "-"))
+        # Including one the agent has no wording for at all.
+        self.assertIn("brand-new", found)
+        self.assertIn("updates", found)
+        # The underscore-to-hyphen mapping has to survive the round trip, or
+        # os-upgrade comes back as os_upgrade and matches no history row.
+        self.assertIn("os-upgrade", found)
+
+    def test_every_worded_task_is_one_the_runner_defines(self):
+        import re
+        # The other direction: wording for a task the runner does not have is
+        # a row that can never appear, which is how a list goes stale unseen.
+        import pathlib
+        runner = (pathlib.Path(__file__).resolve().parents[2]
+                  / "lib" / "maintenance.sh").read_text()
+        import corex_metrics as cm
+        # Only the task names out of the runner's array, so a failure names
+        # the task rather than printing the whole file back at the reader.
+        defined = set(re.findall(r'^\s*"([a-z0-9-]+)\|', runner, re.M))
+        worded = {t[0] for t in cm.MAINT_TASKS}
+        self.assertEqual(
+            worded - defined, set(),
+            "worded in the agent but not defined in the runner")
