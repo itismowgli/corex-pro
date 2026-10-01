@@ -73,9 +73,9 @@ export function OverviewTab({
   if (error && !data) {
     return (
       <Card className="border-destructive/50">
-        <CardContent className="text-sm">
+        <CardContent className="text-body">
           <p className="font-medium">Could not read the box.</p>
-          <p className="text-muted-foreground mt-1 font-mono text-xs">{error}</p>
+          <p className="text-muted-foreground mt-1 font-mono text-small">{error}</p>
         </CardContent>
       </Card>
     )
@@ -145,7 +145,7 @@ export function OverviewTab({
     <div className="flex flex-col gap-3">
       {alarms.length > 0 && (
         <Card className="border-destructive/50">
-          <CardContent className="flex items-start gap-2 text-sm">
+          <CardContent className="flex items-start gap-2 text-body">
             <AlertTriangleIcon className="text-destructive mt-0.5 size-4 shrink-0" />
             <ul className="grid gap-0.5">
               {alarms.map((a) => (
@@ -156,7 +156,7 @@ export function OverviewTab({
         </Card>
       )}
 
-      <div className="text-muted-foreground flex items-center gap-1.5 text-xs">
+      <div className="text-muted-foreground flex items-center gap-1.5 text-small">
         <RadioIcon className={`size-3 ${live ? "text-ok" : "text-muted-foreground"}`} />
         {!pageVisible ? "Paused while this page is hidden" : live ? "Host vitals live · containers every 30 seconds" : "Connecting to the live feed"}
         <div className="ml-auto flex items-center gap-1">
@@ -167,7 +167,7 @@ export function OverviewTab({
               type="button"
               onClick={() => setRange(k)}
               aria-pressed={range === k}
-              className={`focus-visible:ring-ring/50 rounded-md px-2 py-1 text-xs transition-colors focus-visible:ring-[3px] focus-visible:outline-none ${
+              className={`focus-visible:ring-ring/50 rounded-md px-2 py-1 text-small transition-colors duration-(--dur-fast) ease-(--ease) focus-visible:ring-[3px] focus-visible:outline-none ${
                 range === k
                   ? "bg-accent text-accent-foreground font-medium"
                   : "hover:text-foreground"
@@ -209,7 +209,7 @@ export function OverviewTab({
             loadRest.map((v) => v.toFixed(2)).join(" and ") || "-"
           }`}
         >
-          <Spark values={loads} color="oklch(0.62 0.14 250)" label={`Load average, last ${RANGE_LABEL[range]}`} />
+          <Spark values={loads} color="var(--chart-load)" label={`Load average, last ${RANGE_LABEL[range]}`} />
         </StatTile>
 
         <StatTile
@@ -223,7 +223,7 @@ export function OverviewTab({
             swapUsed > 64 ? `, swapping ${swapUsed} MB` : ""
           }`}
         >
-          <Spark values={mems} color="oklch(0.65 0.18 320)" label={`Memory used, last ${RANGE_LABEL[range]}`} />
+          <Spark values={mems} color="var(--chart-mem)" label={`Memory used, last ${RANGE_LABEL[range]}`} />
         </StatTile>
 
         <StatTile
@@ -254,7 +254,7 @@ export function OverviewTab({
       <div className="grid gap-3 lg:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
+            <CardTitle className="flex flex-wrap items-center gap-2 text-body">
               <HardDriveIcon className="size-4" />
               Disks
               <Button
@@ -282,7 +282,7 @@ export function OverviewTab({
               />
             ))}
             {reclaimable > 0 && (
-              <div className="mt-1 flex items-center gap-2 border-t pt-3 text-xs">
+              <div className="mt-1 flex items-center gap-2 border-t pt-3 text-small">
                 <TrashIcon className="text-muted-foreground size-3.5 shrink-0" />
                 <span>
                   <span className="font-mono">{bytes(reclaimable)}</span> is purgeable: unused
@@ -296,7 +296,7 @@ export function OverviewTab({
 
         <Card>
           <CardHeader>
-            <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
+            <CardTitle className="flex flex-wrap items-center gap-2 text-body">
               Heaviest containers
               <Button
                 size="xs"
@@ -310,13 +310,13 @@ export function OverviewTab({
           </CardHeader>
           <CardContent className="grid gap-2">
             {top.length === 0 && (
-              <p className="text-muted-foreground text-xs">
+              <p className="text-muted-foreground text-small">
                 No container is reporting usage. Docker may still be starting.
               </p>
             )}
             {top.map((c) => (
               <div key={c.name} className="grid gap-1">
-                <div className="flex items-baseline justify-between gap-2 text-xs">
+                <div className="flex items-baseline justify-between gap-2 text-small">
                   <span className="truncate font-medium">{c.name}</span>
                   <span className="text-muted-foreground shrink-0 font-mono">
                     {c.cpu_percent.toFixed(1)}% CPU · {bytes(c.mem_bytes)}
@@ -336,16 +336,16 @@ export function OverviewTab({
       <div className="grid gap-3 lg:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-sm">
+            <CardTitle className="flex items-center gap-2 text-body">
               Uptime checks
-              <span className="text-muted-foreground text-xs font-normal">
+              <span className="text-muted-foreground text-small font-normal">
                 from Uptime Kuma
               </span>
             </CardTitle>
           </CardHeader>
           <CardContent className="grid gap-1">
             {(m?.monitors ?? []).length === 0 && (
-              <p className="text-muted-foreground text-xs">
+              <p className="text-muted-foreground text-small">
                 No monitors yet. Create them with{" "}
                 <code className="text-foreground">sudo corex manage kuma-seed</code>.
               </p>
@@ -353,7 +353,7 @@ export function OverviewTab({
             {(m?.monitors ?? []).map((mon) => (
               <div
                 key={mon.name}
-                className="flex items-center justify-between gap-2 border-b py-1 text-xs last:border-0"
+                className="flex items-center justify-between gap-2 border-b py-1 text-small last:border-0"
               >
                 <span className="truncate">{mon.name}</span>
                 <span className="flex shrink-0 items-center gap-2">
@@ -381,16 +381,16 @@ export function OverviewTab({
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm">Recent findings</CardTitle>
+            <CardTitle className="text-body">Recent findings</CardTitle>
           </CardHeader>
           <CardContent className="grid gap-1.5">
             {(m?.watchdog ?? []).length === 0 && (
-              <p className="text-muted-foreground text-xs">
+              <p className="text-muted-foreground text-small">
                 The resource watchdog has logged nothing. That is the good case.
               </p>
             )}
             {(m?.watchdog ?? []).slice(0, 10).map((f, i) => (
-              <div key={`${f.t}-${i}`} className="grid gap-0.5 border-b pb-1.5 text-xs last:border-0">
+              <div key={`${f.t}-${i}`} className="grid gap-0.5 border-b pb-1.5 text-small last:border-0">
                 <div className="flex items-center gap-2">
                   <Badge variant={f.level === "down" ? "destructive" : f.level === "up" ? "ok" : "secondary"}>
                     {f.level}

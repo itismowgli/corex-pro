@@ -113,7 +113,7 @@ export function CommandPalette({
         <DialogPrimitive.Overlay className="data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50 bg-black/60" />
         <DialogPrimitive.Content
           onKeyDown={onKeyDown}
-          className="bg-card data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed top-[12vh] left-1/2 z-50 flex w-full max-w-[calc(100vw-2rem)] -translate-x-1/2 flex-col overflow-hidden rounded-xl border shadow-lg sm:max-w-xl"
+          className="bg-card data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed top-[12vh] left-1/2 z-50 flex w-full max-w-[calc(100vw-2rem)] -translate-x-1/2 flex-col overflow-hidden rounded-lg border shadow-lg sm:max-w-xl"
         >
           <DialogPrimitive.Title className="sr-only">Command palette</DialogPrimitive.Title>
           <DialogPrimitive.Description className="sr-only">
@@ -128,16 +128,16 @@ export function CommandPalette({
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search sections and services"
               aria-label="Search sections and services"
-              className="placeholder:text-muted-foreground h-11 w-full bg-transparent text-sm outline-none"
+              className="placeholder:text-muted-foreground h-11 w-full bg-transparent text-body outline-none"
             />
-            <kbd className="bg-muted text-muted-foreground hidden rounded px-1.5 py-0.5 font-mono text-[10px] sm:block">
+            <kbd className="bg-muted text-muted-foreground hidden rounded px-1.5 py-0.5 font-mono text-micro sm:block">
               esc
             </kbd>
           </div>
 
           <div ref={listRef} className="max-h-[55vh] overflow-y-auto p-1.5">
             {shown.length === 0 && (
-              <p className="text-muted-foreground px-2.5 py-6 text-center text-sm">
+              <p className="text-muted-foreground px-2.5 py-6 text-center text-body">
                 Nothing matches that.
               </p>
             )}
@@ -148,7 +148,7 @@ export function CommandPalette({
               return (
                 <React.Fragment key={item.id}>
                   {heading && (
-                    <p className="text-muted-foreground px-2.5 pt-3 pb-1 text-[11px] font-medium tracking-wide uppercase first:pt-1">
+                    <p className="text-muted-foreground px-2.5 pt-3 pb-1 text-micro font-medium tracking-wide uppercase first:pt-1">
                       {heading}
                     </p>
                   )}
@@ -158,14 +158,14 @@ export function CommandPalette({
                     onMouseMove={() => setActive(i)}
                     onClick={() => choose(item)}
                     className={cn(
-                      "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm",
+                      "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-body",
                       i === active ? "bg-accent text-accent-foreground" : "text-foreground"
                     )}
                   >
                     {Icon && <Icon className="text-muted-foreground size-4 shrink-0" />}
                     <span className="truncate">{item.label}</span>
                     {item.hint && (
-                      <span className="text-muted-foreground ml-auto hidden truncate pl-3 text-xs sm:block">
+                      <span className="text-muted-foreground ml-auto hidden truncate pl-3 text-small sm:block">
                         {item.hint}
                       </span>
                     )}

@@ -565,6 +565,8 @@ export const api = {
   containers: () => req<ContainerRow[]>("/api/containers"),
   run: (action: RunAction) => req<Job>(`/api/run/${action}`, { method: "POST" }),
   updateAll: () => req<Job>("/api/update-all", { method: "POST" }),
+  /** Ask the registries now. Returns immediately; the answer lands on a later poll. */
+  checkUpdates: () => req<Updates>("/api/updates/check", { method: "POST" }),
   act: (service: string, action: ServiceAction) =>
     req<Job>(`/api/service/${encodeURIComponent(service)}/${action}`, { method: "POST" }),
   job: (id: string) => req<Job>(`/api/job/${encodeURIComponent(id)}`),

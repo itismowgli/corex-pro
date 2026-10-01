@@ -55,9 +55,9 @@ function Rows({ rows, mode }: { rows: ContainerRow[]; mode: Consumer }) {
         <div key={c.name} className="grid gap-1">
           <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5">
             <span className="flex min-w-0 items-center gap-1.5">
-              <span className="truncate text-sm">{c.name}</span>
+              <span className="truncate text-body">{c.name}</span>
               {c.service && c.service !== c.name && (
-                <span className="text-muted-foreground shrink-0 text-xs">{c.service}</span>
+                <span className="text-muted-foreground shrink-0 text-small">{c.service}</span>
               )}
               {c.status !== "running" && (
                 <Badge variant="secondary" className="shrink-0">
@@ -75,7 +75,7 @@ function Rows({ rows, mode }: { rows: ContainerRow[]; mode: Consumer }) {
                 </Badge>
               )}
             </span>
-            <span className="text-muted-foreground shrink-0 font-mono text-xs">
+            <span className="text-muted-foreground shrink-0 font-mono text-small">
               {mode === "memory"
                 ? `${bytes(c.mem_bytes)}${c.mem_limit ? ` of ${bytes(c.mem_limit)}` : ""}`
                 : pct(c.cpu_percent, 1)}
@@ -95,7 +95,7 @@ function Rows({ rows, mode }: { rows: ContainerRow[]; mode: Consumer }) {
         </div>
       ))}
       {sorted.length === 0 && (
-        <p className="text-muted-foreground text-xs">Nothing is reporting usage.</p>
+        <p className="text-muted-foreground text-small">Nothing is reporting usage.</p>
       )}
     </div>
   )
@@ -124,14 +124,14 @@ function DiskRows({ metrics }: { metrics: Metrics | null }) {
         />
       ))}
       {reclaimable > 0 && (
-        <p className="text-warn text-xs">
+        <p className="text-warn text-small">
           {bytes(reclaimable)} of that is unused images and build cache, and the Storage tab
           can reclaim it without touching service data.
         </p>
       )}
       <div className="border-t pt-3">
         {sizes.length === 0 ? (
-          <p className="text-muted-foreground text-xs">
+          <p className="text-muted-foreground text-small">
             Still measuring. Walking a photo library takes a while, so it runs in the
             background and refreshes every fifteen minutes.
           </p>
@@ -194,14 +194,14 @@ export function ConsumersDialog({
     <Dialog open={!!mode} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-w-[calc(100vw-1.5rem)] sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-base">
+          <DialogTitle className="flex items-center gap-2 text-title">
             <ArrowDownIcon className="size-4" />
             {mode ? TITLE[mode] : ""}
           </DialogTitle>
         </DialogHeader>
-        <p className="text-muted-foreground text-xs">{mode ? NOTE[mode] : ""}</p>
+        <p className="text-muted-foreground text-small">{mode ? NOTE[mode] : ""}</p>
         {error && (
-          <p className="text-destructive text-xs" role="alert">
+          <p className="text-destructive text-small" role="alert">
             {error}
           </p>
         )}

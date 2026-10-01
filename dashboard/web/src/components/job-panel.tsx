@@ -108,10 +108,10 @@ export function JobPanel({
           ) : (
             <CheckCircle2Icon className="text-ok size-4 shrink-0" />
           )}
-          <span className="min-w-0 text-sm font-medium">{job.label || "Working"}</span>
+          <span className="min-w-0 text-body font-medium">{job.label || "Working"}</span>
           <span
             className={cn(
-              "text-muted-foreground min-w-0 flex-1 truncate text-xs",
+              "text-muted-foreground min-w-0 flex-1 truncate text-small",
               failed && "text-destructive"
             )}
             title={outcome}
@@ -121,7 +121,7 @@ export function JobPanel({
           <span className="ml-auto flex shrink-0 gap-1">
             {output.trim() && (
               <Button size="xs" variant="ghost" onClick={() => setOpen((v) => !v)}>
-                <ChevronDownIcon className={cn("transition-transform", open && "rotate-180")} />
+                <ChevronDownIcon className={cn("transition-transform duration-(--dur-fast) ease-(--ease)", open && "rotate-180")} />
                 {open ? "Hide" : hasHome ? "Output" : "Details"}
               </Button>
             )}

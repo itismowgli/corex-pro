@@ -25,11 +25,11 @@ export function NetworkTab({
     <div className="flex flex-col gap-3">
       <Card className="gap-0 py-0">
         <CardHeader className="py-4">
-          <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
+          <CardTitle className="flex flex-wrap items-center gap-2 text-body">
             <GlobeIcon className="size-4" />
             Where each service answers
             {state?.domain && (
-              <span className="text-muted-foreground ml-auto font-mono text-xs">
+              <span className="text-muted-foreground ml-auto font-mono text-small">
                 *.{state.domain} to {state.server_ip}
               </span>
             )}
@@ -57,13 +57,13 @@ export function NetworkTab({
                           href={u}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="block font-mono text-xs hover:underline"
+                          className="block font-mono text-small hover:underline"
                         >
                           {u}
                         </a>
                       ))
                     ) : (
-                      <span className="text-muted-foreground font-mono text-xs">
+                      <span className="text-muted-foreground font-mono text-small">
                         not reachable over the web
                       </span>
                     )}
@@ -118,12 +118,12 @@ export function NetworkTab({
 
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-sm">
+          <CardTitle className="flex items-center gap-2 text-body">
             <InfoIcon className="size-4" />
             LAN fast path
           </CardTitle>
         </CardHeader>
-        <CardContent className="text-muted-foreground space-y-2 text-xs leading-relaxed">
+        <CardContent className="text-muted-foreground space-y-2 text-small leading-relaxed">
           <p>
             Only the addresses above exist. A hostname works because a Traefik rule declares it, so
             anything else resolves to nothing.

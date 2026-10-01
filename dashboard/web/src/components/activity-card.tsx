@@ -121,7 +121,7 @@ export function ActivityCard({ onSignedOut }: { onSignedOut: () => void }) {
     <div className="grid gap-4">
       <Card>
         <CardHeader>
-          <CardTitle className="flex flex-wrap items-center gap-2 text-base">
+          <CardTitle className="flex flex-wrap items-center gap-2 text-title">
             <LaptopIcon className="size-4" />
             Where you are signed in
             {others > 0 && (
@@ -140,14 +140,14 @@ export function ActivityCard({ onSignedOut }: { onSignedOut: () => void }) {
         </CardHeader>
         <CardContent className="grid gap-1">
           {sessions === null ? (
-            <p className="text-muted-foreground text-xs">Reading...</p>
+            <p className="text-muted-foreground text-small">Reading...</p>
           ) : sessions.length === 0 ? (
-            <p className="text-muted-foreground text-xs">No sessions, which cannot be right.</p>
+            <p className="text-muted-foreground text-small">No sessions, which cannot be right.</p>
           ) : (
             sessions.map((s) => (
               <div
                 key={s.id}
-                className="flex flex-wrap items-start justify-between gap-x-2 gap-y-1 border-b py-2 text-sm last:border-0"
+                className="flex flex-wrap items-start justify-between gap-x-2 gap-y-1 border-b py-2 text-body last:border-0"
               >
                 <span className="grid min-w-0 gap-0.5">
                   <span className="truncate">
@@ -163,15 +163,15 @@ export function ActivityCard({ onSignedOut }: { onSignedOut: () => void }) {
                       </Badge>
                     )}
                   </span>
-                  <span className="text-muted-foreground font-mono text-xs break-all">{s.ip}</span>
+                  <span className="text-muted-foreground font-mono text-small break-all">{s.ip}</span>
                 </span>
-                <span className="text-muted-foreground shrink-0 text-xs" title={s.last_seen}>
+                <span className="text-muted-foreground shrink-0 text-small" title={s.last_seen}>
                   active {ago(s.last_seen)}
                 </span>
               </div>
             ))
           )}
-          <p className="text-muted-foreground mt-2 text-xs">
+          <p className="text-muted-foreground mt-2 text-small">
             Sessions live in the dashboard's memory, so restarting the container signs
             everyone out. That is the fastest way to take the account back if something looks
             wrong here.
@@ -181,21 +181,21 @@ export function ActivityCard({ onSignedOut }: { onSignedOut: () => void }) {
 
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
+          <CardTitle className="flex items-center gap-2 text-title">
             <ShieldAlertIcon className="size-4" />
             Recent account activity
           </CardTitle>
         </CardHeader>
         <CardContent>
           {problem && (
-            <p className="text-destructive text-xs" role="alert">
+            <p className="text-destructive text-small" role="alert">
               {problem}
             </p>
           )}
           {rows === null ? (
-            <p className="text-muted-foreground text-xs">Reading...</p>
+            <p className="text-muted-foreground text-small">Reading...</p>
           ) : rows.length === 0 ? (
-            <p className="text-muted-foreground text-xs">
+            <p className="text-muted-foreground text-small">
               Nothing recorded yet. This starts from the first sign-in after the access log
               was added.
             </p>
@@ -213,16 +213,16 @@ export function ActivityCard({ onSignedOut }: { onSignedOut: () => void }) {
                       <div className="flex flex-wrap items-center gap-2">
                         <Badge variant={meta.tone}>{meta.text}</Badge>
                         <span
-                          className="text-muted-foreground text-xs"
+                          className="text-muted-foreground text-small"
                           title={new Date(e.t * 1000).toLocaleString()}
                         >
                           {ago(new Date(e.t * 1000).toISOString())}
                         </span>
                       </div>
                       {e.detail && (
-                        <span className="text-muted-foreground text-xs">{e.detail}</span>
+                        <span className="text-muted-foreground text-small">{e.detail}</span>
                       )}
-                      <span className="text-muted-foreground text-xs">
+                      <span className="text-muted-foreground text-small">
                         {device(e.ua)}
                         {e.ip && (
                           <span className="font-mono break-all"> from {e.ip}</span>
@@ -251,17 +251,17 @@ export function ActivityCard({ onSignedOut }: { onSignedOut: () => void }) {
                           <TableCell>
                             <Badge variant={meta.tone}>{meta.text}</Badge>
                             {e.detail && (
-                              <div className="text-muted-foreground mt-0.5 text-xs">
+                              <div className="text-muted-foreground mt-0.5 text-small">
                                 {e.detail}
                               </div>
                             )}
                           </TableCell>
-                          <TableCell className="font-mono text-xs break-all">
+                          <TableCell className="font-mono text-small break-all">
                             {e.ip || "-"}
                           </TableCell>
-                          <TableCell className="text-xs">{device(e.ua)}</TableCell>
+                          <TableCell className="text-small">{device(e.ua)}</TableCell>
                           <TableCell
-                            className="text-muted-foreground text-right text-xs whitespace-nowrap"
+                            className="text-muted-foreground text-right text-small whitespace-nowrap"
                             title={new Date(e.t * 1000).toLocaleString()}
                           >
                             {ago(new Date(e.t * 1000).toISOString())}

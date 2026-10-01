@@ -61,7 +61,7 @@ function EntryCard({ e }: { e: CatalogueEntry }) {
     <Card className="gap-2 py-3">
       <CardContent className="grid gap-2 px-3">
         <div className="flex items-start justify-between gap-2">
-          <span className="text-sm leading-tight font-medium">{e.label || e.name}</span>
+          <span className="text-body leading-tight font-medium">{e.label || e.name}</span>
           {e.installed ? (
             <Badge variant={e.enabled ? "ok" : "secondary"}>
               <CheckIcon />
@@ -76,7 +76,7 @@ function EntryCard({ e }: { e: CatalogueEntry }) {
         </div>
 
         {e.description && (
-          <p className="text-muted-foreground text-xs leading-relaxed">{e.description}</p>
+          <p className="text-muted-foreground text-small leading-relaxed">{e.description}</p>
         )}
 
         {e.urls.length > 0 ? (
@@ -87,7 +87,7 @@ function EntryCard({ e }: { e: CatalogueEntry }) {
                 href={u}
                 target="_blank"
                 rel="noreferrer"
-                className="text-muted-foreground hover:text-foreground flex items-center gap-1 font-mono text-xs"
+                className="text-muted-foreground hover:text-foreground flex items-center gap-1 font-mono text-small"
               >
                 <ExternalLinkIcon className="size-3 shrink-0" />
                 <span className="truncate">{u}</span>
@@ -95,19 +95,19 @@ function EntryCard({ e }: { e: CatalogueEntry }) {
             ))}
           </div>
         ) : (
-          <p className="text-muted-foreground font-mono text-xs">
+          <p className="text-muted-foreground font-mono text-small">
             {e.needs_domain ? "no address of its own" : "runs on the LAN, no web address"}
           </p>
         )}
 
-        <div className="text-muted-foreground flex flex-wrap gap-2 text-xs">
+        <div className="text-muted-foreground flex flex-wrap gap-2 text-small">
           <span>{e.ram_mb} MB RAM</span>
           <span>·</span>
           <span>{e.disk_gb} GB disk</span>
         </div>
 
         {!e.installed && (
-          <code className="bg-muted text-muted-foreground rounded px-1.5 py-1 text-xs">
+          <code className="bg-muted text-muted-foreground rounded px-1.5 py-1 text-small">
             sudo corex manage add {e.name}
           </code>
         )}
@@ -169,7 +169,7 @@ export function CatalogueTab({
           <button
             onClick={() => setCategory("all")}
             className={cn(
-              "flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-left text-sm transition-colors",
+              "flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-left text-body transition-colors duration-(--dur-fast) ease-(--ease)",
               category === "all" ? "bg-accent text-accent-foreground" : "hover:bg-accent/50"
             )}
           >
@@ -177,22 +177,22 @@ export function CatalogueTab({
               <LayersIcon className="size-3.5" />
               Everything
             </span>
-            <span className="text-muted-foreground font-mono text-xs">{entries.length}</span>
+            <span className="text-muted-foreground font-mono text-small">{entries.length}</span>
           </button>
           {categories.map(({ key, count }) => (
             <button
               key={key}
               onClick={() => setCategory(key)}
               className={cn(
-                "flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-left text-sm transition-colors",
+                "flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-left text-body transition-colors duration-(--dur-fast) ease-(--ease)",
                 category === key ? "bg-accent text-accent-foreground" : "hover:bg-accent/50"
               )}
             >
               <span className="truncate">{categoryLabel(key)}</span>
-              <span className="text-muted-foreground font-mono text-xs">{count}</span>
+              <span className="text-muted-foreground font-mono text-small">{count}</span>
             </button>
           ))}
-          <p className="text-muted-foreground mt-2 hidden px-2.5 text-xs lg:block">
+          <p className="text-muted-foreground mt-2 hidden px-2.5 text-small lg:block">
             {installed} of {entries.length} installed. A module is one file in
             lib/services/, so this list is the directory.
           </p>
@@ -225,7 +225,7 @@ export function CatalogueTab({
 
         {shown.length === 0 ? (
           <Card>
-            <CardContent className="text-muted-foreground text-sm">
+            <CardContent className="text-muted-foreground text-body">
               Nothing matches that. Clear the search or pick another category.
             </CardContent>
           </Card>

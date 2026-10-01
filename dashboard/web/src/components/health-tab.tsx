@@ -38,10 +38,10 @@ function Row({
   detail?: React.ReactNode
 }) {
   return (
-    <div className="flex items-start justify-between gap-3 border-b py-2 text-sm last:border-0">
+    <div className="flex items-start justify-between gap-3 border-b py-2 text-body last:border-0">
       <div className="grid gap-0.5">
         <span>{label}</span>
-        {detail && <span className="text-muted-foreground text-xs">{detail}</span>}
+        {detail && <span className="text-muted-foreground text-small">{detail}</span>}
       </div>
       <Badge variant={tone}>{value}</Badge>
     </div>
@@ -75,7 +75,7 @@ export function HealthTab({
       <div className="grid gap-3 lg:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-sm">
+            <CardTitle className="flex items-center gap-2 text-body">
               <ThermometerIcon className="size-4" />
               Heat
             </CardTitle>
@@ -149,7 +149,7 @@ export function HealthTab({
 
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-sm">
+            <CardTitle className="flex items-center gap-2 text-body">
               <HardDriveIcon className="size-4" />
               Disks and packages
             </CardTitle>
@@ -193,7 +193,7 @@ export function HealthTab({
 
       <Card>
         <CardHeader>
-          <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
+          <CardTitle className="flex flex-wrap items-center gap-2 text-body">
             <ActivityIcon className="size-4" />
             Deeper checks
             <span className="ml-auto flex flex-wrap gap-2">
@@ -213,7 +213,7 @@ export function HealthTab({
           </CardTitle>
         </CardHeader>
         <CardContent className="grid gap-3">
-          <p className="text-muted-foreground text-xs">
+          <p className="text-muted-foreground text-small">
             The panels above are read continuously. These run a command now: the hardware
             report re-reads sensors and SMART, the watchdog sweep looks for containers stopped
             against their restart policy, climbing restart counts and memory kills, and doctor
@@ -222,7 +222,7 @@ export function HealthTab({
           {["health", "watchdog", "doctor"].map((k) =>
             outputs[k] ? (
               <div key={k} className="grid gap-1">
-                <span className="text-muted-foreground flex items-center gap-1.5 text-xs">
+                <span className="text-muted-foreground flex items-center gap-1.5 text-small">
                   <WrenchIcon className="size-3" />
                   {k}
                 </span>
@@ -238,14 +238,14 @@ export function HealthTab({
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm">What the watchdog has logged</CardTitle>
+          <CardTitle className="text-body">What the watchdog has logged</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-1.5">
           {(m?.watchdog ?? []).length === 0 && (
-            <p className="text-muted-foreground text-xs">Nothing, which is the good case.</p>
+            <p className="text-muted-foreground text-small">Nothing, which is the good case.</p>
           )}
           {(m?.watchdog ?? []).map((f, i) => (
-            <div key={`${f.t}-${i}`} className="grid gap-0.5 border-b pb-1.5 text-xs last:border-0">
+            <div key={`${f.t}-${i}`} className="grid gap-0.5 border-b pb-1.5 text-small last:border-0">
               <div className="flex items-center gap-2">
                 <Badge variant={f.level === "down" ? "destructive" : f.level === "up" ? "ok" : "secondary"}>
                   {f.level}

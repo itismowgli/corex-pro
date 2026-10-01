@@ -62,7 +62,7 @@ export function Spark({
   if (clean.length < 2) {
     return (
       <div
-        className={cn("text-muted-foreground flex items-center justify-center text-xs", className)}
+        className={cn("text-muted-foreground flex items-center justify-center text-small", className)}
         style={{ height }}
       >
         not enough history yet
@@ -136,14 +136,14 @@ export function Meter({
   return (
     <div className={cn("grid gap-1", className)}>
       {(caption || right) && (
-        <div className="flex items-baseline justify-between gap-2 text-xs">
+        <div className="flex items-baseline justify-between gap-2 text-small">
           <span className="truncate">{caption}</span>
           <span className="text-muted-foreground shrink-0 font-mono">{right}</span>
         </div>
       )}
       <div className="bg-muted h-1.5 w-full overflow-hidden rounded-full">
         <div
-          className="h-full rounded-full transition-[width]"
+          className="h-full rounded-full transition-[width] duration-(--dur) ease-(--ease)"
           style={{ width: `${pct}%`, backgroundColor: color }}
         />
       </div>

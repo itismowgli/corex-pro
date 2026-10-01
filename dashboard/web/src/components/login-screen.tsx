@@ -193,29 +193,29 @@ export function LoginScreen({
     <div className="flex min-h-screen items-center justify-center p-4">
       <div className="w-full max-w-sm">
         <div className="mb-6 text-center">
-          <p className="text-lg font-semibold tracking-tight">
+          <p className="text-display font-semibold tracking-tight">
             CoreX <span className="text-muted-foreground font-normal">Pro</span>
           </p>
-          <p className="text-muted-foreground text-xs">Homelab control panel</p>
+          <p className="text-muted-foreground text-small">Homelab control panel</p>
         </div>
 
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
+            <CardTitle className="flex items-center gap-2 text-title">
               {stage === "totp" ? <ShieldIcon className="size-4" /> : <KeyRoundIcon className="size-4" />}
               {title}
             </CardTitle>
           </CardHeader>
           <CardContent className="grid gap-4">
             {error && (
-              <p className="text-destructive flex items-start gap-2 text-xs">
+              <p className="text-destructive flex items-start gap-2 text-small">
                 <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" />
                 <span>{error}</span>
               </p>
             )}
-            {notice && <p className="text-muted-foreground text-xs">{notice}</p>}
+            {notice && <p className="text-muted-foreground text-small">{notice}</p>}
             {problem && (
-              <p className="text-destructive text-xs" role="alert">
+              <p className="text-destructive text-small" role="alert">
                 {problem}
               </p>
             )}
@@ -234,7 +234,7 @@ export function LoginScreen({
                       <FingerprintIcon />
                       Sign in with a passkey
                     </Button>
-                    <div className="text-muted-foreground flex items-center gap-2 text-xs">
+                    <div className="text-muted-foreground flex items-center gap-2 text-small">
                       <span className="bg-border h-px flex-1" />
                       or use your password
                       <span className="bg-border h-px flex-1" />
@@ -272,7 +272,7 @@ export function LoginScreen({
                 </Button>
                 <button
                   type="button"
-                  className="text-muted-foreground hover:text-foreground text-xs underline-offset-4 hover:underline"
+                  className="text-muted-foreground hover:text-foreground text-small underline-offset-4 hover:underline"
                   onClick={() => {
                     setProblem(null)
                     setNotice(null)
@@ -305,7 +305,7 @@ export function LoginScreen({
                   {busy && <LoaderCircleIcon className="animate-spin" />}
                   Continue
                 </Button>
-                <p className="text-muted-foreground text-xs">
+                <p className="text-muted-foreground text-small">
                   Locked out of both? From SSH:{" "}
                   <code className="text-foreground">
                     sudo corex manage dashboard-user totp-reset &lt;username&gt;
@@ -335,7 +335,7 @@ export function LoginScreen({
                 </Button>
                 <button
                   type="button"
-                  className="text-muted-foreground hover:text-foreground text-xs underline-offset-4 hover:underline"
+                  className="text-muted-foreground hover:text-foreground text-small underline-offset-4 hover:underline"
                   onClick={() => setStage("password")}
                 >
                   Back to sign in
@@ -381,7 +381,7 @@ export function LoginScreen({
                 </Button>
                 <button
                   type="button"
-                  className="text-muted-foreground hover:text-foreground text-xs underline-offset-4 hover:underline"
+                  className="text-muted-foreground hover:text-foreground text-small underline-offset-4 hover:underline"
                   onClick={() => setStage("password")}
                 >
                   Back to sign in
@@ -391,7 +391,7 @@ export function LoginScreen({
           </CardContent>
         </Card>
 
-        <p className="text-muted-foreground mt-4 text-center text-xs">
+        <p className="text-muted-foreground mt-4 text-center text-small">
           Locked out? Every account can be reset from SSH with{" "}
           <code className="text-foreground">sudo corex manage dashboard-user</code>.
         </p>

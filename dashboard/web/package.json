@@ -5,10 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build && node logline-check.mjs && node progress-check.mjs && node poll-check.mjs && node responsive-check.mjs && node render-check.mjs",
+    "build": "tsc --noEmit && vite build && node design-check.mjs && node logline-check.mjs && node progress-check.mjs && node poll-check.mjs && node responsive-check.mjs && node render-check.mjs",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "smoke": "node logline-check.mjs && node progress-check.mjs && node poll-check.mjs && node responsive-check.mjs && node render-check.mjs"
+    "smoke": "node design-check.mjs && node logline-check.mjs && node progress-check.mjs && node poll-check.mjs && node responsive-check.mjs && node render-check.mjs"
   },
   "dependencies": {
     "@microcharts/react": "^0.19.1",

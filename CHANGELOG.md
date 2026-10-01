@@ -6,6 +6,63 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.51.0] - 2026-10-01
+
+### Fixed
+- **A running job showed nothing until it had finished.**
+  The agent ran every job through `subprocess.run(capture_output=True)`, which
+  returns nothing until the process exits. An update across twenty services
+  takes minutes, so the dashboard showed an empty log for all of them and then
+  everything at once. Nothing was broken and nothing moved, which reads
+  exactly like a hung button, and it is also why the per-service progress
+  added in v3.47.0 could never move: there was no output to read.
+
+  Output is now recorded as it arrives, at most twice a second, which is what
+  makes the progress live. The timeout became a timer rather than a check
+  inside the read loop, because a process that hangs without printing produces
+  no iterations and a per-line deadline would never fire on the one case that
+  needs it.
+
+### Added
+- **Check now, separate from Update everything.**
+  The page reads a cache, which is what lets it draw instantly, and the cache
+  refreshed itself in the background when it went stale. That is the right
+  default and it was also invisible: there was no way to ask, and no way to
+  tell whether what you were reading was a minute or a day old. The header now
+  says when it last checked, and Check now asks. It takes no lock and opens no
+  log, because looking changes nothing.
+
+- **A scheduled check, so the page already knows.**
+  A maintenance task refreshes the cache every six hours. Without it the first
+  view after a quiet day showed a day-old answer and corrected itself a second
+  later. The scheduler learned `*` for the hour field, meaning any hour: a
+  task cheap enough to run whenever its interval has elapsed does not want a
+  time of day, and pinning one to an hour makes a six hourly task run once.
+
+- **A design system, written down and enforced.**
+  `dashboard/web/DESIGN.md` sets the vocabulary: one neutral ramp with one
+  accent and three state colours, five type sizes, three radii, two durations
+  with one easing, two elevations, and a 4px grid. `design-check.mjs` runs in
+  the build and fails on anything outside it.
+
+  It exists because the rules had already decayed. There were six type sizes
+  outside any scale, four radii, colour literals in three components, and
+  transitions at three different durations, none of which any check could see
+  because all of it compiles and renders.
+
+### Changed
+- **The interface is denser and flatter.**
+  The corner radius goes from 14px to 8px, which is the single change that
+  moves this furthest from a tray of floating tiles toward one surface. Cards
+  take a border and no shadow, since a surface takes one or the other and
+  never both on the same edge; shadow is now reserved for things that sit over
+  the page. Card padding and gaps move onto the 4px scale.
+
+  The body size is 13px with a paired line height, and the five sizes are real
+  utilities rather than Tailwind's defaults, so the old ones can be and are
+  banned. Terminal colours became tokens with a light variant: they had been
+  tuned against a dark background and were close to unreadable on white.
+
 ## [v3.50.0] - 2026-09-27
 
 ### Fixed

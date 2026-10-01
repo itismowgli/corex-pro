@@ -39,7 +39,7 @@ function SheetContent({
             section name, which a sighted user reads from the nav itself. */}
         <DialogPrimitive.Title className="sr-only">{title}</DialogPrimitive.Title>
         {children}
-        <DialogPrimitive.Close className="focus-visible:ring-ring/50 absolute top-3.5 right-3 rounded-md p-1 opacity-70 transition-opacity hover:opacity-100 focus-visible:ring-[3px] focus-visible:outline-none">
+        <DialogPrimitive.Close className="focus-visible:ring-ring/50 absolute top-3.5 right-3 rounded-md p-1 opacity-70 transition-opacity duration-(--dur-fast) ease-(--ease) hover:opacity-100 focus-visible:ring-[3px] focus-visible:outline-none">
           <XIcon className="size-4" />
           <span className="sr-only">Close</span>
         </DialogPrimitive.Close>

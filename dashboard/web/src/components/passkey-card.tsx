@@ -80,13 +80,13 @@ export function PasskeyCard({ refresh }: { refresh: () => void }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-base">
+        <CardTitle className="flex items-center gap-2 text-title">
           <FingerprintIcon className="size-4" />
           Passkeys
         </CardTitle>
       </CardHeader>
       <CardContent className="grid gap-4">
-        <p className="text-muted-foreground max-w-lg text-xs">
+        <p className="text-muted-foreground max-w-lg text-small">
           A passkey is your fingerprint, face or a security key, and it replaces both the
           password and the code in one step. It cannot be phished: the browser will only sign
           for the address the key was made on, so a convincing copy of this page on another
@@ -94,17 +94,17 @@ export function PasskeyCard({ refresh }: { refresh: () => void }) {
         </p>
 
         {!supported() && (
-          <p className="text-warn text-xs">
+          <p className="text-warn text-small">
             This browser cannot do WebAuthn, so passkeys are unavailable here.
           </p>
         )}
         {meta && !meta.available && (
-          <p className="text-warn text-xs">
+          <p className="text-warn text-small">
             No domain is configured, so a passkey has nothing to bind to.
           </p>
         )}
         {meta?.origin && (
-          <p className="text-muted-foreground text-xs">
+          <p className="text-muted-foreground text-small">
             Keys are bound to <code className="text-foreground">{meta.origin}</code>. Reaching
             the dashboard by IP address is a different origin, and passkeys will not work
             there.
@@ -112,22 +112,22 @@ export function PasskeyCard({ refresh }: { refresh: () => void }) {
         )}
 
         {rows === null ? (
-          <p className="text-muted-foreground text-xs">Reading your keys...</p>
+          <p className="text-muted-foreground text-small">Reading your keys...</p>
         ) : rows.length === 0 ? (
-          <p className="text-muted-foreground text-xs">No passkeys yet.</p>
+          <p className="text-muted-foreground text-small">No passkeys yet.</p>
         ) : (
           <div className="grid gap-1">
             {rows.map((p) => (
               <div
                 key={p.id}
-                className="flex items-center justify-between gap-2 border-b py-2 text-sm last:border-0"
+                className="flex items-center justify-between gap-2 border-b py-2 text-body last:border-0"
               >
                 <span className="flex min-w-0 items-center gap-2">
                   <KeyRoundIcon className="text-muted-foreground size-3.5 shrink-0" />
                   <span className="truncate">{p.name}</span>
                 </span>
                 <span className="flex shrink-0 items-center gap-3">
-                  <span className="text-muted-foreground text-xs">
+                  <span className="text-muted-foreground text-small">
                     {p.last_used
                       ? `used ${ago(new Date(p.last_used * 1000).toISOString())}`
                       : "never used"}
@@ -148,11 +148,11 @@ export function PasskeyCard({ refresh }: { refresh: () => void }) {
         )}
 
         {problem && (
-          <p className="text-destructive text-xs" role="alert">
+          <p className="text-destructive text-small" role="alert">
             {problem}
           </p>
         )}
-        {note && <p className="text-ok text-xs">{note}</p>}
+        {note && <p className="text-ok text-small">{note}</p>}
 
         {supported() && meta?.available && (
           <div className="grid max-w-md gap-3">

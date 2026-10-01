@@ -20,9 +20,9 @@ const COMMANDS: [string, string][] = [
 
 function Row({ k, v }: { k: string; v: string }) {
   return (
-    <div className="flex items-baseline justify-between gap-4 text-sm">
+    <div className="flex items-baseline justify-between gap-4 text-body">
       <span className="text-muted-foreground">{k}</span>
-      <span className="truncate font-mono text-xs" title={v}>
+      <span className="truncate font-mono text-small" title={v}>
         {v || "unknown"}
       </span>
     </div>
@@ -56,7 +56,7 @@ export function SystemTab({
       <div className="grid gap-3 lg:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-sm">
+            <CardTitle className="flex items-center gap-2 text-body">
               <CpuIcon className="size-4" />
               Host
             </CardTitle>
@@ -71,7 +71,7 @@ export function SystemTab({
         </Card>
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-sm">
+            <CardTitle className="flex items-center gap-2 text-body">
               <PlugIcon className="size-4" />
               Software
             </CardTitle>
@@ -87,14 +87,14 @@ export function SystemTab({
 
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-sm">
+          <CardTitle className="flex items-center gap-2 text-body">
             <KeyRoundIcon className="size-4" />
             SSH access
           </CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-2">
           {port !== "22" && (
-            <p className="text-warn text-xs">
+            <p className="text-warn text-small">
               SSH listens on {port}, not 22. Port 22 is closed, including in Portainer environments.
             </p>
           )}
@@ -109,8 +109,8 @@ export function SystemTab({
       {ports.length > 0 && (
         <Card className="gap-0 py-0">
           <CardHeader className="py-4">
-            <CardTitle className="text-sm">Direct ports</CardTitle>
-            <p className="text-muted-foreground text-xs">
+            <CardTitle className="text-body">Direct ports</CardTitle>
+            <p className="text-muted-foreground text-small">
               Bypass Traefik. Useful before DNS is set up, or when a certificate is the problem.
             </p>
           </CardHeader>
@@ -127,15 +127,15 @@ export function SystemTab({
                           href={p.url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="font-mono text-xs hover:underline"
+                          className="font-mono text-small hover:underline"
                         >
                           {p.url}
                         </a>
                       ) : (
-                        <span className="font-mono text-xs">{p.url}</span>
+                        <span className="font-mono text-small">{p.url}</span>
                       )}
                     </TableCell>
-                    <TableCell className="text-muted-foreground text-xs">{p.note}</TableCell>
+                    <TableCell className="text-muted-foreground text-small">{p.note}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -168,7 +168,7 @@ export function SystemTab({
 
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-sm">
+          <CardTitle className="flex items-center gap-2 text-body">
             <TerminalIcon className="size-4" />
             Commands worth knowing
           </CardTitle>
@@ -176,8 +176,8 @@ export function SystemTab({
         <CardContent className="grid gap-2 sm:grid-cols-2">
           {COMMANDS.map(([label, cmd]) => (
             <div key={cmd} className="flex flex-col gap-1">
-              <span className="text-muted-foreground text-xs">{label}</span>
-              <code className="bg-background rounded-md border px-2 py-1 font-mono text-xs">
+              <span className="text-muted-foreground text-small">{label}</span>
+              <code className="bg-background rounded-md border px-2 py-1 font-mono text-small">
                 {cmd}
               </code>
             </div>

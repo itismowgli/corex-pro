@@ -88,7 +88,7 @@ function DiskRow({ disk, scale }: { disk: PhysicalDisk; scale: number }) {
   const width = scale > 0 ? (disk.size_b / scale) * 100 : 100
   return (
     <div className="grid gap-1.5">
-      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs">
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-small">
         <Icon className="text-muted-foreground size-3.5 shrink-0 self-center" />
         <span className="font-medium">{disk.model || disk.name}</span>
         <span className="text-muted-foreground font-mono">
@@ -110,8 +110,8 @@ function DiskRow({ disk, scale }: { disk: PhysicalDisk; scale: number }) {
           .filter((s) => s.tone !== "free" || s.frac / disk.size_b > 0.08)
           .map((s, i) => (
             <div key={`${s.label}-l-${i}`}
-                 className="text-muted-foreground flex flex-wrap items-baseline gap-x-2 text-[11px]">
-              <span className={`size-2 shrink-0 self-center rounded-[2px] ${TONE[s.tone]}`} />
+                 className="text-muted-foreground flex flex-wrap items-baseline gap-x-2 text-micro">
+              <span className={`size-2 shrink-0 self-center rounded-sm ${TONE[s.tone]}`} />
               <span className="text-foreground">{s.label}</span>
               <span className="font-mono">{s.sub}</span>
               {s.note && <span>{s.note}</span>}
@@ -128,10 +128,10 @@ export function StorageMap({ layout }: { layout: StorageLayout }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
+        <CardTitle className="flex flex-wrap items-center gap-2 text-body">
           <HardDriveIcon className="size-4" />
           Every disk in the box
-          <span className="text-muted-foreground ml-auto font-mono text-xs">
+          <span className="text-muted-foreground ml-auto font-mono text-small">
             {bytes(layout.totals.raw_b)} fitted
           </span>
         </CardTitle>
@@ -143,12 +143,12 @@ export function StorageMap({ layout }: { layout: StorageLayout }) {
 
         {layout.volumes && layout.volumes.length > 0 && (
           <div className="grid gap-1.5 border-t pt-4">
-            <p className="text-muted-foreground text-[11px]">
+            <p className="text-muted-foreground text-micro">
               Logical volumes, carved out of the internal disk
             </p>
             {layout.volumes.map((v) => (
               <div key={v.name}
-                   className="flex flex-wrap items-baseline gap-x-2 text-[11px]">
+                   className="flex flex-wrap items-baseline gap-x-2 text-micro">
                 <span className="text-foreground">{v.mount || v.name}</span>
                 <span className="text-muted-foreground font-mono">
                   {v.usage ? `${bytes(v.usage.used_b)} of ${bytes(v.size_b)}` : bytes(v.size_b)}
@@ -156,8 +156,8 @@ export function StorageMap({ layout }: { layout: StorageLayout }) {
               </div>
             ))}
             {lvm && lvm.free_b > 0 && (
-              <div className="flex flex-wrap items-baseline gap-x-2 text-[11px]">
-                <span className="size-2 shrink-0 self-center rounded-[2px] bg-[var(--seg-idle)]" />
+              <div className="flex flex-wrap items-baseline gap-x-2 text-micro">
+                <span className="size-2 shrink-0 self-center rounded-sm bg-[var(--seg-idle)]" />
                 <span className="text-foreground">unallocated in {lvm.vg}</span>
                 <span className="text-muted-foreground font-mono">{bytes(lvm.free_b)}</span>
                 <span className="text-muted-foreground">

@@ -44,14 +44,14 @@ function useSubmit(onDone?: () => void) {
 function Status({ problem, done }: { problem: string | null; done: string | null }) {
   if (problem) {
     return (
-      <p className="text-destructive text-xs" role="alert">
+      <p className="text-destructive text-small" role="alert">
         {problem}
       </p>
     )
   }
   if (done) {
     return (
-      <p className="text-ok flex items-center gap-1.5 text-xs">
+      <p className="text-ok flex items-center gap-1.5 text-small">
         <CheckIcon className="size-3.5" />
         {done}
       </p>
@@ -68,7 +68,7 @@ function ProfileCard({ me, refresh }: { me: Me; refresh: () => void }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Your details</CardTitle>
+        <CardTitle className="text-title">Your details</CardTitle>
       </CardHeader>
       <CardContent>
         <form
@@ -123,7 +123,7 @@ function PasswordCard({ refresh }: { refresh: () => void }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Password</CardTitle>
+        <CardTitle className="text-title">Password</CardTitle>
       </CardHeader>
       <CardContent>
         <form
@@ -194,18 +194,18 @@ function TOTPCard({ me, refresh }: { me: Me; refresh: () => void }) {
     return (
       <Card className="border-ok/50">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
+          <CardTitle className="flex items-center gap-2 text-title">
             <ShieldCheckIcon className="size-4" />
             Two-factor is on. Save these recovery codes.
           </CardTitle>
         </CardHeader>
         <CardContent className="grid gap-3">
-          <p className="text-muted-foreground text-xs">
+          <p className="text-muted-foreground text-small">
             Each one signs you in once if the phone is lost. This is the only time they are
             shown: they are hashed the moment they are stored, so nobody, including this
             server, can print them again.
           </p>
-          <div className="bg-muted grid grid-cols-1 gap-1 rounded-md p-3 font-mono text-sm sm:grid-cols-2">
+          <div className="bg-muted grid grid-cols-1 gap-1 rounded-md p-3 font-mono text-body sm:grid-cols-2">
             {codes.map((c) => (
               <span key={c}>{c}</span>
             ))}
@@ -224,13 +224,13 @@ function TOTPCard({ me, refresh }: { me: Me; refresh: () => void }) {
     return (
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
+          <CardTitle className="flex items-center gap-2 text-title">
             <ShieldCheckIcon className="size-4" />
             Two-factor authentication is on
           </CardTitle>
         </CardHeader>
         <CardContent className="grid max-w-md gap-4">
-          <p className="text-muted-foreground text-xs">
+          <p className="text-muted-foreground text-small">
             {me.recovery_left} unused recovery code{me.recovery_left === 1 ? "" : "s"} left.
             {me.recovery_left <= 2 &&
               " Turn it off and on again to get a fresh set before you run out."}
@@ -271,12 +271,12 @@ function TOTPCard({ me, refresh }: { me: Me; refresh: () => void }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Two-factor authentication</CardTitle>
+        <CardTitle className="text-title">Two-factor authentication</CardTitle>
       </CardHeader>
       <CardContent className="grid gap-4">
         {!enrolling && (
           <>
-            <p className="text-muted-foreground max-w-lg text-xs">
+            <p className="text-muted-foreground max-w-lg text-small">
               A six-digit code from an authenticator app, on top of the password. The QR code
               is rendered here in the page, with no request to anyone: this dashboard fetches
               nothing at runtime, which is the point of it working when the box is in trouble.
@@ -311,10 +311,10 @@ function TOTPCard({ me, refresh }: { me: Me; refresh: () => void }) {
                 <QRCodeSVG value={enrolling.uri} size={168} level="M" />
               </div>
               <div className="grid max-w-xs gap-3">
-                <p className="text-muted-foreground text-xs">
+                <p className="text-muted-foreground text-small">
                   Scan it, or type the key in by hand:
                 </p>
-                <code className="bg-muted rounded-md p-2 font-mono text-xs break-all">
+                <code className="bg-muted rounded-md p-2 font-mono text-small break-all">
                   {enrolling.secret}
                 </code>
                 <Field
@@ -361,15 +361,15 @@ export function AccountTab({ me, refresh }: { me: Me | null; refresh: () => void
   if (!me?.auth_enabled) {
     return (
       <Card className="border-warn/50">
-        <CardContent className="flex items-start gap-2 text-sm">
+        <CardContent className="flex items-start gap-2 text-body">
           <TriangleAlertIcon className="text-warn mt-0.5 size-4 shrink-0" />
           <div>
             <p className="font-medium">This dashboard has no accounts of its own.</p>
-            <p className="text-muted-foreground mt-1 text-xs">
+            <p className="text-muted-foreground mt-1 text-small">
               It is behind Traefik basic auth, which cannot change its own password or
               recover one. Create the first account from SSH, then take basic auth away:
             </p>
-            <pre className="text-foreground mt-2 text-xs">
+            <pre className="text-foreground mt-2 text-small">
               sudo corex manage dashboard-user add admin --email you@example.com{"\n"}
               sudo corex manage dashboard-user enable-auth
             </pre>

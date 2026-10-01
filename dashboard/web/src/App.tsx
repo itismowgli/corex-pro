@@ -153,7 +153,7 @@ export default function App() {
 
   if (me.loading && !me.data && !me.error) {
     return (
-      <div className="text-muted-foreground flex min-h-screen items-center justify-center text-sm">
+      <div className="text-muted-foreground flex min-h-screen items-center justify-center text-body">
         CoreX Pro
       </div>
     )
@@ -283,6 +283,26 @@ function Dashboard({
     } catch (e) {
       fail(`${action} ${svc.name}`, e)
     }
+  }
+
+  /**
+   * Ask the registries now.
+   *
+   * Deliberately not a job: it changes nothing on the box, so it opens no log
+   * panel and takes no lock. The agent returns as soon as the refresh is
+   * started and the page keeps showing the previous answer, which is why the
+   * only visible change is the spinner on the button until the next poll
+   * brings the new one.
+   */
+  const checkUpdates = async () => {
+    try {
+      await api.checkUpdates()
+    } catch {
+      // A failed check must not replace a good answer with an error. The
+      // timestamp on screen still says how old what you are looking at is.
+      return
+    }
+    void overview.refresh()
   }
 
   // One scheduled task, now. Its output lands in the Maintenance tab, which
@@ -504,7 +524,7 @@ function Dashboard({
           away from and nothing rendered on the page can push it off. */}
       <aside
         data-nav="sidebar"
-        className={`bg-card fixed inset-y-0 left-0 z-30 hidden border-r transition-[width] md:flex md:flex-col ${
+        className={`bg-card fixed inset-y-0 left-0 z-30 hidden border-r transition-[width] duration-(--dur) ease-(--ease) md:flex md:flex-col ${
           collapsed ? "md:w-16" : "md:w-60"
         }`}
       >
@@ -530,11 +550,11 @@ function Dashboard({
             >
               <MenuIcon />
             </Button>
-            <span className="text-base font-semibold tracking-tight">
+            <span className="text-title font-semibold tracking-tight">
               CoreX <span className="text-muted-foreground font-normal">Pro</span>
             </span>
             {state.data?.domain && (
-              <span className="text-muted-foreground hidden font-mono text-xs lg:inline">
+              <span className="text-muted-foreground hidden font-mono text-small lg:inline">
                 {state.data.domain}
               </span>
             )}
@@ -573,7 +593,7 @@ function Dashboard({
               </Button>
               {me?.auth_enabled && (
                 <>
-                  <span className="text-muted-foreground hidden text-xs sm:inline">
+                  <span className="text-muted-foreground hidden text-small sm:inline">
                     {me.display_name || me.username}
                   </span>
                   <Button
@@ -603,13 +623,13 @@ function Dashboard({
           <div className="flex flex-col gap-3 empty:hidden">
             {state.data && !state.data.agent_ok && (
               <Card className="border-destructive/50">
-                <CardContent className="flex items-start gap-2 text-sm">
+                <CardContent className="flex items-start gap-2 text-body">
                   <AlertTriangleIcon className="text-destructive mt-0.5 size-4 shrink-0" />
                   <div>
                     <p className="font-medium">
                       The action agent is unreachable, so no button here can work.
                     </p>
-                    <p className="text-muted-foreground mt-1 text-xs">
+                    <p className="text-muted-foreground mt-1 text-small">
                       {state.data.agent_error || "no detail"}. Check it with{" "}
                       <code className="text-foreground">sudo corex manage agent test</code>, which
                       also reports whether this container can see the socket.
@@ -621,9 +641,9 @@ function Dashboard({
 
             {(services.error || state.error) && (
               <Card className="border-destructive/50">
-                <CardContent className="text-sm">
+                <CardContent className="text-body">
                   <p className="font-medium">Could not load the dashboard data.</p>
-                  <p className="text-muted-foreground mt-1 font-mono text-xs break-all">
+                  <p className="text-muted-foreground mt-1 font-mono text-small break-all">
                     {services.error || state.error}
                   </p>
                 </CardContent>
@@ -710,6 +730,7 @@ function Dashboard({
               locked={locked}
               onAction={runService}
               onUpdateAll={() => void runBox("update-all")}
+              onCheck={() => void checkUpdates()}
               onOsUpgrade={() => runMaintenance("os-upgrade")}
             />
           )}
@@ -739,7 +760,7 @@ function Dashboard({
 
           {/* The wide layout carries these in the sidebar footer. A phone
               never sees that, so they are repeated once at the bottom. */}
-          <footer className="text-muted-foreground pb-4 text-center text-xs md:hidden">
+          <footer className="text-muted-foreground pb-4 text-center text-small md:hidden">
             {state.data?.version && <>CoreX Pro v{state.data.version} · </>}
             {state.data?.server_ip}
           </footer>

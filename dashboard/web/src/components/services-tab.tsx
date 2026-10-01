@@ -144,8 +144,8 @@ export function ServicesTab({
   if (!services.length) {
     return (
       <Card>
-        <CardContent className="text-muted-foreground py-12 text-center text-sm">
-          <p className="text-foreground mb-1 text-base">No services installed</p>
+        <CardContent className="text-muted-foreground py-12 text-center text-body">
+          <p className="text-foreground mb-1 text-title">No services installed</p>
           <p>
             Install one with <code className="text-foreground">corex manage add &lt;service&gt;</code>
           </p>
@@ -164,7 +164,7 @@ export function ServicesTab({
   return (
     <div className="flex flex-col gap-3">
       {updates && (
-        <p className="text-muted-foreground text-xs">
+        <p className="text-muted-foreground text-small">
           {updates.checking
             ? "Asking the registries what has moved."
             : !updates.checked_at
@@ -195,7 +195,7 @@ export function ServicesTab({
                 aria-selected={on}
                 onClick={() => setGroup(key)}
                 className={
-                  "rounded-md px-2.5 py-1 text-sm transition-colors " +
+                  "rounded-md px-2.5 py-1 text-body transition-colors duration-(--dur-fast) ease-(--ease) " +
                   (on
                     ? "bg-secondary text-secondary-foreground font-medium"
                     : "text-muted-foreground hover:text-foreground")
@@ -209,7 +209,7 @@ export function ServicesTab({
         </div>
 
         <select
-          className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm sm:hidden"
+          className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-body sm:hidden"
           value={group}
           aria-label="Filter services"
           onChange={(e) => setGroup(e.target.value as Group | "all")}
@@ -225,7 +225,7 @@ export function ServicesTab({
           })}
         </select>
 
-        {note && <p className="text-muted-foreground text-xs">{note}</p>}
+        {note && <p className="text-muted-foreground text-small">{note}</p>}
 
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {shown.map((svc) => (
@@ -242,7 +242,7 @@ export function ServicesTab({
         </div>
 
         {!shown.length && (
-          <p className="text-muted-foreground text-sm">Nothing in this group.</p>
+          <p className="text-muted-foreground text-body">Nothing in this group.</p>
         )}
       </div>
     </div>
@@ -288,7 +288,7 @@ function ServiceCard({
             longest label, "Monitoring, Uptime Kuma + Grafana + Prometheus",
             therefore pushed the status badge out past the edge of the card
             and it was rendered clipped. */}
-        <CardTitle className="flex min-w-0 items-start justify-between gap-2 text-sm">
+        <CardTitle className="flex min-w-0 items-start justify-between gap-2 text-body">
           <span className="min-w-0 flex-1 truncate" title={svc.label}>
             {svc.label}
           </span>
@@ -315,7 +315,7 @@ function ServiceCard({
               are different questions (gotcha #26). */}
           {svc.version && (
             <span
-              className="text-muted-foreground inline-flex min-w-0 items-center gap-1 font-mono text-xs"
+              className="text-muted-foreground inline-flex min-w-0 items-center gap-1 font-mono text-small"
               title={
                 svc.version === "latest"
                   ? "Image tag. A moving tag, so what it points at can change without this changing."
@@ -333,19 +333,19 @@ function ServiceCard({
                 href={u}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-muted-foreground hover:text-foreground inline-flex min-w-0 items-center gap-1 font-mono text-xs hover:underline"
+                className="text-muted-foreground hover:text-foreground inline-flex min-w-0 items-center gap-1 font-mono text-small hover:underline"
               >
                 <ExternalLinkIcon className="size-3 shrink-0" />
                 <span className="truncate">{u}</span>
               </a>
             ))
           ) : (
-            <span className="text-muted-foreground font-mono text-xs">not reachable over the web</span>
+            <span className="text-muted-foreground font-mono text-small">not reachable over the web</span>
           )}
         </div>
       </CardHeader>
       <CardContent className="flex flex-col gap-2">
-        {hint.note && <p className="text-muted-foreground text-xs break-words">{hint.note}</p>}
+        {hint.note && <p className="text-muted-foreground text-small break-words">{hint.note}</p>}
         <div className="flex flex-wrap gap-1.5">
           {ACTIONS.map(({ action, label, icon: Icon }) => (
             <Button

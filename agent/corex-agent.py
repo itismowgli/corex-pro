@@ -375,10 +375,73 @@ def announce(action, service, rc, elapsed, output):
         footer="Nothing was rolled back. Look at it with: corex manage status"))
 
 
+def run_manage_streamed(action, service, job_id):
+    """Run a job and record its output as it arrives, not when it ends.
+
+    `subprocess.run(capture_output=True)` returns nothing until the process
+    exits, so a ten minute update left the dashboard showing an empty log for
+    ten minutes and then everything at once. Nothing was broken and nothing
+    moved, which reads exactly like a hung button.
+
+    The dashboard polls the job record every second and a half, so writing
+    each line into it as it arrives is the whole of what makes progress live.
+
+    The timeout is a timer rather than a check inside the loop: a process that
+    hangs without printing produces no iterations, so a deadline tested per
+    line would never fire on the one case that needs it.
+    """
+    argv = build_argv(action, service)
+    limit = JOB_TIMEOUT.get(action, DEFAULT_TIMEOUT)
+    chunks = []
+    killed = {"yes": False}
+
+    def _kill():
+        killed["yes"] = True
+        try:
+            proc.kill()
+        except Exception:                               # noqa: BLE001
+            pass
+
+    try:
+        proc = subprocess.Popen(
+            argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1, errors="replace",
+        )
+    except OSError as exc:
+        return 1, "could not start %s: %s" % (action, exc)
+
+    timer = threading.Timer(limit, _kill)
+    timer.daemon = True
+    timer.start()
+    last = 0.0
+    try:
+        for line in proc.stdout:
+            chunks.append(line)
+            now = time.time()
+            # Twice a second at most. A docker pull prints a line per layer
+            # per tick, and recording every one of them turns a progress
+            # display into a write-amplification problem.
+            if now - last > 0.5:
+                record(job_id, output=cc.strip_ansi("".join(chunks)).strip())
+                last = now
+    finally:
+        timer.cancel()
+        try:
+            proc.stdout.close()
+        except Exception:                               # noqa: BLE001
+            pass
+        rc = proc.wait()
+
+    if killed["yes"]:
+        chunks.append("\n[stopped after %ds, which is this action's limit]\n" % limit)
+        rc = rc or 124
+    return rc, cc.strip_ansi("".join(chunks)).strip()
+
+
 def worker(job_id, action, service):
     started = time.time()
     try:
-        rc, out = run_manage(action, service)
+        rc, out = run_manage_streamed(action, service, job_id)
     finally:
         _running["job"] = None
         _run_lock.release()
@@ -631,8 +694,8 @@ def handle(req):
     if action == "services":
         return {"ok": True, "services": sorted(SERVICES),
                 "actions": sorted(ACTIONS) + sorted(POWER) +
-                           ["maintenance", "logs", "metrics", "users-get",
-                            "users-put", "auth-reset", "auth-log"]}
+                           ["maintenance", "logs", "metrics", "updates-refresh",
+                            "users-get", "users-put", "auth-reset", "auth-log"]}
 
     if action == "logs":
         if not valid_service(service, action):
@@ -643,6 +706,20 @@ def handle(req):
             tail = 40
         rc, out = action_logs(service, tail)
         return {"ok": rc == 0, "output": out}
+
+    if action == "updates-refresh":
+        # An explicit "check now". The cache is what the page reads, so the
+        # only thing this does is make it old: the refresh itself runs in a
+        # background thread and the page keeps showing the previous answer
+        # until the new one lands. Read-only as far as the box is concerned,
+        # so it is not on the ACTIONS whitelist, which maps to corex-manage
+        # subcommands that change things.
+        try:
+            import corex_updates as cu_up
+            return {"ok": True, "updates": cu_up.updates(refresh=True)}
+        except Exception as exc:                        # noqa: BLE001
+            say("updates-refresh failed: %r" % (exc,))
+            return {"ok": False, "error": "could not start the check"}
 
     if action == "metrics":
         # Read-only and cheap apart from `du`, which caches itself. It is not

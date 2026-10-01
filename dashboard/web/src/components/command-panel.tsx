@@ -50,7 +50,7 @@ export function CommandPanel({
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
+        <CardTitle className="flex flex-wrap items-center gap-2 text-body">
           <Icon className="size-4" />
           {title}
           <Button
@@ -65,7 +65,7 @@ export function CommandPanel({
           </Button>
         </CardTitle>
         {description && (
-          <div className="text-muted-foreground text-xs leading-relaxed">{description}</div>
+          <div className="text-muted-foreground text-small leading-relaxed">{description}</div>
         )}
       </CardHeader>
       {(output || children) && (

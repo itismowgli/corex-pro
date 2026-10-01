@@ -39,6 +39,7 @@ MAINT_TASKS=(
     "cleanup|Docker cleanup|Remove images and build cache nothing is using. This is the disk that fills first.|true|168|4"
     "timemachine|Time Machine check|Confirm the share is being written to and the container is not restart-looping.|true|168|5"
     "os-upgrade|OS packages|Supervised apt upgrade, including the kernel packages unattended-upgrades is told to leave alone.|false|720|4"
+    "updates|Check for updates|Ask the registries what is newer, so the dashboard already knows when you open it.|true|6|*"
 )
 
 maintenance_install() {
@@ -300,6 +301,10 @@ due() {
     # what makes this work on a machine that is switched off at night: without
     # it a backup scheduled for 03:00 on a box that sleeps from 01:00 never
     # happens, and the history says it is due forever.
+    # "*" means any hour: a task cheap enough to run whenever its interval has
+    # elapsed does not want a time of day, and pinning one to an hour makes a
+    # six hourly task run once a day.
+    [[ "$hour" == "*" ]] && return 0
     [[ "$(date +%-H)" == "$hour" ]] && return 0
     (( elapsed >= interval * 3600 * 3 / 2 )) && return 0
     return 1
@@ -362,6 +367,45 @@ task_cleanup() {
 # on almost every look (gotcha #29). So this reports two things a glance
 # cannot: whether the restart count is climbing, and whether anything has
 # actually been written lately.
+# Ask the registries on a schedule, so the Updates page is informative the
+# instant it opens rather than a second or two later.
+#
+# The page reads a cache and refreshes it in the background when it is old,
+# which is the right default and still means the first view after a quiet day
+# shows a day-old answer. This keeps the cache warm instead. It changes
+# nothing on the box: the worst outcome is an answer that stays as old as it
+# already was.
+task_updates() {
+    local lib="/usr/local/lib/corex"
+    [[ -f "${lib}/corex_updates.py" ]] || {
+        echo "the update checker is not installed here"; return 0; }
+    local out
+    out="$(python3 - "$lib" <<'PYEOF' 2>&1
+import sys
+sys.path.insert(0, sys.argv[1])
+import corex_updates as u
+d = u.updates(refresh=True)
+# refresh=True starts a background thread, so wait for it rather than
+# reporting on the answer it was about to replace.
+import time
+for _ in range(120):
+    if not d.get("checking"):
+        break
+    time.sleep(2)
+    d = u.updates()
+svc = d.get("services", {}) or {}
+waiting = [k for k, v in svc.items()
+           if (v or {}).get("state") in ("update", "stale-tag")]
+behind = [k for k, v in svc.items() if (v or {}).get("state") == "newer-release"]
+held = [k for k, v in svc.items() if (v or {}).get("state") == "held"]
+print("%d checked, %d with a new image, %d behind upstream, %d held"
+      % (len(svc), len(waiting), len(behind), len(held)))
+PYEOF
+)" || { echo "the check did not run: ${out}"; return 1; }
+    echo "${out}"
+    return 0
+}
+
 task_timemachine() {
     docker inspect timemachine >/dev/null 2>&1 || {
         echo "Time Machine is not installed here"; return 0; }
@@ -482,7 +526,7 @@ run_governed() {
 
 # ── Run whatever is due ─────────────────────────────────────────────────────
 
-TASKS="backup cleanup timemachine os-upgrade"
+TASKS="backup cleanup timemachine os-upgrade updates"
 if [[ $# -gt 0 ]]; then
     # A named task runs whether or not it is due. This is what
     # `corex manage maintenance run <task>` uses.

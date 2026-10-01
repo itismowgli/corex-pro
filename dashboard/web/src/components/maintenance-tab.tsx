@@ -91,7 +91,7 @@ export function MaintenanceTab({
   if (!data) {
     return (
       <Card>
-        <CardContent className="text-muted-foreground text-sm">
+        <CardContent className="text-muted-foreground text-body">
           Waiting for the agent to report the schedule.
         </CardContent>
       </Card>
@@ -102,12 +102,12 @@ export function MaintenanceTab({
     return (
       <Card className="border-warn/50">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-sm">
+          <CardTitle className="flex items-center gap-2 text-body">
             <CalendarClockIcon className="size-4" />
             Nothing is scheduled
           </CardTitle>
         </CardHeader>
-        <CardContent className="flex flex-col gap-2 text-sm">
+        <CardContent className="flex flex-col gap-2 text-body">
           <p>
             Backups, Docker cleanup and the Time Machine check are not running on a schedule on this
             box. Install the hourly timer over SSH:
@@ -124,11 +124,11 @@ export function MaintenanceTab({
     <div className="flex flex-col gap-3">
       {!data.timer_active && (
         <Card className="border-destructive/50">
-          <CardContent className="flex items-start gap-2 text-sm">
+          <CardContent className="flex items-start gap-2 text-body">
             <AlertTriangleIcon className="text-destructive mt-0.5 size-4 shrink-0" />
             <div>
               <p className="font-medium">The timer is installed but not running, so nothing is due.</p>
-              <p className="text-muted-foreground mt-1 text-xs">
+              <p className="text-muted-foreground mt-1 text-small">
                 Start it with{" "}
                 <code className="text-foreground">
                   sudo systemctl enable --now corex-maintenance.timer
@@ -142,9 +142,9 @@ export function MaintenanceTab({
 
       {!data.enabled && (
         <Card className="border-warn/50">
-          <CardContent className="text-sm">
+          <CardContent className="text-body">
             <p className="font-medium">Maintenance is switched off in the config.</p>
-            <p className="text-muted-foreground mt-1 text-xs">
+            <p className="text-muted-foreground mt-1 text-small">
               MAINTENANCE_ENABLED=false in /etc/corex/maintenance.conf. The timer still fires and
               does nothing. Buttons here still work.
             </p>
@@ -160,36 +160,36 @@ export function MaintenanceTab({
         return (
           <Card key={t.name}>
             <CardHeader>
-              <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
+              <CardTitle className="flex flex-wrap items-center gap-2 text-body">
                 <Icon className="size-4 shrink-0" />
                 {t.label}
                 <Badge variant={o.tone}>{o.text}</Badge>
                 {!t.enabled && <Badge variant="outline">not scheduled</Badge>}
               </CardTitle>
-              <p className="text-muted-foreground text-xs">{t.description}</p>
+              <p className="text-muted-foreground text-small">{t.description}</p>
             </CardHeader>
             <CardContent className="flex flex-col gap-3">
-              <div className="grid gap-1 text-sm sm:grid-cols-2">
+              <div className="grid gap-1 text-body sm:grid-cols-2">
                 <div className="flex items-baseline justify-between gap-3">
-                  <span className="text-muted-foreground text-xs">Schedule</span>
-                  <span className="text-xs">
+                  <span className="text-muted-foreground text-small">Schedule</span>
+                  <span className="text-small">
                     {t.enabled ? `${every(t.interval_h)}, around ${t.hour}:00` : "off"}
                   </span>
                 </div>
                 <div className="flex items-baseline justify-between gap-3">
-                  <span className="text-muted-foreground text-xs">Last run</span>
-                  <span className="text-xs">{when(t.last)}</span>
+                  <span className="text-muted-foreground text-small">Last run</span>
+                  <span className="text-small">{when(t.last)}</span>
                 </div>
                 {t.last > 0 && (
                   <div className="flex items-baseline justify-between gap-3">
-                    <span className="text-muted-foreground text-xs">Took</span>
-                    <span className="text-xs">{duration(t.elapsed)}</span>
+                    <span className="text-muted-foreground text-small">Took</span>
+                    <span className="text-small">{duration(t.elapsed)}</span>
                   </div>
                 )}
                 {t.enabled && t.next > 0 && (
                   <div className="flex items-baseline justify-between gap-3">
-                    <span className="text-muted-foreground text-xs">Due next</span>
-                    <span className="text-xs">{when(t.next)}</span>
+                    <span className="text-muted-foreground text-small">Due next</span>
+                    <span className="text-small">{when(t.next)}</span>
                   </div>
                 )}
               </div>
@@ -198,8 +198,8 @@ export function MaintenanceTab({
                 <p
                   className={
                     t.state === "failed"
-                      ? "text-destructive text-xs break-words"
-                      : "text-muted-foreground text-xs break-words"
+                      ? "text-destructive text-small break-words"
+                      : "text-muted-foreground text-small break-words"
                   }
                 >
                   {t.detail}
@@ -210,7 +210,7 @@ export function MaintenanceTab({
                   the most recent event. It does not reset the clock, so the
                   row above still describes the last time this really ran. */}
               {t.deferred_at > t.last && (
-                <p className="text-warn text-xs break-words">
+                <p className="text-warn text-small break-words">
                   Held back {when(t.deferred_at)}: {t.deferred_detail || "the machine was too hot"}
                 </p>
               )}

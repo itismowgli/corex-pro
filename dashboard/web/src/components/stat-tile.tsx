@@ -41,19 +41,19 @@ export function StatTile({
     tone === "danger" ? "text-destructive" : tone === "warn" ? "text-warn" : "text-foreground"
   const body = (
     <CardContent className="grid gap-2 px-4">
-      <div className="text-muted-foreground flex items-center gap-1.5 text-xs">
+      <div className="text-muted-foreground flex items-center gap-1.5 text-small">
         <Icon className="size-3.5 shrink-0" />
         <span className="truncate">{label}</span>
         {onOpen && <ChevronRightIcon className="ml-auto size-3.5 shrink-0 opacity-50" />}
       </div>
       <div className="flex flex-wrap items-baseline gap-x-1.5">
-        <span className={`font-mono text-xl leading-none sm:text-2xl ${color}`}>{value}</span>
-        {of && <span className="text-muted-foreground text-xs">of {of}</span>}
+        <span className={`font-mono text-display leading-none sm:text-display ${color}`}>{value}</span>
+        {of && <span className="text-muted-foreground text-small">of {of}</span>}
       </div>
       {ratio !== undefined && (
         <Meter value={Math.max(0, ratio)} max={1} tone={tone ?? "auto"} />
       )}
-      {sub && <div className="text-muted-foreground text-xs">{sub}</div>}
+      {sub && <div className="text-muted-foreground text-small">{sub}</div>}
       {children}
     </CardContent>
   )
@@ -63,9 +63,9 @@ export function StatTile({
       type="button"
       onClick={onOpen}
       aria-label={`${label}, see what is using it`}
-      className="focus-visible:ring-ring/50 rounded-xl text-left focus-visible:ring-[3px] focus-visible:outline-none"
+      className="focus-visible:ring-ring/50 rounded-lg text-left focus-visible:ring-[3px] focus-visible:outline-none"
     >
-      <Card className="hover:border-ring h-full gap-2 py-4 transition-colors">{body}</Card>
+      <Card className="hover:border-ring h-full gap-2 py-4 transition-colors duration-(--dur-fast) ease-(--ease)">{body}</Card>
     </button>
   )
 }

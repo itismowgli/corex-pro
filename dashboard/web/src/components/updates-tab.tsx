@@ -1,4 +1,11 @@
-import { ArrowUpCircleIcon, Loader2Icon, PackageIcon, RefreshCwIcon, TagIcon } from "lucide-react"
+import {
+  ArrowUpCircleIcon,
+  Loader2Icon,
+  PackageIcon,
+  RefreshCwIcon,
+  SearchIcon,
+  TagIcon,
+} from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -45,6 +52,7 @@ export function UpdatesTab({
   locked,
   onAction,
   onUpdateAll,
+  onCheck,
   onOsUpgrade,
 }: {
   services: Service[]
@@ -55,6 +63,7 @@ export function UpdatesTab({
   locked: boolean
   onAction: (svc: Service, action: ServiceAction) => void
   onUpdateAll: () => void
+  onCheck: () => void
   onOsUpgrade: () => void
 }) {
   /**
@@ -100,7 +109,7 @@ export function UpdatesTab({
           cannot be undone by pulling a different image. */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
+          <CardTitle className="flex flex-wrap items-center gap-2 text-body">
             <PackageIcon className="size-4 shrink-0" />
             Ubuntu
             {os && os.total > 0 && <Badge variant="warn">{os.total} package{os.total === 1 ? "" : "s"}</Badge>}
@@ -109,17 +118,17 @@ export function UpdatesTab({
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           {!os ? (
-            <p className="text-muted-foreground text-sm">Checking...</p>
+            <p className="text-muted-foreground text-body">Checking...</p>
           ) : os.total === 0 ? (
-            <p className="text-muted-foreground text-sm">Everything is current.</p>
+            <p className="text-muted-foreground text-body">Everything is current.</p>
           ) : (
-            <div className="flex flex-col gap-1.5 text-sm">
+            <div className="flex flex-col gap-1.5 text-body">
               <p>
                 {os.total} package{os.total === 1 ? "" : "s"} can be upgraded
                 {os.security > 0 && `, ${os.security} of them security`}.
               </p>
               {os.held > 0 && (
-                <p className="text-muted-foreground text-xs">
+                <p className="text-muted-foreground text-small">
                   {os.held} {os.held === 1 ? "is" : "are"} held back from automatic
                   upgrades on purpose. The kernel, libc and systemd are only upgraded
                   here, supervised, because an upgrade interrupted part way can leave
@@ -133,7 +142,7 @@ export function UpdatesTab({
               <ArrowUpCircleIcon />
               Upgrade Ubuntu
             </Button>
-            <span className="text-muted-foreground text-xs">
+            <span className="text-muted-foreground text-small">
               Refuses to start above 85C, on a half-finished package transaction, or
               in the first fifteen minutes after boot.
             </span>
@@ -144,37 +153,50 @@ export function UpdatesTab({
       {/* Services */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-col">
-          <h3 className="text-sm font-medium">
+          <h3 className="text-body font-medium">
             Services
             {waiting.length > 0 && (
               <span className="text-muted-foreground ml-1.5 font-normal">{waiting.length}</span>
             )}
           </h3>
-          <p className="text-muted-foreground text-xs">
+          {/* The page draws from a cache, which is why it is instant. That
+              makes how old the answer is part of the answer, so it is stated
+              plainly rather than left for the reader to wonder about. */}
+          <p className="text-muted-foreground text-small">
             {updates?.checking
-              ? "Checking the registries..."
+              ? "Checking the registries now..."
               : !updates?.checked_at
-                ? "No check has run yet."
-                : `Checked ${ago(updates.checked_at)}.`}
-          </p>
-          <p className="text-muted-foreground text-xs">
-            Update everything updates CoreX first, then every service, which is
-            what lets a version CoreX pins actually arrive.
+                ? "Not checked yet."
+                : `Last checked ${ago(updates.checked_at)}.`}
           </p>
         </div>
-        {/* Always offered, not only when more than one thing is waiting.
-            It updates CoreX and then every service, so it is also how a
-            version CoreX pins arrives: pressing it is never wrong, and
-            hiding it whenever the count is 0 or 1 made the one control that
-            fixes everything the hardest one to find. */}
-        <Button size="sm" disabled={disabled} onClick={onUpdateAll}>
-          <RefreshCwIcon />
-          Update everything
-        </Button>
+        {/* Two controls, and the distinction is the one every OS makes:
+            looking is safe and changes nothing, applying is the commitment.
+            Conflating them is why the old single button felt risky to press. */}
+        <div className="flex shrink-0 items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!!updates?.checking}
+            onClick={onCheck}
+          >
+            {updates?.checking ? <Loader2Icon className="animate-spin" /> : <SearchIcon />}
+            Check now
+          </Button>
+          {/* Always offered, not only when more than one thing is waiting.
+              It updates CoreX and then every service, so it is also how a
+              version CoreX pins arrives: pressing it is never wrong, and
+              hiding it whenever the count was 0 or 1 made the one control
+              that fixes everything the hardest one to find. */}
+          <Button size="sm" disabled={disabled} onClick={onUpdateAll}>
+            <RefreshCwIcon />
+            Update everything
+          </Button>
+        </div>
       </div>
 
       {waiting.length === 0 ? (
-        <p className="text-muted-foreground text-sm">
+        <p className="text-muted-foreground text-body">
           Nothing has a newer image.
           {unknown.length > 0 &&
             ` ${unknown.length} could not be checked, so ${unknown.length === 1 ? "it is" : "they are"} listed below.`}
@@ -197,11 +219,11 @@ export function UpdatesTab({
 
       {behind.length > 0 && (
         <div className="flex flex-col gap-2">
-          <h3 className="text-sm font-medium">
+          <h3 className="text-body font-medium">
             A newer release exists
             <span className="text-muted-foreground ml-1.5 font-normal">{behind.length}</span>
           </h3>
-          <p className="text-muted-foreground text-xs">
+          <p className="text-muted-foreground text-small">
             Pinned to an exact version by CoreX, and current for it. Update
             everything is what moves these, because it updates CoreX first.
           </p>
@@ -229,11 +251,11 @@ export function UpdatesTab({
           installed. */}
       {held.length > 0 && (
         <div className="flex flex-col gap-2">
-          <h3 className="text-sm font-medium">
+          <h3 className="text-body font-medium">
             Held back on purpose
             <span className="text-muted-foreground ml-1.5 font-normal">{held.length}</span>
           </h3>
-          <p className="text-muted-foreground text-xs">
+          <p className="text-muted-foreground text-small">
             Upstream is ahead and CoreX does not follow it here. Nothing to do.
           </p>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -256,7 +278,7 @@ export function UpdatesTab({
           one would be the same mistake as a check that cannot fail. */}
       {unknown.length > 0 && (
         <div className="flex flex-col gap-2">
-          <h3 className="text-sm font-medium">
+          <h3 className="text-body font-medium">
             Could not be checked
             <span className="text-muted-foreground ml-1.5 font-normal">{unknown.length}</span>
           </h3>
@@ -310,7 +332,7 @@ function UpdateCard({
   return (
     <Card className="gap-3">
       <CardHeader>
-        <CardTitle className="flex min-w-0 items-start justify-between gap-2 text-sm">
+        <CardTitle className="flex min-w-0 items-start justify-between gap-2 text-body">
           <span className="min-w-0 flex-1 truncate" title={svc.label}>
             {svc.label}
           </span>
@@ -327,7 +349,7 @@ function UpdateCard({
             not what it will call itself, so this states where you are rather
             than inventing a "to" half it would have to guess at. */}
         {(rowName || svc.version) && (
-          <span className="text-muted-foreground inline-flex min-w-0 items-center gap-1 font-mono text-xs">
+          <span className="text-muted-foreground inline-flex min-w-0 items-center gap-1 font-mono text-small">
             <TagIcon className="size-3 shrink-0" />
             <span className="truncate" title={row ? row.image : "Image tag currently running"}>
               {rowName ?? svc.version}
@@ -338,11 +360,11 @@ function UpdateCard({
       </CardHeader>
       <CardContent className="flex flex-col gap-2">
         {update?.note && !prog && (
-          <p className="text-muted-foreground text-xs break-words">{update.note}</p>
+          <p className="text-muted-foreground text-small break-words">{update.note}</p>
         )}
         {prog && (
           <div className="flex flex-col gap-1">
-            <div className="text-muted-foreground flex items-baseline justify-between gap-2 text-xs">
+            <div className="text-muted-foreground flex items-baseline justify-between gap-2 text-small">
               <span className="truncate">{prog.detail}</span>
               {prog.pct !== null && <span className="shrink-0 font-mono">{prog.pct}%</span>}
             </div>
@@ -365,13 +387,13 @@ function UpdateCard({
           {isHeld ? (
             // A decision already taken. Nothing to press, and the reason is
             // the only thing worth saying.
-            <p className="text-muted-foreground text-xs break-words">{row?.reason}</p>
+            <p className="text-muted-foreground text-small break-words">{row?.reason}</p>
           ) : behind ? (
             // No per-card button: this image is pinned, so a pull fetches
             // what it already has and would report success while changing
             // nothing (gotcha #50). Update everything is the control that
             // can move it, because it updates CoreX first.
-            <p className="text-muted-foreground text-xs">
+            <p className="text-muted-foreground text-small">
               Pinned by CoreX. Update everything is what can move it.
             </p>
           ) : (

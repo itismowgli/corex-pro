@@ -50,7 +50,7 @@ function Line({ line, wrap }: { line: ParsedLine; wrap: boolean }) {
   return (
     <div
       className={cn(
-        "flex gap-2 px-2 py-px font-mono text-xs leading-relaxed",
+        "flex gap-2 px-2 py-px font-mono text-small leading-relaxed",
         line.level === "error" && "bg-destructive/10",
         line.level === "warn" && "bg-warn/10"
       )}
@@ -60,7 +60,7 @@ function Line({ line, wrap }: { line: ParsedLine; wrap: boolean }) {
       </span>
       <span
         className={cn(
-          "w-8 shrink-0 select-none text-[10px] font-semibold",
+          "w-8 shrink-0 select-none text-micro font-semibold",
           LEVEL_STYLE[line.level]
         )}
       >
@@ -146,9 +146,9 @@ export function LogsDialog({
     <Dialog open={!!container} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-w-[calc(100vw-1.5rem)] sm:max-w-5xl">
         <DialogHeader>
-          <DialogTitle className="flex flex-wrap items-center gap-2 text-sm">
+          <DialogTitle className="flex flex-wrap items-center gap-2 text-body">
             <span className="truncate">{label || container}</span>
-            <span className="text-muted-foreground text-xs font-normal">
+            <span className="text-muted-foreground text-small font-normal">
               last 100 lines, then live
             </span>
             {counts.error > 0 && <Badge variant="destructive">{counts.error} errors</Badge>}
@@ -196,7 +196,7 @@ export function LogsDialog({
           className="bg-background h-[55vh] overflow-auto rounded-md border py-1"
         >
           {shown.length === 0 ? (
-            <p className="text-muted-foreground p-3 text-xs">
+            <p className="text-muted-foreground p-3 text-small">
               {ended
                 ? "The stream ended and nothing matched."
                 : lines.length
@@ -208,7 +208,7 @@ export function LogsDialog({
           )}
         </div>
 
-        <div className="text-muted-foreground flex items-center gap-2 text-xs">
+        <div className="text-muted-foreground flex items-center gap-2 text-small">
           <span>
             {shown.length === lines.length
               ? `${lines.length} lines`

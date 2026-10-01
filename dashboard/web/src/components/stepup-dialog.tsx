@@ -103,13 +103,13 @@ function StepupDialog({
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-base">
+          <DialogTitle className="flex items-center gap-2 text-title">
             <ShieldCheckIcon className="size-4" />
             Confirm it is you
           </DialogTitle>
         </DialogHeader>
 
-        <p className="text-muted-foreground text-sm">
+        <p className="text-muted-foreground text-body">
           {pending.label} cannot be undone from this page, so it needs a fresh factor rather than a
           browser that is still signed in. The confirmation lasts five minutes.
         </p>
@@ -125,7 +125,7 @@ function StepupDialog({
                 )}
                 Use a passkey
               </Button>
-              <p className="text-muted-foreground text-xs">
+              <p className="text-muted-foreground text-small">
                 A passkey asks your device to check a fingerprint, a face or a PIN, so it proves
                 someone is here now. A password only proves the browser remembers one.
               </p>
@@ -180,7 +180,7 @@ function StepupDialog({
           </form>
         </div>
 
-        {problem && <p className="text-destructive text-sm">{problem}</p>}
+        {problem && <p className="text-destructive text-body">{problem}</p>}
       </DialogContent>
     </Dialog>
   )

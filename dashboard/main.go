@@ -260,6 +260,7 @@ func main() {
 	api.HandleFunc("/api/stream/vitals", vitalsStreamHandler)
 	api.HandleFunc("/api/run/", runHandler)
 	api.HandleFunc("/api/update-all", updateAllHandler)
+	api.HandleFunc("/api/updates/check", updatesCheckHandler)
 	api.HandleFunc("/api/service/", serviceActionHandler)
 	api.HandleFunc("/api/cleanup", cleanupHandler)
 	api.HandleFunc("/api/job/", jobHandler)
@@ -1059,6 +1060,32 @@ func updateAllHandler(w http.ResponseWriter, r *http.Request) {
 		job.State = "running"
 	}
 	writeJSON(w, http.StatusOK, job)
+}
+
+// updatesCheckHandler is the explicit "check now".
+//
+// The page reads a cache, which is what lets it draw instantly, and the cache
+// refreshes itself in the background when it is old. That is the right default
+// and it is also invisible: there was no way to ask, and no way to tell
+// whether the answer on screen was a minute or a day old. This asks, and
+// returns immediately with whatever is known so far, because the refresh runs
+// in a thread on the agent and the page keeps showing the previous answer
+// until the new one lands.
+func updatesCheckHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	res, err := agentCall(map[string]interface{}{"action": "updates-refresh"}, 30*time.Second)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	if !agentOK(res) {
+		writeErr(w, http.StatusBadGateway, agentString(res, "error"))
+		return
+	}
+	writeJSON(w, http.StatusOK, res["updates"])
 }
 
 // portsHandler lists the direct ports worth knowing, for the services that are

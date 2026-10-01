@@ -21,9 +21,9 @@ export function PageHeader({
   return (
     <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
       <div className="grid min-w-0 gap-1">
-        <h1 className="truncate text-lg font-semibold tracking-tight sm:text-xl">{title}</h1>
+        <h1 className="truncate text-display font-semibold tracking-tight sm:text-display">{title}</h1>
         {description && (
-          <p className="text-muted-foreground text-sm leading-relaxed">{description}</p>
+          <p className="text-muted-foreground text-body leading-relaxed">{description}</p>
         )}
       </div>
       {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}

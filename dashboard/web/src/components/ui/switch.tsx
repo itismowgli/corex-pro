@@ -50,14 +50,14 @@ function Switch({
       <span
         aria-hidden
         className={cn(
-          "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors",
+          "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors duration-(--dur-fast) ease-(--ease)",
           "peer-focus-visible:ring-ring peer-focus-visible:ring-2 peer-focus-visible:ring-offset-2",
           checked ? "bg-primary" : "bg-input",
         )}
       >
         <span
           className={cn(
-            "bg-background pointer-events-none inline-block size-4 rounded-full shadow transition-transform",
+            "bg-background pointer-events-none inline-block size-4 rounded-full shadow transition-transform duration-(--dur-fast) ease-(--ease)",
             checked ? "translate-x-[1.125rem]" : "translate-x-0.5",
           )}
         />

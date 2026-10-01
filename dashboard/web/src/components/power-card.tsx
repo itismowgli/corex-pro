@@ -55,13 +55,13 @@ export function PowerCard({
     <>
       <Card className="border-destructive/40">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-sm">
+          <CardTitle className="flex items-center gap-2 text-body">
             <PowerIcon className="size-4" />
             Power
           </CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
-          <p className="text-muted-foreground text-sm">
+          <p className="text-muted-foreground text-body">
             Both stop every container first, which is the part that protects the databases. Each one
             asks you to confirm who you are before it runs.
           </p>
@@ -77,7 +77,7 @@ export function PowerCard({
             </Button>
           </div>
 
-          <div className="text-muted-foreground border-t pt-3 text-xs">
+          <div className="text-muted-foreground border-t pt-3 text-small">
             <p className="text-foreground font-medium">Getting it back on</p>
             {armed.length > 0 ? (
               <p className="mt-1">
@@ -109,14 +109,14 @@ export function PowerCard({
       <Dialog open={!!asking} onOpenChange={(o) => !o && setAsking(null)}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-base">
+            <DialogTitle className="flex items-center gap-2 text-title">
               <AlertTriangleIcon className="text-destructive size-4" />
               {asking === "shutdown" ? "Shut the machine down" : "Reboot the machine"}
             </DialogTitle>
           </DialogHeader>
 
           {asking === "shutdown" ? (
-            <div className="flex flex-col gap-3 text-sm">
+            <div className="flex flex-col gap-3 text-body">
               <p>
                 Every service goes down and stays down. Nobody can turn this machine on again from
                 the network, including you: this page is on the machine.
@@ -140,7 +140,7 @@ export function PowerCard({
               </div>
             </div>
           ) : (
-            <div className="flex flex-col gap-3 text-sm">
+            <div className="flex flex-col gap-3 text-body">
               <p>
                 Every service stops and starts again. It should be answering in a couple of minutes.
               </p>

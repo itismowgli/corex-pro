@@ -27,17 +27,50 @@
   --color-ok-foreground: var(--ok-foreground);
   --color-warn: var(--warn);
   --color-warn-foreground: var(--warn-foreground);
+  /* Three steps, and --radius is 8px, so: 4, 6, 8. See DESIGN.md. xl maps to
+     lg rather than being dropped, so a stray rounded-xl still looks right
+     while design-check.mjs reports it. */
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
+  --radius-xl: var(--radius);
+
+  /* The five type sizes. Tailwind v4 turns each --text-* into a utility, so
+     text-body and text-micro are real classes and the old text-xs/sm/base
+     can be banned outright. Line heights are paired here rather than set per
+     component, which is how a scale stays a scale. */
+  --text-micro: 0.6875rem;
+  --text-micro--line-height: 1rem;
+  --text-small: 0.75rem;
+  --text-small--line-height: 1.125rem;
+  --text-body: 0.8125rem;
+  --text-body--line-height: 1.25rem;
+  --text-title: 0.9375rem;
+  --text-title--line-height: 1.375rem;
+  --text-display: 1.125rem;
+  --text-display--line-height: 1.625rem;
 }
 
 :root {
   /* Rounder than shadcn's default, and the cards lean on depth rather than
      a hard border, which is what makes a dense panel read as one surface
      instead of a grid of boxes. */
-  --radius: 0.875rem;
+  /* 8px. It was 14px, which made every panel read as a separate rounded box
+     rather than as one surface, and is the single change that moves this
+     furthest toward a dense control surface. */
+  --radius: 0.5rem;
+
+  /* Motion. Two durations and one easing, and nothing else is allowed:
+     movement here confirms that something happened, it is not the thing that
+     happened. Nothing bounces. */
+  --dur-fast: 90ms;
+  --dur: 140ms;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+
+  /* Two elevations, both nearly invisible. A surface takes a border or a
+     shadow, never both on the same edge. */
+  --shadow-sm: 0 1px 2px oklch(0 0 0 / 0.04), 0 1px 1px oklch(0 0 0 / 0.03);
+  --shadow-md: 0 8px 24px oklch(0 0 0 / 0.10), 0 2px 6px oklch(0 0 0 / 0.06);
   --background: oklch(0.985 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -67,6 +100,20 @@
   --seg-system: oklch(0.52 0.08 255);
   --warn: oklch(0.75 0.15 70);
   --warn-foreground: oklch(0.21 0.03 60);
+  /* The three terminal colours that are not already a semantic token. CoreX
+     commands write in colour and the colour carries meaning, so the output
+     keeps it. Darker here than on the dark theme, because these were tuned
+     against a dark background and were close to unreadable on white. */
+  --term-blue: oklch(0.52 0.15 250);
+  --term-blue-bright: oklch(0.58 0.16 250);
+  --term-magenta: oklch(0.52 0.19 320);
+  --term-magenta-bright: oklch(0.58 0.2 320);
+  --term-cyan: oklch(0.55 0.1 200);
+  --term-cyan-bright: oklch(0.6 0.11 200);
+  /* Chart series. Named for what they plot, so two panels cannot drift into
+     different blues for the same measure. */
+  --chart-load: var(--term-blue);
+  --chart-mem: var(--term-magenta);
 }
 
 .dark {
@@ -96,6 +143,16 @@
   --seg-system: oklch(0.55 0.09 255);
   --warn: oklch(0.78 0.14 75);
   --warn-foreground: oklch(0.18 0.03 60);
+  /* Shadows carry further on a dark surface, so they are weaker, not
+     stronger: the same values read as a halo here. */
+  --shadow-sm: 0 1px 2px oklch(0 0 0 / 0.30), 0 1px 1px oklch(0 0 0 / 0.20);
+  --shadow-md: 0 8px 24px oklch(0 0 0 / 0.45), 0 2px 6px oklch(0 0 0 / 0.30);
+  --term-blue: oklch(0.62 0.14 250);
+  --term-blue-bright: oklch(0.68 0.13 250);
+  --term-magenta: oklch(0.65 0.18 320);
+  --term-magenta-bright: oklch(0.7 0.16 320);
+  --term-cyan: oklch(0.7 0.11 200);
+  --term-cyan-bright: oklch(0.75 0.1 200);
 }
 
 @theme inline {
@@ -113,6 +170,14 @@
   }
   body {
     @apply bg-background text-foreground antialiased;
+    font-size: var(--text-body);
+    line-height: var(--text-body--line-height);
+  }
+  /* Figures that are compared to each other. Proportional digits change width
+     as they change value, so a column of vitals jitters on every poll, and
+     every vital on this page updates. */
+  .num {
+    font-variant-numeric: tabular-nums;
   }
   /* Terminal output is the one place alignment carries meaning, so it never
      wraps mid-column. It scrolls instead.

@@ -28,7 +28,7 @@ learning nginx, SSL, Docker networking, or Linux hardening.
 - Re-run on existing server = health-check + repair broken services only
 - No live server required for testing (Docker-in-Docker + bats)
 
-**Current version:** v3.49.0
+**Current version:** v3.51.0
 **Current service modules:** 21 (Traefik, AdGuard, Portainer, Nextcloud,
 Immich, Vaultwarden, Stalwart Mail, Coolify, n8n, Cal.com, Time Machine,
 Uptime Kuma + Grafana + Prometheus (monitoring), Ollama + OpenWebUI +
@@ -3158,6 +3158,37 @@ So a check that finds newer versions must report what exists and leave the
 choice to a person. Anything that auto-applied "newest" would have taken this
 one, and the same applies to any sidecar paired with an app version: the
 pairing is the constraint, not the tag.
+
+### 80. A design system nobody checks is a style guide, and it decays
+
+The dashboard was built with shadcn tokens and a stated preference for
+restraint, and by the time anyone counted it had six type sizes outside any
+scale, four corner radii, colour literals in three components and transitions
+at three durations. None of it was visible to any check, because all of it
+compiles and renders correctly.
+
+`dashboard/web/DESIGN.md` is the vocabulary and `design-check.mjs` runs in the
+build. The rules worth repeating here:
+
+- A component never writes a colour. Only `index.css` holds a value; every
+  other file references a token. Terminal colours and chart series are tokens
+  too, which is how they gained a light-theme variant: they had been tuned
+  against a dark background and were unreadable on white.
+- Five type sizes, defined as Tailwind v4 `--text-*` theme vars so they are
+  real utilities. That is what makes it possible to ban `text-xs`, `text-sm`
+  and the rest outright rather than asking people not to use them.
+- A surface takes a border or a shadow, never both on the same edge. Cards
+  take the border; shadow is reserved for things that sit over the page.
+- Two durations and one easing. "Fast" is not fewer animations, it is the
+  same short one everywhere.
+
+**Remapping a scale needs word boundaries.** `text-small` contains `text-sm`,
+so a sequential replace of the old names produces `text-bodyall` in the files
+it already touched. 255 usages across 32 files were remapped in one pass with
+`\b` anchors for this reason.
+
+**The check cannot see taste, only vocabulary size.** That is most of what a
+design system is, and it is the part that decays.
 
 ## What NOT to Do
 

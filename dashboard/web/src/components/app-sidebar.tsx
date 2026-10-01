@@ -40,7 +40,7 @@ export function SidebarBody({
     <div className="flex h-full min-h-0 flex-col gap-3 py-3">
       <div className={cn("flex items-center gap-2 px-3", collapsed && "justify-center px-2")}>
         {!collapsed && (
-          <span className="text-muted-foreground truncate text-[11px] font-medium tracking-wide uppercase">
+          <span className="text-muted-foreground truncate text-micro font-medium tracking-wide uppercase">
             Sections
           </span>
         )}
@@ -64,7 +64,7 @@ export function SidebarBody({
           onClick={onOpenPalette}
           title="Search or jump to a section"
           className={cn(
-            "border-input bg-background text-muted-foreground hover:border-ring focus-visible:ring-ring/50 flex h-9 w-full items-center gap-2 rounded-lg border px-2.5 text-sm transition-colors focus-visible:ring-[3px] focus-visible:outline-none",
+            "border-input bg-background text-muted-foreground hover:border-ring focus-visible:ring-ring/50 flex h-9 w-full items-center gap-2 rounded-lg border px-2.5 text-body transition-colors duration-(--dur-fast) ease-(--ease) focus-visible:ring-[3px] focus-visible:outline-none",
             collapsed && "justify-center px-0"
           )}
         >
@@ -72,7 +72,7 @@ export function SidebarBody({
           {!collapsed && (
             <>
               <span className="truncate">Search or jump to</span>
-              <kbd className="bg-muted text-muted-foreground ml-auto rounded px-1.5 py-0.5 font-mono text-[10px]">
+              <kbd className="bg-muted text-muted-foreground ml-auto rounded px-1.5 py-0.5 font-mono text-micro">
                 ⌘K
               </kbd>
             </>
@@ -87,7 +87,7 @@ export function SidebarBody({
         {groups.map((group) => (
           <div key={group.title} className="grid gap-1">
             {!collapsed && (
-              <p className="text-muted-foreground px-2 text-[11px] font-medium tracking-wide uppercase">
+              <p className="text-muted-foreground px-2 text-micro font-medium tracking-wide uppercase">
                 {group.title}
               </p>
             )}
@@ -101,7 +101,7 @@ export function SidebarBody({
                   aria-current={active ? "page" : undefined}
                   title={collapsed ? label : undefined}
                   className={cn(
-                    "focus-visible:ring-ring/50 flex h-9 items-center gap-2.5 rounded-lg px-2.5 text-sm transition-colors focus-visible:ring-[3px] focus-visible:outline-none",
+                    "focus-visible:ring-ring/50 flex h-9 items-center gap-2.5 rounded-lg px-2.5 text-body transition-colors duration-(--dur-fast) ease-(--ease) focus-visible:ring-[3px] focus-visible:outline-none",
                     collapsed && "justify-center px-0",
                     active
                       ? "bg-accent text-accent-foreground font-medium"
@@ -118,7 +118,7 @@ export function SidebarBody({
       </nav>
 
       {!collapsed && (version || serverIp) && (
-        <div className="text-muted-foreground grid gap-0.5 px-5 text-[11px]">
+        <div className="text-muted-foreground grid gap-0.5 px-5 text-micro">
           {version && <span>CoreX Pro v{version}</span>}
           {serverIp && <span className="font-mono">{serverIp}</span>}
         </div>

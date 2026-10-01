@@ -124,15 +124,15 @@ export function StorageTab({
       {layout && (layout.totals.idle_b > 0 || (tm && tm.usage && tm.usage.used_b / tm.usage.total_b < 0.02)) && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm">Capacity that is not doing anything</CardTitle>
+            <CardTitle className="text-body">Capacity that is not doing anything</CardTitle>
           </CardHeader>
-          <CardContent className="grid gap-4 text-sm">
+          <CardContent className="grid gap-4 text-body">
             {layout.lvm && layout.lvm.free_b > 0 && (
               <div className="grid gap-1">
                 <p className="font-medium">
                   {bytes(layout.lvm.free_b)} unallocated on the internal disk
                 </p>
-                <p className="text-muted-foreground text-xs leading-relaxed">
+                <p className="text-muted-foreground text-small leading-relaxed">
                   Free space in the volume group that no filesystem covers, so nothing can
                   write to it and no `df` mentions it. It is the fastest storage in the
                   machine. Give some of it to the databases with{" "}
@@ -148,7 +148,7 @@ export function StorageTab({
                 <p className="font-medium">
                   Time Machine holds {bytes(tm.usage.used_b)} of its {bytes(tm.size_b)}
                 </p>
-                <p className="text-muted-foreground text-xs leading-relaxed">
+                <p className="text-muted-foreground text-small leading-relaxed">
                   {tm.usage.used_b / tm.usage.total_b < 0.02 ? (
                     <>
                       Almost nothing. Backups from a Mac land in the shared pool on the data
@@ -174,7 +174,7 @@ export function StorageTab({
       <div className="grid gap-3 lg:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-sm">
+            <CardTitle className="flex items-center gap-2 text-body">
               <HardDriveIcon className="size-4" />
               What CoreX writes to
             </CardTitle>
@@ -197,7 +197,7 @@ export function StorageTab({
                 />
               ))
             )}
-            <p className="text-muted-foreground text-xs">
+            <p className="text-muted-foreground text-small">
               The OS and Docker engine live on the internal disk, and everything persistent
               lives on the SSD. Keeping them apart is what makes the box easy to migrate and
               restore.
@@ -207,7 +207,7 @@ export function StorageTab({
 
         <Card>
           <CardHeader>
-            <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
+            <CardTitle className="flex flex-wrap items-center gap-2 text-body">
               Docker usage
               <span className="ml-auto flex gap-2">
                 <Button
@@ -245,7 +245,7 @@ export function StorageTab({
           </CardHeader>
           <CardContent>
             {!docker ? (
-              <p className="text-muted-foreground text-xs">
+              <p className="text-muted-foreground text-small">
                 Docker did not report its usage.
               </p>
             ) : (
@@ -267,16 +267,16 @@ export function StorageTab({
                       <TableRow key={key}>
                         <TableCell>
                           <div>{label}</div>
-                          <div className="text-muted-foreground text-xs">{note}</div>
+                          <div className="text-muted-foreground text-small">{note}</div>
                         </TableCell>
-                        <TableCell className="text-right font-mono text-xs">
+                        <TableCell className="text-right font-mono text-small">
                           {row.active}/{row.count}
                         </TableCell>
-                        <TableCell className="text-right font-mono text-xs">
+                        <TableCell className="text-right font-mono text-small">
                           {bytes(row.size_b)}
                         </TableCell>
                         <TableCell
-                          className={`text-right font-mono text-xs ${
+                          className={`text-right font-mono text-small ${
                             row.reclaimable_b > 0 ? "text-warn" : "text-muted-foreground"
                           }`}
                         >
@@ -289,14 +289,14 @@ export function StorageTab({
               </Table>
               </div>
             )}
-            <p className="text-muted-foreground mt-3 text-xs">
+            <p className="text-muted-foreground mt-3 text-small">
               Cleanup removes images no container references, stopped containers included, and
               build cache older than three days. It never touches service data, and it never
               runs a volume prune, because that would destroy every unnamed volume including
               ones in use.
             </p>
             {held > 0 && (
-              <p className="text-muted-foreground mt-2 text-xs">
+              <p className="text-muted-foreground mt-2 text-small">
                 A further <span className="text-foreground font-mono">{bytes(held)}</span> of
                 build cache is unused but too new to remove
                 {dueIn != null && <> . The oldest of it becomes eligible in about{" "}
@@ -311,11 +311,11 @@ export function StorageTab({
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm">Space per service</CardTitle>
+          <CardTitle className="text-body">Space per service</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-2">
           {sizes.length === 0 ? (
-            <p className="text-muted-foreground text-xs">
+            <p className="text-muted-foreground text-small">
               Still measuring. Walking a photo library takes a while, so this is computed in
               the background and refreshed every fifteen minutes.
             </p>
@@ -335,7 +335,7 @@ export function StorageTab({
       </Card>
 
       {(raw || error) && (
-        <details className="text-muted-foreground text-xs">
+        <details className="text-muted-foreground text-small">
           <summary className="cursor-pointer select-none">
             The report this is rendered from
           </summary>
