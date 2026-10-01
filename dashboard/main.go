@@ -1206,12 +1206,21 @@ func cleanupHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, job)
 }
 
-// Tasks the maintenance runner knows. Kept here as well as in the agent so a
-// mistyped path is a 404 from this side rather than a job that starts and
-// fails, and so the list the page offers cannot drift from the list that runs.
-var maintenanceTasks = map[string]bool{
-	"backup": true, "cleanup": true, "timemachine": true, "os-upgrade": true,
-}
+// A task name this handler will pass on. Deliberately a shape and not a list.
+//
+// There used to be a list here, with the comment that it kept the page from
+// drifting from what runs. It drifted: `updates` was added to the runner and
+// to neither this nor the agent's copy, so the task ran on its schedule, then
+// showed on the page once the reporter was fixed, and pressing Run now still
+// answered "no such maintenance task" from a third list nobody remembered.
+// The runner's own config is the only thing that knows, the agent reads it,
+// and an unknown task comes back from there as an error without starting a
+// job, which is what the list was for.
+var maintenanceTaskName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,39}$`)
+
+// Tasks that need a second factor before they run. This IS a policy and
+// belongs here: it says what is dangerous, not what exists.
+var maintenanceNeedsElevation = map[string]bool{"os-upgrade": true}
 
 // maintenanceHandler serves POST /api/maintenance/<task>, running one
 // scheduled task now instead of waiting for its hour.
@@ -1227,11 +1236,11 @@ func maintenanceHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	task := strings.TrimPrefix(r.URL.Path, "/api/maintenance/")
-	if !maintenanceTasks[task] {
+	if !maintenanceTaskName.MatchString(task) {
 		writeErr(w, http.StatusNotFound, "no such maintenance task")
 		return
 	}
-	if task == "os-upgrade" && !elevatedOrRefuse(w, r) {
+	if maintenanceNeedsElevation[task] && !elevatedOrRefuse(w, r) {
 		return
 	}
 	res, err := agentCall(map[string]interface{}{

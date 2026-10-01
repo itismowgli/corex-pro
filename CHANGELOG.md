@@ -6,6 +6,41 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.54.0] - 2026-10-01
+
+### Fixed
+- **Run now on the update check answered "no such maintenance task".**
+  There were three lists of maintenance tasks besides the runner's own: the
+  agent's run allowlist, the dashboard's 404 guard, and the reporter's
+  wording. `updates` was added to the runner and to none of them. v3.53.0
+  fixed the reporter, so the task appeared on the page, and pressing its
+  button still failed from the two lists nobody had remembered.
+
+  The agent reads the runner's config, which is the only thing that knows. The
+  dashboard keeps no list at all: it checks the shape of the name and lets the
+  agent answer, which is what its list was for. What stays in the dashboard is
+  the elevation policy, because that says what is dangerous rather than what
+  exists. A test now fails if either list comes back.
+
+  The first version of this fix would have crashed on the first press:
+  `corex-agent.py` does not import `re`, and nothing in the file had needed it
+  before. Every agent module is now checked for a standard library name it
+  uses without importing.
+
+### Changed
+- **Health leads with one scannable list.** It had five headings over eight
+  facts, one of them wrapping a single row, which is structure doing nothing:
+  a heading per fact reads the same as no headings, with more to get past. The
+  page is opened with one question, so temperature, throttling, the guardian,
+  each disk and the package database are one list with a colour at the right,
+  and the chart follows it rather than leading.
+
+  Explanation stays where it changes what you would do and goes where it only
+  restates the label. The lm-sensors sentence stays, because a missing sensor
+  is something to fix. "The CPU reducing its own clock is the last warning
+  before it cuts power" went, because the row is already amber and says
+  Throttling.
+
 ## [v3.53.1] - 2026-10-01
 
 ### Fixed

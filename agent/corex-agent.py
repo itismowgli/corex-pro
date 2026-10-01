@@ -70,6 +70,7 @@ THE DASHBOARD'S ACCOUNTS
 import hmac
 import json
 import os
+import re
 import socket
 import socketserver
 import subprocess
@@ -156,8 +157,32 @@ POWER_DELAY = 4
 # Scheduled maintenance, run on demand. Its own branch for the same reason as
 # power: the whitelisted argument is a task name, not a service, so it cannot
 # go through valid_service.
-MAINT_TASKS = ("backup", "cleanup", "timemachine", "os-upgrade")
 MAINT_SCRIPT = "/usr/local/bin/corex-maintenance.sh"
+MAINT_CONF = "/etc/corex/maintenance.conf"
+
+
+def maint_tasks():
+    """The tasks the runner knows, from the config it writes.
+
+    This was a tuple of four names, and the reporter in corex_metrics.py had
+    its own copy, and the dashboard had a third. `updates` was added to the
+    runner and to none of them, so the task ran on schedule, then appeared on
+    the page once the reporter was fixed, and pressing Run now still answered
+    "no such maintenance task" from the two lists nobody had thought of.
+    One source, read fresh, so a task added to the runner is runnable.
+    """
+    names = set()
+    try:
+        with open(MAINT_CONF, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                m = re.match(r"^MAINTENANCE_([A-Z0-9_]+)_INTERVAL_H=", line.strip())
+                if m:
+                    names.add(m.group(1).lower().replace("_", "-"))
+    except OSError:
+        pass
+    # An unreadable config must not make every task unrunnable, so the names
+    # that have always existed remain available.
+    return names or {"backup", "cleanup", "timemachine", "os-upgrade"}
 
 # update-everything is a git pull followed by every service in turn, and a
 # full run on this box pulls for twenty or more of them, so it gets more room
@@ -577,7 +602,7 @@ def _maint_worker(job_id, task):
 
 def handle_maintenance(req):
     task = str(req.get("task", "") or "")
-    if task not in MAINT_TASKS:
+    if task not in maint_tasks():
         return {"ok": False, "error": "unknown task"}
     if not os.path.exists(MAINT_SCRIPT):
         return {"ok": False,

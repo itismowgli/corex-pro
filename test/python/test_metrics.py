@@ -123,3 +123,48 @@ class MaintenanceDiscoveryTest(unittest.TestCase):
         self.assertEqual(
             worded - defined, set(),
             "worded in the agent but not defined in the runner")
+
+
+class NoSecondTaskListTest(unittest.TestCase):
+    """Only the runner may enumerate the maintenance tasks.
+
+    There were three copies: the agent's run allowlist, the dashboard's 404
+    guard, and the reporter's wording. `updates` was added to the runner and
+    to none of them, so it ran on schedule, then appeared on the page once the
+    reporter was fixed, and Run now still answered "no such maintenance task"
+    from the two nobody had thought of.
+    """
+
+    ROOT = pathlib.Path(__file__).resolve().parents[2]
+
+    def test_the_agent_reads_the_config_rather_than_listing_tasks(self):
+        src = (self.ROOT / "agent" / "corex-agent.py").read_text()
+        self.assertIn("MAINTENANCE_", src,
+                      "the agent must derive the task names from the runner's config")
+        # The old shape: a literal tuple or list of the four original names.
+        self.assertNotRegex(
+            src, r'MAINT_TASKS\s*=\s*[\(\[]\s*"backup"',
+            "the agent is enumerating tasks again")
+
+    def test_the_dashboard_does_not_keep_its_own_task_list(self):
+        src = (self.ROOT / "dashboard" / "main.go").read_text()
+        self.assertNotRegex(
+            src, r'maintenanceTasks\s*=\s*map\[string\]bool',
+            "the dashboard is enumerating tasks again")
+        # The elevation policy is a different thing and must stay: it says
+        # what is dangerous, not what exists.
+        self.assertIn("maintenanceNeedsElevation", src)
+        self.assertIn('"os-upgrade": true', src)
+
+    def test_every_runner_task_has_an_interval_so_it_can_be_discovered(self):
+        # Discovery keys on MAINTENANCE_<KEY>_INTERVAL_H, so a task defined
+        # without an interval would be invisible to both the page and the
+        # run path.
+        runner = (self.ROOT / "lib" / "maintenance.sh").read_text()
+        import re
+        rows = re.findall(r'^\s*"([a-z0-9-]+)\|[^"]*"', runner, re.M)
+        self.assertGreaterEqual(len(rows), 5, rows)
+        self.assertIn("updates", rows)
+        for name in rows:
+            self.assertRegex(runner, r'MAINTENANCE_\$\{key\}_INTERVAL_H|INTERVAL_H=\$\{interval\}',
+                             "no interval is written for %s" % name)

@@ -16,12 +16,18 @@ import { ago } from "@/lib/format"
  * three degrees below the point where this hardware cuts its own power with
  * nothing in any log, that a disk is failing its self-test, that dpkg was left
  * half configured by an upgrade interrupted mid-transaction, or that the last
- * shutdown was not a shutdown at all. Those are here.
+ * shutdown was not a shutdown at all.
  *
- * Temperature leads because it is the measure this hardware actually fails by,
- * and it is the only thing on the page drawn rather than listed. "Disks and
- * packages" used to be one box holding two unrelated subjects, which is what a
- * grid of equal boxes quietly encourages: somewhere to put the leftovers.
+ * One scannable list answers "is anything wrong", because that is the only
+ * question this page is opened with. It had five headings over eight facts,
+ * one of them wrapping a single row, which is structure doing nothing: a
+ * heading per fact is the same as no headings at all, with more to read.
+ *
+ * Explanation is kept where it changes what you would do and dropped where it
+ * only says what a word already means. The sentence about lm-sensors stays,
+ * because a missing sensor is a thing to fix; "the CPU reducing its own clock
+ * is the last warning before it cuts power" went, because the row is already
+ * amber and says Throttling.
  */
 
 export function HealthTab({
@@ -48,10 +54,73 @@ export function HealthTab({
   const shed = m?.thermal.shed ?? []
   const smart = m?.smart ?? []
   const findings = m?.watchdog ?? []
+  const dpkg = m?.dpkg
 
   return (
     <div className="flex flex-col gap-6">
-      <Section title="Temperature">
+      {/* No heading. This list is what the page is, and naming it "Status"
+          would be a label on the only thing present. */}
+      <Rows>
+        <Row
+          label="Temperature"
+          value={temp == null ? "no sensor" : `${temp.toFixed(1)}°C`}
+          tone={temp == null ? undefined : temp >= shedAt ? "danger" : temp >= warnAt ? "warn" : "ok"}
+          hint={
+            m?.cpu.temp_source === "none"
+              ? "lm-sensors is not installed. Without it a thermal trip looks exactly like someone pulling the plug."
+              : undefined
+          }
+        />
+        <Row
+          label="Peak in the last two hours"
+          value={peak == null ? "not recorded" : `${peak.toFixed(1)}°C`}
+          tone={peak != null && peak >= shedAt ? "warn" : "ok"}
+        />
+        <Row
+          label="Throttling"
+          value={throttled ? `${throttled} samples` : "none"}
+          tone={throttled ? "warn" : "ok"}
+        />
+        <Row
+          label="Thermal guardian"
+          value={!m?.thermal.enabled ? "off" : shed.length ? `${shed.length} shed` : "nothing shed"}
+          tone={!m?.thermal.enabled || shed.length ? "warn" : "ok"}
+          hint={shed.length ? `Stopped to save the machine: ${shed.join(", ")}.` : undefined}
+        />
+        {smart.length === 0 ? (
+          <Row
+            label="Disks"
+            value="not read"
+            hint="smartmontools is not installed, so the most common hardware failure here is invisible."
+          />
+        ) : (
+          smart.map((d) => (
+            <Row
+              key={d.device}
+              label={d.device}
+              value={d.status}
+              tone={/PASSED|OK/i.test(d.status) ? "ok" : /FAIL/i.test(d.status) ? "danger" : undefined}
+              hint={
+                d.status === "not reported"
+                  ? "A USB bridge usually will not pass SMART through, so this is unknown rather than bad."
+                  : undefined
+              }
+            />
+          ))
+        )}
+        <Row
+          label="Package database"
+          value={dpkg == null ? "not read" : dpkg.clean ? "clean" : "half configured"}
+          tone={dpkg == null ? undefined : dpkg.clean ? "ok" : "danger"}
+          hint={
+            dpkg && !dpkg.clean
+              ? `${dpkg.packages.join(", ")}. Every boot retries and re-breaks this until it is repaired.`
+              : undefined
+          }
+        />
+      </Rows>
+
+      <Section title="Temperature over two hours">
         <Spark
           values={series.map((s) => s.temp)}
           height={72}
@@ -66,83 +135,14 @@ export function HealthTab({
             title={`CPU ${temp.toFixed(1)}°C against the warn, shed and emergency thresholds`}
           />
         )}
-        <Rows>
-          <Row
-            label="Now"
-            value={temp == null ? "no sensor" : `${temp.toFixed(1)}°C`}
-            tone={temp == null ? undefined : temp >= shedAt ? "danger" : temp >= warnAt ? "warn" : "ok"}
-            hint={
-              m?.cpu.temp_source === "none"
-                ? "lm-sensors is not installed. Without it a thermal trip looks exactly like someone pulling the plug."
-                : `Warns at ${warnAt}°C, sheds load at ${shedAt}°C, the hardware cuts power around ${emergencyAt}°C.`
-            }
-          />
-          <Row
-            label="Peak in the last two hours"
-            value={peak == null ? "not recorded" : `${peak.toFixed(1)}°C`}
-            tone={peak != null && peak >= shedAt ? "warn" : "ok"}
-          />
-          <Row
-            label="Throttling"
-            value={throttled ? `${throttled} samples` : "none"}
-            tone={throttled ? "warn" : "ok"}
-            hint="The CPU reducing its own clock is the last warning before it cuts power."
-          />
-          <Row
-            label="Thermal guardian"
-            value={!m?.thermal.enabled ? "off" : shed.length ? `${shed.length} shed` : "nothing shed"}
-            tone={!m?.thermal.enabled || shed.length ? "warn" : "ok"}
-            hint={
-              shed.length
-                ? `Stopped to save the machine: ${shed.join(", ")}. They come back as it cools.`
-                : "Stops containers before the hardware decides to, worst first."
-            }
-          />
-        </Rows>
-      </Section>
-
-      <Section title="Disks">
-        {smart.length === 0 ? (
-          <Empty>
-            No self-test result was read. smartmontools may not be installed, and without it the
-            most common hardware failure on this class of machine is invisible.
-          </Empty>
-        ) : (
-          <Rows>
-            {smart.map((d) => (
-              <Row
-                key={d.device}
-                label={d.device}
-                value={d.status}
-                tone={/PASSED|OK/i.test(d.status) ? "ok" : /FAIL/i.test(d.status) ? "danger" : undefined}
-                hint={
-                  d.status === "not reported"
-                    ? "A USB bridge usually will not pass SMART through, so this is unknown rather than bad."
-                    : undefined
-                }
-              />
-            ))}
-          </Rows>
-        )}
-      </Section>
-
-      <Section title="Package database">
-        <Rows>
-          <Row
-            label="dpkg"
-            value={m?.dpkg == null ? "not read" : m.dpkg.clean ? "clean" : "half configured"}
-            tone={m?.dpkg == null ? undefined : m.dpkg.clean ? "ok" : "danger"}
-            hint={
-              m?.dpkg && !m.dpkg.clean
-                ? `${m.dpkg.packages.join(", ")}. An upgrade interrupted by a power cut leaves this, and every boot retries and re-breaks it.`
-                : "Nothing was left unpacked but unconfigured."
-            }
-          />
-        </Rows>
+        <p className="text-muted-foreground text-small">
+          Warns at {warnAt}°C, sheds load at {shedAt}°C, the hardware cuts power around{" "}
+          {emergencyAt}°C.
+        </p>
       </Section>
 
       <Section
-        title="Checks you can run"
+        title="Checks"
         action={
           <>
             <Button size="xs" variant="secondary" disabled={locked} onClick={() => onRun("health")}>
@@ -161,10 +161,9 @@ export function HealthTab({
         }
       >
         <p className="text-muted-foreground text-small">
-          Everything above is read continuously. These run a command now: the hardware report
-          re-reads sensors and SMART, the watchdog sweep looks for containers stopped against
-          their restart policy, climbing restart counts and memory kills, and doctor repairs
-          whatever it finds unhealthy.
+          Everything above is read continuously. These run now: hardware re-reads sensors and
+          SMART, watchdog looks for containers stopped against their restart policy and memory
+          kills, doctor repairs what it finds unhealthy.
         </p>
         {["health", "watchdog", "doctor"].map((k) =>
           outputs[k] ? (
@@ -179,7 +178,7 @@ export function HealthTab({
         )}
       </Section>
 
-      <Section title="What the watchdog has logged">
+      <Section title="Watchdog log">
         {findings.length === 0 ? (
           <Empty>Nothing, which is the good case.</Empty>
         ) : (
