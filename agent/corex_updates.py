@@ -187,7 +187,31 @@ def remote_digest(host, repo, tag):
         return None, "unreachable"
 
 
-REPO_ROOT = os.environ.get("COREX_REPO_ROOT", "/opt/corex-pro")
+def _repo_root():
+    """Where the service modules live.
+
+    Read from the agent's own config, which is where the real answer is. The
+    first version used an environment variable with /opt/corex-pro as the
+    fallback, and nothing sets that variable: on this box the repository is
+    under /home, so every module lookup missed, service_holds found nothing,
+    and two deliberately held versions were advertised as available. A default
+    that silently produces "no holds" is the worst possible failure for a
+    check whose whole job is to suppress bad advice.
+    """
+    env = os.environ.get("COREX_REPO_ROOT")
+    if env:
+        return env
+    try:
+        import corex_common as _cc
+        root = _cc.read_conf().get("COREX_REPO_ROOT")
+        if root:
+            return root
+    except Exception:                                   # noqa: BLE001
+        pass
+    return "/opt/corex-pro"
+
+
+REPO_ROOT = _repo_root()
 
 
 def _version_tuple(tag):

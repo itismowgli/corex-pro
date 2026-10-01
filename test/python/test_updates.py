@@ -142,5 +142,44 @@ class HoldsTest(unittest.TestCase):
         self.assertEqual(u._RANK["held"], u._RANK["current"])
         self.assertLess(u._RANK["held"], u._RANK["update"])
 
+class RepoRootTest(unittest.TestCase):
+    """Where the modules are found, which decides whether holds work at all.
+
+    The first version read an environment variable nobody sets and fell back
+    to /opt/corex-pro. The repository on this box is under /home, so every
+    module lookup missed and `service_holds` returned nothing, which the
+    checker cannot distinguish from "this module holds nothing". Two
+    deliberately held versions were advertised as available again.
+    """
+
+    def test_the_agent_config_wins_over_the_hardcoded_default(self):
+        conf = {"COREX_REPO_ROOT": "/home/someone/corex-pro"}
+        real = u._repo_root.__globals__.get("corex_common")
+        import types
+        fake = types.SimpleNamespace(read_conf=lambda *a, **k: conf)
+        sys.modules["corex_common"] = fake
+        try:
+            got = u._repo_root()
+        finally:
+            if real is None:
+                sys.modules.pop("corex_common", None)
+        self.assertEqual(got, "/home/someone/corex-pro")
+
+    def test_an_explicit_environment_variable_still_wins(self):
+        import os
+        os.environ["COREX_REPO_ROOT"] = "/tmp/explicit"
+        try:
+            self.assertEqual(u._repo_root(), "/tmp/explicit")
+        finally:
+            os.environ.pop("COREX_REPO_ROOT", None)
+
+    def test_the_resolved_root_actually_holds_service_modules(self):
+        # The property that matters: whatever it resolves to has to be a
+        # directory with modules in it, or holds silently do nothing.
+        import pathlib
+        root = pathlib.Path(__file__).resolve().parents[2]
+        self.assertTrue((root / "lib" / "services" / "keeper.sh").exists())
+
+
 if __name__ == '__main__':
     unittest.main()
