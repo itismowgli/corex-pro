@@ -135,6 +135,24 @@ function useSidebar() {
  * until the first account exists, and until then Traefik basic auth is still
  * in front and the dashboard behaves exactly as it did before.
  */
+/**
+ * One service count in the header.
+ *
+ * These were three filled pills, which on a dark header are three bright
+ * blocks competing with the readings on the page below them. The dot carries
+ * the colour, the number carries the news, and the whole group is quiet until
+ * something is actually down.
+ */
+function HeaderCount({ tone, n, word }: { tone: string; n: number; word: string }) {
+  return (
+    <span className="text-muted-foreground inline-flex items-center gap-1.5 text-small">
+      <span className={`size-1.5 shrink-0 rounded-full ${tone}`} aria-hidden />
+      <span className="num text-foreground font-mono">{n}</span>
+      {word}
+    </span>
+  )
+}
+
 export default function App() {
   const { dark, toggle } = useTheme()
   const me = usePoll(auth.me, 5 * 60_000)
@@ -586,11 +604,13 @@ function Dashboard({
                   title="Go to Services"
                   className="hover:bg-muted focus-visible:ring-ring mr-1 hidden items-center gap-1.5 rounded-md px-1.5 py-1 transition-colors duration-(--dur-fast) ease-(--ease) focus-visible:ring-2 focus-visible:outline-none sm:flex"
                 >
-                  <Badge variant="ok">{counts.healthy} up</Badge>
+                  <HeaderCount tone="bg-ok" n={counts.healthy} word="up" />
                   {counts.unhealthy > 0 && (
-                    <Badge variant="destructive">{counts.unhealthy} down</Badge>
+                    <HeaderCount tone="bg-destructive" n={counts.unhealthy} word="down" />
                   )}
-                  {counts.other > 0 && <Badge variant="secondary">{counts.other} other</Badge>}
+                  {counts.other > 0 && (
+                    <HeaderCount tone="bg-muted-foreground" n={counts.other} word="other" />
+                  )}
                 </button>
               )}
               <Button

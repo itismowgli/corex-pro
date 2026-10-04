@@ -9,6 +9,7 @@ import {
 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
+import { Segmented } from "@/components/ui/segmented"
 import { Button } from "@/components/ui/button"
 import { Empty, Row, Rows, Section } from "@/components/ui/section"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -163,19 +164,16 @@ export function OverviewTab({
               : "Connecting to the live feed"}
           <div className="ml-auto flex items-center gap-1">
             <span className="mr-1 hidden lg:inline">Tap a tile to see what is using it</span>
-            {(Object.keys(RANGES) as RangeKey[]).map((k) => (
-              <button
-                key={k}
-                type="button"
-                onClick={() => setRange(k)}
-                aria-pressed={range === k}
-                className={`focus-visible:ring-ring/50 rounded-md px-2 py-1 text-small transition-colors duration-(--dur-fast) ease-(--ease) focus-visible:ring-[3px] focus-visible:outline-none ${
-                  range === k ? "bg-accent text-accent-foreground font-medium" : "hover:text-foreground"
-                }`}
-              >
-                {RANGE_LABEL[k]}
-              </button>
-            ))}
+            <Segmented
+              label="How far back the charts go"
+              size="sm"
+              value={range}
+              onChange={setRange}
+              options={(Object.keys(RANGES) as RangeKey[]).map((k) => ({
+                value: k,
+                label: RANGE_LABEL[k],
+              }))}
+            />
           </div>
         </div>
 

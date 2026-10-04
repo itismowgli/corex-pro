@@ -17,6 +17,12 @@ const buttonVariants = cva(
         secondary:
           "bg-secondary text-secondary-foreground shadow-xs hover:bg-secondary/80",
         ghost: "hover:bg-accent hover:text-accent-foreground",
+        // A thing that is on or off, several at a time, so it is not a
+        // Segmented. Pressed looks exactly like a chosen segment, because a
+        // second way of saying "this one is on" is a second thing to learn.
+        // State is read from aria-pressed, so the markup carries it too.
+        toggle:
+          "bg-muted/70 text-muted-foreground hover:text-foreground aria-pressed:bg-selected aria-pressed:text-selected-foreground aria-pressed:shadow-sm",
         link: "text-primary underline-offset-4 hover:underline",
       },
       size: {

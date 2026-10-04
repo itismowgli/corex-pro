@@ -138,7 +138,15 @@ export function UpdatesTab({
             </div>
           )}
           <div className="flex flex-wrap items-center gap-2">
-            <Button size="sm" disabled={disabled || !os || os.total === 0} onClick={onOsUpgrade}>
+            {/* Outline, not the accent. This is the one action on the page
+                that can leave the machine unbootable, so it is offered rather
+                than invited, and the accent stays on Update everything. */}
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={disabled || !os || os.total === 0}
+              onClick={onOsUpgrade}
+            >
               <ArrowUpCircleIcon />
               Upgrade Ubuntu
             </Button>
@@ -402,9 +410,12 @@ function UpdateCard({
               Pinned by CoreX. Update everything is what can move it.
             </p>
           ) : (
+            // One accent per view, and on this page it belongs to Update
+            // everything. A grid of accent buttons is a grid of equally urgent
+            // things, which is the same as none.
             <Button
               size="xs"
-              variant={update?.state === "update" ? "default" : "secondary"}
+              variant="secondary"
               disabled={disabled}
               onClick={() => {
                 if (!window.confirm(`Pull the latest image for ${svc.label} and restart it?`)) return

@@ -28,7 +28,7 @@ learning nginx, SSL, Docker networking, or Linux hardening.
 - Re-run on existing server = health-check + repair broken services only
 - No live server required for testing (Docker-in-Docker + bats)
 
-**Current version:** v3.55.0
+**Current version:** v3.56.0
 **Current service modules:** 21 (Traefik, AdGuard, Portainer, Nextcloud,
 Immich, Vaultwarden, Stalwart Mail, Coolify, n8n, Cal.com, Time Machine,
 Uptime Kuma + Grafana + Prometheus (monitoring), Ollama + OpenWebUI +
@@ -3281,6 +3281,57 @@ The related trap found while writing it: the EXPECT table in that file carried
 a comment describing an assertion for the version chip, and no assertion had
 ever been written beneath it. A comment is not a check, which is gotcha #71 in
 a third costume.
+
+---
+
+### 83. The accent was greyscale, so every control was a white slab
+
+shadcn's neutral theme sets `--primary` to a greyscale value, and nobody
+changed it. On the dark theme that is near white, so everything in the
+codebase that reached for "this is the important one" rendered as a white
+block: the switch on every service row, the chosen option in every filter,
+every Update button. Measured by screenshot, the four brightest objects on the
+Services page were its switches. The green that means healthy and the red that
+means not answering were both quieter than a toggle.
+
+That is backwards on a status panel, and the rule that fixes it is one line:
+**colour is a reading, and chrome gets none.** The accent is one hue, spent on
+the single most important action in a view. The switch is `--ok` when on,
+because it answers "is this service on", which is a reading. Selection never
+borrows the accent at all: a chosen filter drawn as the page's one accent reads
+as the thing to press next.
+
+Three things follow, and the third is the general one.
+
+**Count the ways a thing is said.** There were three selected-state idioms
+across four screens, and the loudest of them was on the least important
+decision on the page. `Segmented` is the one for a single choice and the
+button's `toggle` variant for several at once, both on `--selected`.
+`design-check.mjs` now fails on `bg-primary` outside `components/ui/`, so the
+white slab cannot come back as a selected state.
+
+**A list is not a panel until the columns line up.** The service rows put the
+state mark inline, so the name started at a different x on every row depending
+on how long the state before it happened to be. Fixed columns for state,
+address, update mark and switch are what makes it readable down the page
+instead of along a sentence. Name and image tag sit together, because the tag
+is meta about the name rather than a column of its own.
+
+**None of this was visible to any check in the build, and all of it was
+obvious in a screenshot.** `render-check.mjs` proves a panel rendered its data;
+it cannot see that a control is the loudest thing on a page it has no business
+leading. `dashboard/web/shot.mjs` renders the built app in a real browser from
+the same fixtures and writes a PNG per screen per theme. Playwright is
+deliberately not a dependency of that package: `npm ci` runs in the first
+Docker stage and a browser download there would add a hundred megabytes and a
+network call to every image rebuild. It is installed out of tree and named
+through `PLAYWRIGHT=`, which is a path because ESM ignores `NODE_PATH`.
+
+Two smaller traps from the same work. A `page.goto` that changes only the hash
+does not reload, so every shot after the first was the first tab again, which
+looks exactly like a working run. And a JSX comment cannot sit between
+attributes in an opening tag, which is a syntax error rather than a silent one,
+so it is the cheap half of this to get wrong.
 
 ---
 

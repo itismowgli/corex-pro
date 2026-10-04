@@ -171,7 +171,8 @@ export function LogsDialog({
             <Button
               key={l}
               size="xs"
-              variant={levels.has(l) ? "default" : "secondary"}
+              variant="toggle"
+              aria-pressed={levels.has(l)}
               onClick={() => toggleLevel(l)}
             >
               {l}

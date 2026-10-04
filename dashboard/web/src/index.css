@@ -23,6 +23,8 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-selected: var(--selected);
+  --color-selected-foreground: var(--selected-foreground);
   --color-ok: var(--ok);
   --color-ok-foreground: var(--ok-foreground);
   --color-warn: var(--warn);
@@ -71,24 +73,29 @@
      shadow, never both on the same edge. */
   --shadow-sm: 0 1px 2px oklch(0 0 0 / 0.04), 0 1px 1px oklch(0 0 0 / 0.03);
   --shadow-md: 0 8px 24px oklch(0 0 0 / 0.10), 0 2px 6px oklch(0 0 0 / 0.06);
-  --background: oklch(0.985 0 0);
-  --foreground: oklch(0.145 0 0);
+  --background: oklch(0.985 0.002 250);
+  --foreground: oklch(0.16 0.008 255);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
+  --card-foreground: oklch(0.16 0.008 255);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
+  --primary: oklch(0.52 0.115 228);
+  --primary-foreground: oklch(0.99 0.005 230);
+  --secondary: oklch(0.965 0.004 250);
+  --secondary-foreground: oklch(0.24 0.01 255);
+  --muted: oklch(0.962 0.004 250);
+  --muted-foreground: oklch(0.53 0.012 255);
+  --accent: oklch(0.955 0.005 250);
+  --accent-foreground: oklch(0.24 0.01 255);
   --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.93 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+  --border: oklch(0.905 0.005 250);
+  --input: oklch(0.90 0.005 250);
+  --ring: oklch(0.60 0.10 228);
+  /* The surface a selected segment sits on. Selection is not an action, so
+     it never borrows --primary: a chosen filter that renders as the page's
+     one accent reads as the thing to press next, which it is not. */
+  --selected: oklch(1 0 0);
+  --selected-foreground: oklch(0.16 0.008 255);
   /* Two tokens shadcn does not ship. A service dashboard needs a "this is
      fine" and a "this is deliberate" colour, and neither is the primary nor
      the destructive. */
@@ -117,24 +124,26 @@
 }
 
 .dark {
-  --background: oklch(0.155 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.21 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
+  --background: oklch(0.158 0.006 255);
+  --foreground: oklch(0.975 0.003 250);
+  --card: oklch(0.198 0.007 255);
+  --card-foreground: oklch(0.975 0.003 250);
+  --popover: oklch(0.214 0.008 255);
+  --popover-foreground: oklch(0.975 0.003 250);
+  --primary: oklch(0.70 0.105 224);
+  --primary-foreground: oklch(0.17 0.025 235);
+  --secondary: oklch(0.258 0.008 255);
+  --secondary-foreground: oklch(0.96 0.004 250);
+  --muted: oklch(0.245 0.008 255);
+  --muted-foreground: oklch(0.70 0.010 255);
+  --accent: oklch(0.268 0.009 255);
+  --accent-foreground: oklch(0.975 0.003 250);
   --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 8%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
+  --border: oklch(1 0 0 / 11%);
+  --input: oklch(1 0 0 / 16%);
+  --ring: oklch(0.62 0.09 224);
+  --selected: oklch(0.305 0.010 255);
+  --selected-foreground: oklch(0.985 0.003 250);
   --ok: oklch(0.7 0.15 152);
   --ok-foreground: oklch(0.16 0.02 150);
   --seg-used: oklch(0.62 0.10 195);

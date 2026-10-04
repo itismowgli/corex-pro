@@ -14,6 +14,13 @@ import { cn } from "@/lib/utils"
  * several seconds (it rewrites a compose file and recreates containers), and
  * without a visibly pending state the natural reading of "nothing happened
  * yet" is that the click was missed, so it gets clicked again.
+ *
+ * On is `--ok`, not `--primary`. This control is the answer to "is this
+ * service on", which is a reading and not an action, so it carries the same
+ * green as a healthy status rather than the page's accent. It used to be
+ * `--primary`, which on the dark theme is a near-white fill, so a list of
+ * twenty services was twenty white slabs down the right edge: the brightest
+ * thing on a page whose job is to show which service is red.
  */
 function Switch({
   checked,
@@ -50,15 +57,15 @@ function Switch({
       <span
         aria-hidden
         className={cn(
-          "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors duration-(--dur-fast) ease-(--ease)",
+          "relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors duration-(--dur-fast) ease-(--ease)",
           "peer-focus-visible:ring-ring peer-focus-visible:ring-2 peer-focus-visible:ring-offset-2",
-          checked ? "bg-primary" : "bg-input",
+          checked ? "bg-ok" : "bg-input",
         )}
       >
         <span
           className={cn(
-            "bg-background pointer-events-none inline-block size-4 rounded-full shadow transition-transform duration-(--dur-fast) ease-(--ease)",
-            checked ? "translate-x-[1.125rem]" : "translate-x-0.5",
+            "bg-background pointer-events-none inline-block size-3 rounded-full shadow transition-transform duration-(--dur-fast) ease-(--ease)",
+            checked ? "translate-x-3.5" : "translate-x-0.5",
           )}
         />
       </span>

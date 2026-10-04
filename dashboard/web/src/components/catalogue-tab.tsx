@@ -8,7 +8,7 @@ import {
 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
+import { Segmented } from "@/components/ui/segmented"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -211,16 +211,20 @@ export function CatalogueTab({
               aria-label="Search the catalogue"
             />
           </div>
-          {(["all", "installed", "available"] as StateFilter[]).map((s) => (
-            <Button
-              key={s}
-              size="xs"
-              variant={state === s ? "default" : "secondary"}
-              onClick={() => setState(s)}
-            >
-              {s === "all" ? "Any state" : s}
-            </Button>
-          ))}
+          <Segmented
+            label="Filter by state"
+            value={state}
+            onChange={setState}
+            options={[
+              { value: "all" as StateFilter, label: "All" },
+              { value: "installed" as StateFilter, label: "Installed", count: installed },
+              {
+                value: "available" as StateFilter,
+                label: "Available",
+                count: entries.length - installed,
+              },
+            ]}
+          />
         </div>
 
         {shown.length === 0 ? (

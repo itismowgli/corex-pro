@@ -30,12 +30,12 @@ const RULES = [
   {
     name: "type size outside the scale",
     re: /\btext-(xs|sm|base|lg|xl|[0-9]xl)\b|\btext-\[[^\]]*(px|rem|em)\]/g,
-    why: "Use text-micro, text-small, text-body, text-title or text-display. DESIGN.md, Type, rule 5.",
+    why: "Use text-micro, text-small, text-body, text-title or text-display. DESIGN.md, Type, rule 7.",
   },
   {
     name: "radius outside the three steps",
     re: /\brounded-(xl|[0-9]xl)\b|\brounded(-[a-z]+)?-\[[^\]]*\]/g,
-    why: "Use rounded-sm, rounded-md, rounded-lg or rounded-full. DESIGN.md, Radius, rule 9.",
+    why: "Use rounded-sm, rounded-md, rounded-lg or rounded-full. DESIGN.md, Radius, rule 11.",
   },
   {
     name: "motion outside the tokens",
@@ -43,7 +43,7 @@ const RULES = [
     // --dur-fast, --dur and --ease, applied through duration-(--dur) and
     // ease-(--ease), so a bare number or named easing is a new value.
     re: /\bduration-[0-9]+\b|\bease-(in|out|in-out|linear)\b|\banimate-(bounce|ping)\b/g,
-    why: "Use duration-(--dur-fast), duration-(--dur) and ease-(--ease). DESIGN.md, Motion, rules 10 and 11.",
+    why: "Use duration-(--dur-fast), duration-(--dur) and ease-(--ease). DESIGN.md, Motion, rules 12 and 13.",
   },
   {
     name: "all-caps label",
@@ -52,14 +52,26 @@ const RULES = [
     // structure. There were five. Literal uppercase data, such as a recovery
     // code, is a value and is written in the content, not as a class pair.
     re: /\btracking-[a-z]+\b(?=[^"'`]*\buppercase\b)|\buppercase\b(?=[^"'`]*\btracking-[a-z]+\b)/g,
-    why: "Sentence case. DESIGN.md, Type, rule 6.",
+    why: "Sentence case. DESIGN.md, Type, rule 8.",
+  },
+  {
+    name: "the accent, written by hand",
+    // --primary is the one accent and it marks the single most important
+    // action in a view. Written straight into a panel it becomes whatever the
+    // author wanted it for, and what it was wanted for was selection: a chosen
+    // filter rendered with the button's default variant, which on the dark
+    // theme is a near-white slab louder than any reading on the page. Only the
+    // ui/ primitives may spend it, so there is one place to count the uses.
+    re: /\bbg-primary\b|\btext-primary-foreground\b/g,
+    why: "Use <Button>, <Badge> or <Segmented>. Selection is not the accent. DESIGN.md, Colour, rules 5 and 6.",
+    only: (rel) => !rel.startsWith("components/ui/"),
   },
   {
     name: "arbitrary spacing",
     // Only size and spacing. data-[state=open] and has-[>svg] are variant
     // syntax, not values, and transition-[width] names a property.
     re: /\b[pm][trblxy]?-\[[^\]]*\]|\bgap(-[xy])?-\[[^\]]*\]|\bspace-[xy]-\[[^\]]*\]/g,
-    why: "Use the 4px scale. DESIGN.md, Space, rule 7.",
+    why: "Use the 4px scale. DESIGN.md, Space, rule 9.",
   },
 ]
 
@@ -85,6 +97,8 @@ for (const file of walk(SRC)) {
     // index.css defines the vocabulary, so its own colour literals and
     // --text-*/--radius-* declarations are the definitions, not uses of them.
     if (rel === TOKEN_SOURCE) continue
+    // A rule may exempt the files whose job is to define the thing it guards.
+    if (rule.only && !rule.only(rel.split(path.sep).join("/"))) continue
     rule.re.lastIndex = 0
     let m
     while ((m = rule.re.exec(text)) !== null) {

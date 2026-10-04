@@ -10,14 +10,13 @@ import {
   WrenchIcon,
 } from "lucide-react"
 
-import { StatusBadge } from "@/components/status-badge"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Empty, Rows } from "@/components/ui/section"
+import { Segmented } from "@/components/ui/segmented"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { cn } from "@/lib/utils"
-import type { Service, ServiceAction, ServiceStatus, ServiceUpdate, Updates } from "@/lib/api"
+import type { Service, ServiceAction, ServiceUpdate, Updates } from "@/lib/api"
 
 /**
  * Every service on the box, as a list rather than a wall of boxes.
@@ -75,17 +74,44 @@ function groupOf(svc: Service): Group {
   return "stopped"
 }
 
-const GROUPS: { key: Group; title: string; note: string }[] = [
-  { key: "running", title: "Running", note: "" },
-  { key: "sleeping", title: "Sleeping", note: "Stopped on purpose, started again by the next request." },
-  { key: "stopped", title: "Needs attention", note: "Switched on, but not answering." },
-  { key: "disabled", title: "Switched off", note: "Stays off across reboots until switched back on." },
+/**
+ * One vocabulary for the four states, used by the filter and by the row.
+ *
+ * `row` and `title` differ in one place on purpose: the filter reads "Needs
+ * attention", which is a pile to work through, and the row reads "Not
+ * answering", which is what is true of that one service. Before this the row
+ * said UNHEALTHY while the filter said Needs attention, so the same fact had
+ * two names on one screen.
+ */
+const GROUPS: { key: Group; title: string; row: string; dot: string; note: string }[] = [
+  { key: "running", title: "Running", row: "Running", dot: "bg-ok", note: "" },
+  {
+    key: "sleeping",
+    title: "Sleeping",
+    row: "Sleeping",
+    dot: "bg-muted-foreground",
+    note: "Stopped on purpose, started again by the next request.",
+  },
+  {
+    key: "stopped",
+    title: "Needs attention",
+    row: "Not answering",
+    dot: "bg-destructive",
+    note: "Switched on, but not answering.",
+  },
+  {
+    key: "disabled",
+    title: "Switched off",
+    row: "Switched off",
+    dot: "bg-muted-foreground/50",
+    note: "Stays off across reboots until switched back on.",
+  },
 ]
 
-const TABS: { key: Group | "all"; title: string }[] = [
-  { key: "all", title: "All" },
-  ...GROUPS.map(({ key, title }) => ({ key: key as Group | "all", title })),
-]
+const GROUP_BY_KEY = Object.fromEntries(GROUPS.map((g) => [g.key, g])) as Record<
+  Group,
+  (typeof GROUPS)[number]
+>
 
 /**
  * Whether to offer Update, and how the row describes the answer.
@@ -99,15 +125,15 @@ const TABS: { key: Group | "all"; title: string }[] = [
  */
 function updateHint(u: ServiceUpdate | undefined): {
   offer: boolean
-  badge?: { text: string; tone: "warn" | "secondary" }
+  mark?: string
   note?: string
 } {
   if (!u) return { offer: true }
   switch (u.state) {
     case "update":
-      return { offer: true, badge: { text: "Update available", tone: "warn" }, note: u.note }
+      return { offer: true, mark: "Update", note: u.note }
     case "stale-tag":
-      return { offer: true, badge: { text: "Tag has stopped moving", tone: "warn" }, note: u.note }
+      return { offer: true, mark: "Stale tag", note: u.note }
     case "current":
     case "pinned":
       return { offer: false, note: u.note }
@@ -117,24 +143,29 @@ function updateHint(u: ServiceUpdate | undefined): {
 }
 
 /**
- * The status, as a mark rather than a word.
+ * The state, in a column of its own.
  *
- * Twenty rows each labelled HEALTHY is twenty words that say the same thing,
- * and a column of identical text is what the eye learns to skip. A healthy
- * service gets a dot; anything else keeps the full badge, because the whole
- * point of the dot is that the exceptions stand out against it. Colour is
- * never the only carrier: the dot has a title and a screen reader gets the
- * word.
+ * Every row spends the same width on it, so the names below line up and the
+ * page can be read down the left edge instead of word by word. That column is
+ * the whole difference between a list and a panel: before this the mark was
+ * inline, so "Nextcloud", "Coolify" and "Immich" each began at a different
+ * place depending on how long the state before them happened to be.
+ *
+ * The dot carries the colour and the word carries the meaning, so neither is
+ * alone: a status told only in colour is no status to anyone who cannot see
+ * the difference between this green and this red.
  */
-function StatusMark({ status, busy }: { status: ServiceStatus; busy: boolean }) {
-  if (busy) {
-    return <Loader2Icon className="text-muted-foreground size-3.5 shrink-0 animate-spin" />
-  }
-  if (status !== "HEALTHY") return <StatusBadge status={status} />
+function StateCell({ group, busy }: { group: Group; busy: boolean }) {
+  const g = GROUP_BY_KEY[group]
   return (
-    <span className="inline-flex shrink-0 items-center" title="HEALTHY">
-      <span className="bg-ok size-2 rounded-full" aria-hidden />
-      <span className="sr-only">HEALTHY</span>
+    <span className="text-muted-foreground flex shrink-0 items-center gap-2 text-small sm:w-32">
+      {busy ? (
+        <Loader2Icon className="size-3 shrink-0 animate-spin" />
+      ) : (
+        <span className={cn("size-2 shrink-0 rounded-full", g.dot)} aria-hidden />
+      )}
+      <span className="hidden truncate sm:inline">{busy ? "Working" : g.row}</span>
+      <span className="sr-only sm:hidden">{busy ? "Working" : g.row}</span>
     </span>
   )
 }
@@ -217,55 +248,24 @@ export function ServicesTab({
                 : `Checked ${ago(updates.checked_at)}. ${waiting} ${waiting === 1 ? "service has" : "services have"} a new image.`}
         </p>
       )}
-      {/* One group at a time, chosen rather than scrolled past.
-          Stacked sections meant the group you cared about could be three
-          screens down, and on a phone that is most of them. Tabs on a wide
-          screen because they are all visible at once and cost one click; a
-          native select below that, because four tab targets side by side at
-          360px are either too small to hit or wrap into two rows that push
-          the list off the fold. The select is also what a phone already
-          knows how to render full-screen. */}
-      <div className="hidden flex-wrap gap-1 sm:flex" role="tablist" aria-label="Filter services">
-        {TABS.map(({ key, title }) => {
-          const n = key === "all" ? services.length : counts[key]
-          if (key !== "all" && !n) return null
-          const on = group === key
-          return (
-            <button
-              key={key}
-              role="tab"
-              aria-selected={on}
-              onClick={() => setGroup(key)}
-              className={
-                "rounded-md px-2.5 py-1 text-body transition-colors duration-(--dur-fast) ease-(--ease) " +
-                (on
-                  ? "bg-secondary text-secondary-foreground font-medium"
-                  : "text-muted-foreground hover:text-foreground")
-              }
-            >
-              {title}
-              <span className="ml-1.5 tabular-nums opacity-60">{n}</span>
-            </button>
-          )
-        })}
-      </div>
-
-      <select
-        className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-body sm:hidden"
+      {/* One group at a time, chosen rather than scrolled past. Stacked
+          sections meant the group you cared about could be three screens down,
+          and on a phone that is most of them. The track scrolls sideways below
+          its own width rather than wrapping, so nothing it contains can push
+          the list off the fold. */}
+      <Segmented
+        label="Filter services"
         value={group}
-        aria-label="Filter services"
-        onChange={(e) => setGroup(e.target.value as Group | "all")}
-      >
-        {TABS.map(({ key, title }) => {
-          const n = key === "all" ? services.length : counts[key]
-          if (key !== "all" && !n) return null
-          return (
-            <option key={key} value={key}>
-              {title} ({n})
-            </option>
-          )
-        })}
-      </select>
+        onChange={setGroup}
+        options={[
+          { value: "all" as const, label: "All", count: services.length },
+          ...GROUPS.filter((g) => counts[g.key]).map((g) => ({
+            value: g.key as Group | "all",
+            label: g.title,
+            count: counts[g.key],
+          })),
+        ]}
+      />
 
       {note && <p className="text-muted-foreground text-small">{note}</p>}
 
@@ -329,7 +329,9 @@ function ServiceRow({
 
   return (
     <div className="flex min-w-0 flex-col">
-      <div className="flex min-w-0 items-center gap-2 py-1">
+      {/* One grid, so every row spends the same width on the same thing and
+          the page reads down a column rather than along a sentence. */}
+      <div className="group hover:bg-accent/40 -mx-2 flex min-w-0 items-center gap-3 rounded-md px-2 transition-colors duration-(--dur-fast) ease-(--ease)">
         {/* The disclosure is its own button rather than the whole row, because
             the row also holds a link and a switch, and an interactive element
             inside a button is invalid and unreachable by keyboard. */}
@@ -337,56 +339,69 @@ function ServiceRow({
           type="button"
           aria-expanded={open}
           onClick={onToggle}
-          className="hover:text-foreground focus-visible:ring-ring flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 text-left transition-colors duration-(--dur-fast) ease-(--ease) focus-visible:ring-2 focus-visible:outline-none"
+          className="focus-visible:ring-ring flex min-w-0 flex-1 items-center gap-3 rounded-md py-2 text-left focus-visible:ring-2 focus-visible:outline-none"
         >
           <ChevronRightIcon
             aria-hidden
             className={cn(
-              "text-muted-foreground size-3.5 shrink-0 transition-transform duration-(--dur-fast) ease-(--ease)",
+              "text-muted-foreground/60 group-hover:text-muted-foreground size-3.5 shrink-0 transition-transform duration-(--dur-fast) ease-(--ease)",
               open && "rotate-90"
             )}
           />
-          <StatusMark status={svc.status} busy={busy} />
-          <span className="min-w-0 truncate font-medium" title={svc.label}>
-            {svc.label}
-          </span>
-          {/* The image tag, which is the only version this box can state as
-              fact. "latest" is shown as itself rather than resolved: a moving
-              tag is exactly the case where the name and the thing it points at
-              are different questions (gotcha #26). */}
-          {svc.version && (
-            <span
-              className="text-muted-foreground num shrink-0 font-mono text-micro"
-              title={
-                svc.version === "latest"
-                  ? "Image tag. A moving tag, so what it points at can change without this changing."
-                  : "Image tag the container was created from"
-              }
-            >
-              {svc.version}
+          <StateCell group={groupOf(svc)} busy={busy} />
+          {/* Name and tag are one thing, so they sit together. The tag is meta
+              about the name; it was in a column of its own and the gap between
+              them was the widest space on the row. */}
+          <span className="flex min-w-0 flex-1 items-baseline gap-2">
+            <span className="truncate font-medium" title={svc.label}>
+              {svc.label}
             </span>
-          )}
+            {/* The only version this box can state as fact. "latest" is shown
+                as itself rather than resolved: a moving tag is exactly the
+                case where the name and the thing it points at are different
+                questions (gotcha #26). */}
+            {svc.version && (
+              <span
+                className="text-muted-foreground/70 num shrink-0 font-mono text-micro"
+                title={
+                  svc.version === "latest"
+                    ? "Image tag. A moving tag, so what it points at can change without this changing."
+                    : "Image tag the container was created from"
+                }
+              >
+                {svc.version}
+              </span>
+            )}
+          </span>
         </button>
 
         {/* The address on a wide screen only. On a phone it would take the
             whole row from the name, and it is one disclosure away below. */}
-        {urls[0] && (
-          <a
-            href={urls[0]}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-muted-foreground hover:text-foreground hidden min-w-0 max-w-64 items-center gap-1 truncate font-mono text-small hover:underline lg:inline-flex"
-          >
-            <span className="truncate">{urls[0].replace(/^https?:\/\//, "")}</span>
-            <ExternalLinkIcon className="size-3 shrink-0" aria-hidden />
-          </a>
-        )}
+        <span className="hidden w-56 shrink-0 justify-end lg:flex">
+          {urls[0] && (
+            <a
+              href={urls[0]}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-muted-foreground/60 hover:text-foreground inline-flex min-w-0 items-center gap-1 truncate font-mono text-small hover:underline"
+            >
+              <span className="truncate">{urls[0].replace(/^https?:\/\//, "")}</span>
+              <ExternalLinkIcon className="size-3 shrink-0" aria-hidden />
+            </a>
+          )}
+        </span>
 
-        {hint.badge && !busy && (
-          <Badge variant={hint.badge.tone} className="shrink-0">
-            {hint.badge.text}
-          </Badge>
-        )}
+        {/* Quiet on purpose. A filled chip here was wider and brighter than
+            the red beside a service that is down, which puts "there is a newer
+            image" above "this is not answering". It is a dot and a word. */}
+        <span className="flex w-24 shrink-0 justify-end">
+          {hint.mark && !busy && (
+            <span className="text-warn inline-flex items-center gap-1.5 text-small">
+              <span className="bg-warn size-1.5 shrink-0 rounded-full" aria-hidden />
+              {hint.mark}
+            </span>
+          )}
+        </span>
 
         <Switch
           checked={svc.enabled}
@@ -398,7 +413,7 @@ function ServiceRow({
       </div>
 
       {open && (
-        <div className="flex flex-col gap-2 pb-3 pl-6">
+        <div className="flex flex-col gap-2 pt-1 pb-3 pl-7">
           {urls.length ? (
             <div className="flex min-w-0 flex-col">
               {urls.map((u) => (
@@ -440,7 +455,7 @@ function ServiceRow({
               {hint.offer && (
                 <Button
                   size="xs"
-                  variant={hint.badge ? "default" : "secondary"}
+                  variant={hint.mark ? "default" : "secondary"}
                   disabled={disabled}
                   onClick={() => click("update")}
                 >

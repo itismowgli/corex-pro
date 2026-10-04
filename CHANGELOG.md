@@ -6,6 +6,77 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.56.0] - 2026-10-04
+
+### Changed
+- **The accent is a colour now, and the chrome is quiet.** `--primary` was
+  pure greyscale in both themes, which is shadcn's neutral default left as it
+  was found. On the dark theme that makes it a near-white fill, and everything
+  reaching for "this is the important one" became a white slab: the switch on
+  every service row, the chosen option in every filter, every Update button.
+  The four brightest objects on the Services page were its switches, so the
+  green that meant healthy and the red that meant not answering were quieter
+  than a toggle.
+
+  The rule the palette follows now is that on a status panel colour is a
+  reading, and chrome gets none. The accent is one steel blue, spent on the
+  single most important action in a view and nowhere else. The neutrals carry
+  a faint cool cast rather than being flat grey. The switch is `--ok` when on,
+  because it answers "is this service on", which is a reading and not an
+  action, and it is smaller.
+
+- **One way to show a choice, where there were three.** The catalogue state
+  filter and the log level filter drew the chosen option with the button's
+  accent variant; the services groups used a grey fill; the overview range
+  used a third thing. `Segmented` replaces the first three and the button's
+  new `toggle` variant covers the log levels, where several can be on at once.
+  Selection never borrows the accent: a chosen filter rendered as the page's
+  one accent reads as the thing to press next, which is backwards.
+
+- **Service rows are a grid.** The state mark was inline, so the name began at
+  a different place on every row depending on how long the state before it
+  happened to be, and nothing on the row lined up with anything on the row
+  above. State has a column, name and image tag sit together because the tag is
+  meta about the name, and address, update mark and switch each have a column
+  of their own.
+
+  The state words come from one table shared with the filter, so the row and
+  the filter cannot disagree. They did: a row said UNHEALTHY while the filter
+  called the same service Needs attention.
+
+- **The update mark on a row is a dot and a word.** It was a filled chip, wider
+  and brighter than the red beside a service that is down, which puts "there is
+  a newer image" above "this is not answering".
+
+- **One accent per view on Updates.** Every per service Update is secondary and
+  Update everything keeps the accent. Upgrade Ubuntu is an outline: it is the
+  one action on the page that can leave the machine unbootable, so it is
+  offered rather than invited.
+
+- **The header service counts are a dot, a number and a word**, not three
+  filled pills competing with the readings below them.
+
+### Added
+- **`dashboard/web/shot.mjs` renders the built app in a real browser** and
+  writes a PNG per screen per theme, from the same fixtures every other check
+  uses. Not part of the build, and playwright is deliberately not a dependency:
+  `npm ci` runs in the first Docker stage and a browser download there would
+  add a hundred megabytes and a network call to every image rebuild. The file
+  says how to install it out of tree.
+
+  Every fix above was found by looking at a screenshot. All of them passed
+  every check in the build while they were wrong, because `render-check.mjs`
+  proves a panel rendered its data and cannot see that a control is the
+  loudest thing on a page it has no business leading.
+
+- **`design-check.mjs` fails on the accent written by hand** outside
+  `components/ui/`, so `bg-primary` cannot come back as a selected state. Put
+  the violation back and confirm it fails, which is how this one was checked.
+
+- **One fixture module.** `fixtures.mjs` holds the payloads the render check
+  and the screenshots both drive from. Two copies drift, and the one that
+  drifts is the one nobody runs.
+
 ## [v3.55.0] - 2026-10-04
 
 ### Changed
