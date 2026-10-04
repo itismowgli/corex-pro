@@ -6,6 +6,50 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.55.0] - 2026-10-04
+
+### Changed
+- **Services is a list, and its actions are one disclosure in.** Twenty
+  services rendered twenty cards in a three column grid, each carrying four
+  buttons and a switch whether or not there was anything to do, so the resting
+  page was about a hundred controls. A grid of equal boxes also gives every
+  service the same area, which means the one that is broken looks exactly like
+  the nineteen that are fine and has to be found by reading rather than by
+  looking.
+
+  A row carries what answers "is this alright": a status mark, the name, the
+  image tag, where it answers, and whether an update is waiting. Opening a row
+  brings Restart, Repair, Update and Logs, one row at a time, so the page
+  cannot grow back into what it was. Nothing was taken away, and the command
+  palette still reaches every one of those actions by name. Measured on the
+  render check fixtures, four services went from 937 characters of rendered
+  text to 516.
+
+  Two smaller things went with it. A healthy service gets a dot rather than a
+  badge reading HEALTHY, because twenty identical words are what the eye learns
+  to skip, and anything that is not healthy keeps the full badge so the
+  exceptions stand out against it. And a switched off service no longer offers
+  Restart, Repair or Update, all three of which start the thing they act on and
+  would quietly undo the decision that switched it off.
+
+- **The header status counts say what they count, and go somewhere.** Three
+  bare numbers in coloured pills were legible only to whoever wrote them, and
+  the obvious thing to do with "two are down" was to go and look at them, which
+  they had no way to do. They read "16 up", "2 down" and "3 other" now, they
+  are one button, and it lands on Services.
+
+### Added
+- **The render check opens a service row.** A collapsed row renders and a
+  mounted tab passes, so both halves of the change above were invisible to
+  every check in the build. It now asserts that the resting list offers no
+  action, opens the first row, and asserts the actions arrive. Both were
+  confirmed by putting the bug back: always-open rows fail the first, a missing
+  `aria-expanded` fails the second.
+
+- **The image tag on a row is asserted.** A comment in `render-check.mjs`
+  described that assertion and nothing was ever written beneath it, so the
+  version line was covered by no check at all.
+
 ## [v3.54.1] - 2026-10-01
 
 ### Fixed

@@ -332,12 +332,14 @@ const EXPECT = {
   storageIdle: "unallocated on the internal disk",
   // The range toggle over the blackbox series.
   overview: "30 min",
-  // Not just the card: the sentence the check writes above the grid, which
+  // Not just one row: the sentence the check writes above the list, which
   // only appears when an update payload arrived.
   services: "Update available",
-  // The running version on a card. Proves the version line rendered rather
-  // than the tab merely mounting, and "v3.1.0" appears in no fixture note, so
-  // only the version chip can produce it.
+  // The image tag on a row. This comment used to sit here describing an
+  // assertion that had never been written, so the version chip was covered by
+  // nothing at all. "v3.6" is in the services fixture and in no note, so only
+  // the chip can produce it.
+  servicesVersion: "v3.6",
   // Three things this tab has been wrong about, each asserted separately.
   // The group that offers nothing to press:
   updates: "Held back on purpose",
@@ -521,6 +523,82 @@ for (const tab of TABS) {
     for (const f of failures) console.error("  - " + String(f).slice(0, 1200))
   } else {
     console.error("  palette    ok, " + text.length + " characters")
+  }
+  window.close()
+}
+
+// The Services list, which holds its actions one disclosure in.
+//
+// That is the whole point of the screen: twenty services used to render four
+// buttons and a switch each, so the resting page was about a hundred
+// controls. Both halves of that claim are invisible to every other check,
+// because a collapsed row renders and a mounted tab passes. So this one
+// asserts the resting state has no action in it, opens the first row, and
+// asserts the actions arrive. Put either half back and it fails.
+{
+  const { window } = mount("https://dashboard.example.com/#services", SIGNED_IN, true)
+  window.EventSource = class {
+    constructor() {
+      this.onmessage = null
+      this.onerror = null
+      this.onopen = null
+    }
+    close() {}
+  }
+  const failures = []
+  window.addEventListener("error", (e) =>
+    failures.push("uncaught: " + (e.error?.stack || e.message))
+  )
+  const consoleErrors = []
+  window.console = {
+    error: (...a) => consoleErrors.push(a.map(String).join(" ")),
+    warn: () => {},
+    log: () => {},
+    info: () => {},
+    debug: () => {},
+  }
+  try {
+    window.eval(bundle)
+  } catch (e) {
+    failures.push("threw while loading " + entry + ": " + (e.stack || e.message))
+  }
+  await new Promise((r) => setTimeout(r, 400))
+
+  const root = window.document.getElementById("root")
+  const resting = root?.textContent || ""
+  // "Repair" is the action that appears on no other part of this tab, so it
+  // reads as present only when a row is open.
+  if (resting.includes("Repair")) {
+    failures.push("the collapsed list already shows its actions, which is the layout this replaced")
+  }
+
+  const rows = root?.querySelectorAll("button[aria-expanded]") ?? []
+  if (rows.length < 2) {
+    failures.push("expected a disclosure per service, saw " + rows.length)
+  } else {
+    rows[0].dispatchEvent(new window.MouseEvent("click", { bubbles: true }))
+    await new Promise((r) => setTimeout(r, 200))
+    const opened = root?.textContent || ""
+    for (const want of ["Repair", "Restart", "Logs"]) {
+      if (!opened.includes(want)) {
+        failures.push("opened a service row but it did not offer " + JSON.stringify(want))
+      }
+    }
+    if (rows[0].getAttribute("aria-expanded") !== "true") {
+      failures.push("the row opened without saying so, so a screen reader never learns it did")
+    }
+  }
+
+  for (const line of consoleErrors) {
+    if (line.includes("dashboard render failed")) failures.push("error boundary caught: " + line)
+  }
+
+  if (failures.length) {
+    failed = true
+    console.error("render-check FAILED on the services list")
+    for (const f of failures) console.error("  - " + String(f).slice(0, 1200))
+  } else {
+    console.error("  services   row actions open on demand")
   }
   window.close()
 }

@@ -573,14 +573,25 @@ function Dashboard({
               >
                 <SearchIcon />
               </Button>
+              {/* Three bare numbers in coloured pills said nothing: a red 2
+                  beside a green 16 is only legible to whoever wrote it, and
+                  the obvious thing to do with "2 are down" is to go and look
+                  at them, which this had no way to do. It is one control now,
+                  it says what each number counts, and it lands on Services. */}
               {svcList.length > 0 && (
-                <div className="mr-1 hidden items-center gap-1.5 sm:flex">
-                  <Badge variant="ok">{counts.healthy}</Badge>
+                <button
+                  type="button"
+                  onClick={() => go("services")}
+                  aria-label={`${counts.healthy} healthy, ${counts.unhealthy} unhealthy, ${counts.other} neither. Go to Services.`}
+                  title="Go to Services"
+                  className="hover:bg-muted focus-visible:ring-ring mr-1 hidden items-center gap-1.5 rounded-md px-1.5 py-1 transition-colors duration-(--dur-fast) ease-(--ease) focus-visible:ring-2 focus-visible:outline-none sm:flex"
+                >
+                  <Badge variant="ok">{counts.healthy} up</Badge>
                   {counts.unhealthy > 0 && (
-                    <Badge variant="destructive">{counts.unhealthy}</Badge>
+                    <Badge variant="destructive">{counts.unhealthy} down</Badge>
                   )}
-                  {counts.other > 0 && <Badge variant="secondary">{counts.other}</Badge>}
-                </div>
+                  {counts.other > 0 && <Badge variant="secondary">{counts.other} other</Badge>}
+                </button>
               )}
               <Button
                 size="icon"

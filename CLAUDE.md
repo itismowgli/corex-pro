@@ -28,7 +28,7 @@ learning nginx, SSL, Docker networking, or Linux hardening.
 - Re-run on existing server = health-check + repair broken services only
 - No live server required for testing (Docker-in-Docker + bats)
 
-**Current version:** v3.53.1
+**Current version:** v3.55.0
 **Current service modules:** 21 (Traefik, AdGuard, Portainer, Nextcloud,
 Immich, Vaultwarden, Stalwart Mail, Coolify, n8n, Cal.com, Time Machine,
 Uptime Kuma + Grafana + Prometheus (monitoring), Ollama + OpenWebUI +
@@ -3210,9 +3210,9 @@ the whole design decision:
 | `Card` | an object with its own actions, where the box is around one thing |
 | `Empty` | nothing here, and the action that changes that |
 
-System, Health and Network are converted; Overview, Storage and Maintenance
-are not. Services, Updates, Catalogue and Account keep cards legitimately,
-because their items are objects you act on individually.
+System, Health, Network, Overview, Storage, Maintenance and Services are
+converted. Updates, Catalogue and Account keep cards, because their items are
+objects you act on individually and the box really is around one thing.
 
 **The tells to avoid are specific and were all present.** An all-caps tracked
 label above a block (five of them), a description paragraph under every page
@@ -3234,6 +3234,55 @@ shape of check that can catch a panel rendering one sentence from two sources.
 invisible for a further reason: the fixture's `note` did not contain the
 reason, while the agent's does. A fixture that is tidier than the real payload
 tests a payload nobody sends.
+
+### 82. A card per object is only right while the actions are worth the room
+
+Gotcha #81 says a `Card` is for an object with its own actions. Services was
+the strongest case for that rule and was still the worst screen on the page,
+because the rule says nothing about how many of the object there are. Twenty
+services meant twenty equal boxes in a three column grid, each with Restart,
+Repair, Update, Logs and a switch, so the resting state was about a hundred
+controls and no two services could differ in weight. The one that was broken
+occupied the same area as the nineteen that were fine.
+
+So the count is part of the decision. A card is right for a handful of objects
+whose actions you reach for. Above that it becomes a grid, and a grid of equal
+boxes has the property gotcha #81 was written about: the chrome stops carrying
+information. Services is a row list now, with a disclosure per row and one row
+open at a time, which is the only part that keeps the page from growing back.
+
+Three details are worth keeping.
+
+**A status word repeated down a column is not read.** Twenty rows labelled
+HEALTHY is twenty words saying the same thing. A healthy service gets a dot
+and everything else keeps the full badge, so the exceptions stand out against
+it rather than beside it. Colour is never the only carrier: the dot has a
+title and a screen reader gets the word.
+
+**An action that starts a service must not be offered on one that is switched
+off.** Restart, Repair and Update all do, so on a disabled service each of
+them quietly undoes the decision that disabled it, which is gotcha #44's rule
+about a service switched off staying off, arriving through the UI instead of
+through a deploy.
+
+**The disclosure is its own button, not the row.** The row also holds a link
+and a switch, and an interactive element inside a button is invalid markup and
+unreachable by keyboard. The row is a grid with a disclosure in it.
+
+**And a collapsed row is invisible to every check in this build.** It renders,
+the tab mounts, and both halves of the claim above (that the resting list
+offers no action, and that opening a row brings them) pass whatever the code
+does. `render-check.mjs` now clicks the first disclosure, for the same reason
+it presses Cmd+K: a thing that only exists after an interaction has to be
+interacted with. Both halves were confirmed by putting the bug back, always
+open rows failing the first and a missing `aria-expanded` failing the second.
+
+The related trap found while writing it: the EXPECT table in that file carried
+a comment describing an assertion for the version chip, and no assertion had
+ever been written beneath it. A comment is not a check, which is gotcha #71 in
+a third costume.
+
+---
 
 ## What NOT to Do
 
