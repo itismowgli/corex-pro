@@ -51,26 +51,45 @@ adguard_firewall() {
 # Multi PRO is HaGeZi's balanced, recommended list.  The full TIF security list
 # needs at least 2 GB in AdGuard Home, so CoreX uses TIF Mini: it keeps the
 # high-value phishing/malware coverage without turning DNS into the largest
-# process on a small home server.  Existing lists, rewrites and user rules are
-# preserved.  Fixed high IDs avoid AdGuard's built-in registry IDs; if an
-# existing custom list already uses one, the next free ID is selected.
+# process on a small home server.
+#
+# The encrypted DNS list is what keeps the rest honest.  A browser or app with
+# its own DoH resolver (dns.google, cloudflare-dns.com, NextDNS) sends nothing
+# to AdGuard at all, and neither does iCloud Private Relay, so every other list
+# here stops applying to that device.  Blocking the resolver hostnames makes
+# them fall back to the network's DNS.  It is HaGeZi's DoH-only list and not
+# the wider doh-vpn-proxy-bypass one, because that also lists Tailscale's
+# control plane.  AdGuard's own upstream is unaffected: it is resolved through
+# bootstrap_dns, which filtering never sees.
+#
+# The native tracker lists are the four whose vendors were present in a real
+# query log and which add something Multi PRO does not already hold.  Measured
+# against PRO: Samsung 79 new domains, Microsoft 51, Apple 40, Amazon 34.
+# Xiaomi, TikTok, Vivo, OPPO and LG added between 1 and 8 each, so they are
+# left out rather than listed for completeness.
+#
+# A list is matched by URL.  One that is present and switched off in the UI
+# stays off; deleting it outright means the next repair adds it again.
+# Existing lists, rewrites and user rules are preserved.  Fixed high IDs avoid
+# AdGuard's built-in registry IDs; a taken ID moves to the next free one.
 #
 # AdGuard owns and periodically rewrites its YAML, so it must be stopped for
 # the atomic replacement.  The caller is adguard_deploy(), which starts it
 # again immediately through `docker compose up`.
+ADGUARD_FILTER_BASE="https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/adblock"
+ADGUARD_FILTER_BASELINE=(
+    "900001|HaGeZi Multi PRO|${ADGUARD_FILTER_BASE}/pro.txt"
+    "900002|HaGeZi Threat Intelligence Feeds Mini|${ADGUARD_FILTER_BASE}/tif.mini.txt"
+    "900003|HaGeZi Encrypted DNS Servers|${ADGUARD_FILTER_BASE}/doh.txt"
+    "900004|HaGeZi Native Tracker Apple|${ADGUARD_FILTER_BASE}/native.apple.txt"
+    "900005|HaGeZi Native Tracker Microsoft|${ADGUARD_FILTER_BASE}/native.winoffice.txt"
+    "900006|HaGeZi Native Tracker Samsung|${ADGUARD_FILTER_BASE}/native.samsung.txt"
+    "900007|HaGeZi Native Tracker Amazon|${ADGUARD_FILTER_BASE}/native.amazon.txt"
+)
+
 _adguard_seed_filter_lists() {
     local yaml="$1"
     [[ -s "$yaml" ]] || return 0
-
-    local pro_url="https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/adblock/pro.txt"
-    local tif_url="https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/adblock/tif.mini.txt"
-    local add_pro="yes" add_tif="yes"
-    grep -Fq "$pro_url" "$yaml" && add_pro="no"
-    grep -Fq "$tif_url" "$yaml" && add_tif="no"
-
-    if [[ "$add_pro" == "no" && "$add_tif" == "no" ]]; then
-        return 0
-    fi
 
     # Refuse to guess at an unfamiliar schema.  This anchor has been stable
     # across AdGuard Home releases and keeps the new entries in `filters:`.
@@ -79,14 +98,21 @@ _adguard_seed_filter_lists() {
         return 0
     fi
 
-    local pro_id=900001 tif_id=900002
-    while grep -Eq "^[[:space:]]+id: ${pro_id}$" "$yaml"; do
-        pro_id=$((pro_id + 1))
+    # Build the block to insert.  IDs already handed out in this pass are
+    # tracked as well as those in the file, so two lists can never be given
+    # the same free ID.
+    local entry id name url block="" added=() used=" "
+    for entry in "${ADGUARD_FILTER_BASELINE[@]}"; do
+        IFS='|' read -r id name url <<< "$entry"
+        grep -Fq "$url" "$yaml" && continue
+        while grep -Eq "^[[:space:]]+id: ${id}$" "$yaml" || [[ "$used" == *" ${id} "* ]]; do
+            id=$((id + 1))
+        done
+        used+="${id} "
+        block+="  - enabled: true"$'\n'"    url: ${url}"$'\n'"    name: ${name}"$'\n'"    id: ${id}"$'\n'
+        added+=("$name")
     done
-    [[ "$tif_id" -le "$pro_id" ]] && tif_id=$((pro_id + 1))
-    while grep -Eq "^[[:space:]]+id: ${tif_id}$" "$yaml"; do
-        tif_id=$((tif_id + 1))
-    done
+    [[ ${#added[@]} -eq 0 ]] && return 0
 
     local was_running="" tmp="${yaml}.corex.$$"
     if declare -f container_running >/dev/null 2>&1 && container_running adguard; then
@@ -109,23 +135,10 @@ _adguard_seed_filter_lists() {
         return 0
     fi
 
-    if ! awk \
-        -v add_pro="$add_pro" -v pro_url="$pro_url" -v pro_id="$pro_id" \
-        -v add_tif="$add_tif" -v tif_url="$tif_url" -v tif_id="$tif_id" '
-        /^whitelist_filters:/ {
-            if (add_pro == "yes") {
-                print "  - enabled: true"
-                print "    url: " pro_url
-                print "    name: HaGeZi Multi PRO"
-                print "    id: " pro_id
-            }
-            if (add_tif == "yes") {
-                print "  - enabled: true"
-                print "    url: " tif_url
-                print "    name: HaGeZi Threat Intelligence Feeds Mini"
-                print "    id: " tif_id
-            }
-        }
+    # The block goes through the environment rather than awk -v, which would
+    # interpret the backslash escapes in it.
+    if ! ADGUARD_NEW_FILTERS="$block" awk '
+        /^whitelist_filters:/ { printf "%s", ENVIRON["ADGUARD_NEW_FILTERS"] }
         { print }
     ' "$yaml" > "$tmp"; then
         rm -f "$tmp"
@@ -141,7 +154,49 @@ _adguard_seed_filter_lists() {
         return 0
     fi
 
-    log_success "AdGuard filter baseline enabled (HaGeZi Multi PRO + TIF Mini)"
+    local list
+    for list in "${added[@]}"; do
+        log_success "AdGuard filter list added: ${list}"
+    done
+}
+
+# Make AdGuard's rate limit apply per device rather than per household.
+#
+# AdGuard ships `ratelimit: 20` with `ratelimit_subnet_len_ipv4: 24`, which is
+# a sensible default for a resolver on the internet and the wrong one for a
+# home network: every device in the house is in the same /24, so the whole
+# house shares twenty lookups a second and the rest are dropped without an
+# answer.  Measured from a laptop asking for one cached name forty times in a
+# row: the 21st and the 40th timed out at 3000 ms, every other answer took
+# 2 to 20 ms.  A browser opening one busy page can ask for dozens of names, so
+# that reads as a page that hangs for three seconds and then loads.
+#
+# Per address (/32) at 100 a second still stops one runaway device from
+# flooding the resolver, and is well above anything a browser asks for.  Only
+# the shipped defaults are replaced, so a limit someone chose is left alone.
+_adguard_tune_ratelimit() {
+    local yaml="$1"
+    [[ -s "$yaml" ]] || return 0
+    grep -Eq '^  ratelimit: 20$|^  ratelimit_subnet_len_ipv4: 24$' "$yaml" || return 0
+
+    local was_running="" tmp="${yaml}.corex.$$"
+    if declare -f container_running >/dev/null 2>&1 && container_running adguard; then
+        was_running="yes"
+        docker stop adguard >/dev/null 2>&1 || {
+            log_warning "AdGuard rate limit was not changed: could not stop AdGuard safely"
+            return 0
+        }
+    fi
+    if cp -p "$yaml" "$tmp" 2>/dev/null \
+        && sed -i -e 's/^  ratelimit: 20$/  ratelimit: 100/' \
+                  -e 's/^  ratelimit_subnet_len_ipv4: 24$/  ratelimit_subnet_len_ipv4: 32/' "$tmp" \
+        && mv "$tmp" "$yaml"; then
+        log_success "AdGuard rate limit is now per device, 100 lookups a second"
+    else
+        rm -f "$tmp"
+        log_warning "AdGuard rate limit was not changed: could not rewrite the config"
+    fi
+    [[ "$was_running" == "yes" ]] && docker start adguard >/dev/null 2>&1 || true
 }
 
 # Point the host's own resolver at AdGuard, once AdGuard can answer.
@@ -288,6 +343,7 @@ adguard_deploy() {
             log_warning "Could not read the admin port from ${yaml}, assuming 3000"
         fi
         _adguard_seed_filter_lists "$yaml"
+        _adguard_tune_ratelimit "$yaml"
     else
         log_info "AdGuard first run, the wizard will listen on port 3000"
     fi
@@ -344,7 +400,7 @@ services:
     deploy:
       resources:
         limits:
-          # Compiling the two CoreX filter subscriptions can briefly need more
+          # Compiling the CoreX filter subscriptions can briefly need more
           # than the steady-state footprint.  The old 256 MB cap made that an
           # avoidable DNS outage during list updates.
           memory: 512m

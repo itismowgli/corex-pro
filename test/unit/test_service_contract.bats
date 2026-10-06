@@ -1368,6 +1368,10 @@ filters:
     url: https://example.test/custom.txt
     name: My custom list
     id: 7
+  - enabled: true
+    url: https://example.test/takes-a-corex-id.txt
+    name: Custom list on a CoreX id
+    id: 900003
 whitelist_filters: []
 user_rules:
   - '@@||allowed.example^'
@@ -1384,12 +1388,48 @@ YAMLEOF
     _adguard_seed_filter_lists "$yaml"
     _adguard_seed_filter_lists "$yaml"
 
-    [ "$(grep -c 'adblock/pro.txt' "$yaml")" -eq 1 ]
-    [ "$(grep -c 'adblock/tif.mini.txt' "$yaml")" -eq 1 ]
+    local list
+    for list in pro tif.mini doh native.apple native.winoffice native.samsung native.amazon; do
+        [ "$(grep -c "adblock/${list}.txt" "$yaml")" -eq 1 ] \
+            || { echo "${list} is not in the config exactly once"; false; }
+    done
+    # Every id is distinct, or AdGuard keeps one of the lists and drops the
+    # other on load.
+    [ "$(grep -E '^    id: ' "$yaml" | sort | uniq -d | wc -l)" -eq 0 ]
+    # The broader bypass list also names Tailscale's control plane.
+    ! grep -q 'doh-vpn-proxy-bypass' "$yaml"
     grep -q 'https://example.test/custom.txt' "$yaml"
     grep -q "@@||allowed.example" "$yaml"
     [ -f "${yaml}.corex-before-filters.bak" ]
     ! grep -q 'adblock/pro.txt' "${yaml}.corex-before-filters.bak"
+
+    rm -rf "$work"
+}
+
+# AdGuard's default limit is twenty lookups a second per /24, which on a home
+# network is the whole house.  Measured: the 21st of forty cached lookups from
+# one laptop timed out at 3000 ms.  Only the shipped defaults may change.
+@test "adguard rate limit becomes per device, and a chosen limit is kept" {
+    local work yaml
+    work=$(mktemp -d /tmp/corex-adguard-rl-XXXXXX)
+    yaml="${work}/AdGuardHome.yaml"
+    printf 'dns:\n  ratelimit: 20\n  ratelimit_subnet_len_ipv4: 24\n  ratelimit_subnet_len_ipv6: 56\n' > "$yaml"
+
+    log_success() { :; }
+    log_warning() { echo "$*" >&2; }
+    container_running() { return 1; }
+    docker() { return 0; }
+    source "${REPO_ROOT}/lib/services/adguard.sh"
+
+    _adguard_tune_ratelimit "$yaml"
+    grep -qx '  ratelimit: 100' "$yaml"
+    grep -qx '  ratelimit_subnet_len_ipv4: 32' "$yaml"
+    grep -qx '  ratelimit_subnet_len_ipv6: 56' "$yaml"
+
+    printf 'dns:\n  ratelimit: 0\n  ratelimit_subnet_len_ipv4: 28\n' > "$yaml"
+    _adguard_tune_ratelimit "$yaml"
+    grep -qx '  ratelimit: 0' "$yaml"
+    grep -qx '  ratelimit_subnet_len_ipv4: 28' "$yaml"
 
     rm -rf "$work"
 }

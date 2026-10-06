@@ -301,10 +301,18 @@ After that, run `sudo bash corex-manage.sh lan-setup`. It adds the wildcard DNS
 rewrite automatically and prints what to change on your router.
 
 On the first repair after the setup wizard, CoreX also enables a stronger,
-maintained filter baseline: HaGeZi Multi PRO for ads, trackers and telemetry,
-plus the size-optimized HaGeZi TIF Mini list for phishing and malware. Existing
-custom filters, allow rules and DNS rewrites are preserved. Apply it to an
-existing installation with:
+maintained filter baseline. HaGeZi Multi PRO covers ads, trackers and
+telemetry, and the size-optimized HaGeZi TIF Mini list covers phishing and
+malware. HaGeZi's encrypted DNS list makes a browser or app with its own DoH
+resolver, or iCloud Private Relay, fall back to AdGuard instead of going around
+it. The Apple, Microsoft, Samsung and Amazon native tracker lists cover
+telemetry built into those devices.
+
+Repair also sets AdGuard's rate limit per device, at 100 lookups a second,
+because the default of 20 a second per /24 is shared by every device on a home
+network. Existing custom filters, allow rules and DNS rewrites are preserved,
+and a list switched off in the AdGuard UI stays off. Apply it to an existing
+installation with:
 
 ```bash
 sudo corex manage repair adguard

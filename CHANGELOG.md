@@ -6,6 +6,33 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- **DNS lookups no longer time out when the house is busy.** AdGuard ships a
+  rate limit of 20 lookups a second per /24. On a home network every device is
+  in the same /24, so the whole house shared twenty a second and anything over
+  that was dropped without an answer. Measured from one laptop asking for a
+  cached name forty times in a row: the 21st and the 40th timed out at
+  3000 ms. Repair now makes the limit per device, at 100 a second, and leaves
+  a limit someone chose alone. Measured before and after across 40 common
+  domains, the worst case went from 3000 ms to 456 ms and the mean on cached
+  lookups from 154 ms to 6 ms.
+
+### Added
+- **Apps can no longer go around AdGuard with their own DNS.** A browser or app
+  using its own DoH resolver, or iCloud Private Relay, sends nothing to
+  AdGuard, so no list applies to it. HaGeZi's encrypted DNS list blocks those
+  resolver hostnames, and they fall back to the network's DNS. It is the
+  DoH-only list, not the wider bypass list, which also names Tailscale's
+  control plane.
+- **Native tracker lists for Apple, Microsoft, Samsung and Amazon.** These four
+  vendors appeared in a real query log and add 34 to 79 domains each beyond
+  Multi PRO. Xiaomi, TikTok, Vivo, OPPO and LG added 1 to 8 each and are left
+  out.
+
+---
+
 ## [v3.56.0] - 2026-10-04
 
 ### Changed
