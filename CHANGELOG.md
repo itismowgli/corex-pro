@@ -18,14 +18,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
   a limit someone chose alone. Measured before and after across 40 common
   domains, the worst case went from 3000 ms to 456 ms and the mean on cached
   lookups from 154 ms to 6 ms.
+- **No encrypted DNS blocklist.** HaGeZi's DoH list was added to the baseline
+  to stop devices routing around AdGuard, and was taken out again the same
+  day after apps and websites stopped loading. Several Apple devices on the
+  house network had a NextDNS profile installed on purpose, and an Apple
+  device with a DNS profile does not fall back to the network's resolver when
+  its own is blocked: it stops resolving. A list already added stays in the
+  configuration switched off, so a repair does not enable it again.
 
 ### Added
-- **Apps can no longer go around AdGuard with their own DNS.** A browser or app
-  using its own DoH resolver, or iCloud Private Relay, sends nothing to
-  AdGuard, so no list applies to it. HaGeZi's encrypted DNS list blocks those
-  resolver hostnames, and they fall back to the network's DNS. It is the
-  DoH-only list, not the wider bypass list, which also names Tailscale's
-  control plane.
 - **Native tracker lists for Apple, Microsoft, Samsung and Amazon.** These four
   vendors appeared in a real query log and add 34 to 79 domains each beyond
   Multi PRO. Xiaomi, TikTok, Vivo, OPPO and LG added 1 to 8 each and are left

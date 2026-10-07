@@ -53,14 +53,14 @@ adguard_firewall() {
 # high-value phishing/malware coverage without turning DNS into the largest
 # process on a small home server.
 #
-# The encrypted DNS list is what keeps the rest honest.  A browser or app with
-# its own DoH resolver (dns.google, cloudflare-dns.com, NextDNS) sends nothing
-# to AdGuard at all, and neither does iCloud Private Relay, so every other list
-# here stops applying to that device.  Blocking the resolver hostnames makes
-# them fall back to the network's DNS.  It is HaGeZi's DoH-only list and not
-# the wider doh-vpn-proxy-bypass one, because that also lists Tailscale's
-# control plane.  AdGuard's own upstream is unaffected: it is resolved through
-# bootstrap_dns, which filtering never sees.
+# There is deliberately no encrypted DNS blocklist here.  HaGeZi's doh.txt
+# looks like the way to stop devices routing around AdGuard, and on a real
+# house it took apps and websites down instead.  Several iPhones and Macs had
+# a NextDNS configuration profile installed on purpose, and an Apple device
+# with a DNS profile does not fall back to the network's resolver when its
+# own is unreachable: it stops resolving entirely, so every app on it failed.
+# Someone who installed their own encrypted DNS chose it, and it usually
+# blocks ads itself.  The same list also blocks iCloud Private Relay.
 #
 # The native tracker lists are the four whose vendors were present in a real
 # query log and which add something Multi PRO does not already hold.  Measured
@@ -80,7 +80,6 @@ ADGUARD_FILTER_BASE="https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/ad
 ADGUARD_FILTER_BASELINE=(
     "900001|HaGeZi Multi PRO|${ADGUARD_FILTER_BASE}/pro.txt"
     "900002|HaGeZi Threat Intelligence Feeds Mini|${ADGUARD_FILTER_BASE}/tif.mini.txt"
-    "900003|HaGeZi Encrypted DNS Servers|${ADGUARD_FILTER_BASE}/doh.txt"
     "900004|HaGeZi Native Tracker Apple|${ADGUARD_FILTER_BASE}/native.apple.txt"
     "900005|HaGeZi Native Tracker Microsoft|${ADGUARD_FILTER_BASE}/native.winoffice.txt"
     "900006|HaGeZi Native Tracker Samsung|${ADGUARD_FILTER_BASE}/native.samsung.txt"

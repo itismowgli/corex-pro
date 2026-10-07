@@ -303,10 +303,11 @@ rewrite automatically and prints what to change on your router.
 On the first repair after the setup wizard, CoreX also enables a stronger,
 maintained filter baseline. HaGeZi Multi PRO covers ads, trackers and
 telemetry, and the size-optimized HaGeZi TIF Mini list covers phishing and
-malware. HaGeZi's encrypted DNS list makes a browser or app with its own DoH
-resolver, or iCloud Private Relay, fall back to AdGuard instead of going around
-it. The Apple, Microsoft, Samsung and Amazon native tracker lists cover
-telemetry built into those devices.
+malware. The Apple, Microsoft, Samsung and Amazon native tracker lists cover
+telemetry built into those devices. A device that has its own encrypted DNS
+set up, such as a NextDNS profile or iCloud Private Relay, is left alone: an
+Apple device with a DNS profile does not fall back to the network's DNS when
+its own is blocked, it stops resolving altogether.
 
 Repair also sets AdGuard's rate limit per device, at 100 lookups a second,
 because the default of 20 a second per /24 is shared by every device on a home

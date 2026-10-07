@@ -1389,15 +1389,16 @@ YAMLEOF
     _adguard_seed_filter_lists "$yaml"
 
     local list
-    for list in pro tif.mini doh native.apple native.winoffice native.samsung native.amazon; do
+    for list in pro tif.mini native.apple native.winoffice native.samsung native.amazon; do
         [ "$(grep -c "adblock/${list}.txt" "$yaml")" -eq 1 ] \
             || { echo "${list} is not in the config exactly once"; false; }
     done
     # Every id is distinct, or AdGuard keeps one of the lists and drops the
     # other on load.
     [ "$(grep -E '^    id: ' "$yaml" | sort | uniq -d | wc -l)" -eq 0 ]
-    # The broader bypass list also names Tailscale's control plane.
-    ! grep -q 'doh-vpn-proxy-bypass' "$yaml"
+    # An encrypted DNS blocklist takes down every Apple device with a DNS
+    # profile installed, because those do not fall back to the network.
+    ! grep -Eq 'adblock/doh(-vpn-proxy-bypass)?\.txt' "$yaml"
     grep -q 'https://example.test/custom.txt' "$yaml"
     grep -q "@@||allowed.example" "$yaml"
     [ -f "${yaml}.corex-before-filters.bak" ]
