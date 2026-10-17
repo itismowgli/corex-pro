@@ -9,6 +9,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 ## [Unreleased]
 
 ### Fixed
+- **Update all stays inside a thermal budget and recovers after interruption.**
+  Dashboard and CLI service updates now refuse to start without thermal
+  headroom, temporarily cap every CPU frequency policy, serialize Compose
+  pulls, and pause/resume the active client tree with hysteresis. The exact
+  pre-update CPU ceilings are restored on success or signals. A durable
+  per-service marker is written before Compose recreation; a post-Docker boot
+  worker finishes an interrupted update only when that service is still
+  installed and enabled, and never starts disabled components. This closes the
+  failure chain where image extraction drove the host from 77.5C to 84C in 36
+  seconds, the machine thermal-tripped, and Nextcloud was left in Created.
 - **DNS lookups no longer time out when the house is busy.** AdGuard ships a
   rate limit of 20 lookups a second per /24. On a home network every device is
   in the same /24, so the whole house shared twenty a second and anything over

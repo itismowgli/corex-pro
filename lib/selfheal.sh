@@ -213,7 +213,172 @@ BRSEOF
 
     systemctl daemon-reload 2>/dev/null || true
     systemctl enable corex-boot-repair.service 2>/dev/null || true
+    selfheal_install_update_recovery
     log_success "Boot self-repair enabled (repairs dpkg, detects unclean shutdown)"
+}
+
+# ── Finish a service update interrupted by an unclean shutdown ───────────────
+#
+# update-safety.sh writes one marker immediately before Compose may replace a
+# service's containers. This worker runs after Docker, unlike boot-repair's
+# early dpkg work, and completes only those marked services. It is a timer so
+# a hot boot or a temporarily unavailable Docker daemon defers rather than
+# turning one interruption into a permanent Created/Exited service.
+selfheal_install_update_recovery() {
+    install_script /usr/local/bin/corex-update-recover.sh 750 << 'UREOF'
+#!/bin/bash
+set -uo pipefail
+
+MARK_DIR="${COREX_UPDATE_STATE_DIR:-/var/lib/corex/update-in-progress}"
+STATE_FILE="${COREX_STATE_FILE:-/etc/corex/state.json}"
+CONFIG_FILE="${COREX_CONFIG_FILE:-/etc/corex/config.env}"
+THERMAL_CONF="${COREX_UPDATE_THERMAL_CONF:-/etc/corex/thermal.conf}"
+LOCK_FILE="${COREX_UPDATE_LOCK:-/run/corex/update.lock}"
+LOG="${COREX_BLACKBOX_LOG:-/mnt/corex-data/blackbox.log}"
+[[ -r "$CONFIG_FILE" ]] && . "$CONFIG_FILE"
+DOCKER_ROOT="${DOCKER_ROOT:-/mnt/corex-data/docker-configs}"
+
+say() {
+    printf '%s update-recover: %s\n' "$(date -Is)" "$1" >> "$LOG" 2>/dev/null
+    logger -t corex-update-recover "$1" 2>/dev/null || true
+}
+
+cpu_temp() {
+    local t="" z raw hottest=0
+    if command -v sensors >/dev/null 2>&1; then
+        t=$(sensors 2>/dev/null \
+            | sed -n -E 's/^(Tctl|Tdie|Package id 0):[[:space:]]*\+?([0-9.]+).*/\2/p' \
+            | head -1)
+        [[ -n "$t" ]] && { echo "${t%.*}"; return 0; }
+    fi
+    for z in /sys/class/thermal/thermal_zone*/temp; do
+        [[ -r "$z" ]] || continue
+        raw=$(cat "$z" 2>/dev/null || echo 0)
+        [[ "$raw" =~ ^[0-9]+$ ]] || continue
+        t=$(( raw / 1000 )); (( t > hottest )) && hottest=$t
+    done
+    (( hottest > 0 )) && echo "$hottest"
+}
+
+[[ -d "$MARK_DIR" ]] || exit 0
+# A marker also exists while a normal update is between container recreation
+# and its final health check. The five-minute timer can fire during that
+# window, so share the updater's lock and defer instead of racing a second
+# `compose up` against work that is still in progress.
+command -v flock >/dev/null 2>&1 \
+    || { say "flock unavailable; keeping update markers"; exit 0; }
+mkdir -p "$(dirname "$LOCK_FILE")" 2>/dev/null || true
+exec 9> "$LOCK_FILE" \
+    || { say "update lock unavailable; keeping update markers"; exit 0; }
+if ! flock -n 9; then
+    say "an update is still active; recovery deferred"
+    exit 0
+fi
+command -v jq >/dev/null 2>&1 || { say "jq unavailable; keeping update markers"; exit 0; }
+jq -e . "$STATE_FILE" >/dev/null 2>&1 \
+    || { say "state.json unreadable; keeping update markers"; exit 0; }
+docker info >/dev/null 2>&1 || { say "Docker unavailable; keeping update markers"; exit 0; }
+
+THERMAL_WARN_C=80
+[[ -r "$THERMAL_CONF" ]] && . "$THERMAL_CONF"
+UPDATE_MAX_TEMP_C="${COREX_UPDATE_MAX_TEMP_C:-$(( THERMAL_WARN_C - 2 ))}"
+t=$(cpu_temp 2>/dev/null || true)
+if [[ ! "$t" =~ ^[0-9]+$ ]] || (( t <= 0 )); then
+    say "temperature unavailable; keeping update markers"
+    exit 0
+fi
+if (( t >= UPDATE_MAX_TEMP_C )); then
+    say "CPU ${t}C is too hot for update recovery (limit ${UPDATE_MAX_TEMP_C}C); deferred"
+    exit 0
+fi
+
+for marker in "$MARK_DIR"/*; do
+    [[ -f "$marker" ]] || continue
+    svc=$(basename "$marker")
+    [[ "$svc" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || {
+        say "ignoring invalid update marker ${svc}"
+        continue
+    }
+
+    verdict=$(jq -r --arg svc "$svc" '
+        if .services[$svc].installed != true then "absent"
+        elif .services[$svc].enabled == false then "disabled"
+        else "enabled" end' "$STATE_FILE" 2>/dev/null)
+    if [[ "$verdict" != "enabled" ]]; then
+        say "${svc}: not recovering (${verdict}); operator state wins"
+        rm -f "$marker"
+        continue
+    fi
+
+    compose="${DOCKER_ROOT}/${svc}/docker-compose.yml"
+    if [[ ! -f "$compose" ]]; then
+        say "${svc}: compose file missing; keeping update marker"
+        continue
+    fi
+
+    disabled=()
+    while IFS= read -r off; do
+        [[ -n "$off" ]] && disabled+=("$off")
+    done < <(jq -r --arg svc "$svc" \
+        '.services[$svc].disabled_components // [] | .[]' "$STATE_FILE" 2>/dev/null)
+    components=()
+    while IFS= read -r comp; do
+        [[ -n "$comp" ]] && components+=("$comp")
+    done < <(docker compose -f "$compose" config --services 2>/dev/null)
+    enabled=()
+    for comp in "${components[@]:-}"; do
+        [[ -n "$comp" ]] || continue
+        skip=false
+        for off in "${disabled[@]:-}"; do
+            [[ "$comp" == "$off" ]] && { skip=true; break; }
+        done
+        [[ "$skip" == "false" ]] && enabled+=("$comp")
+    done
+
+    if (( ${#enabled[@]} == 0 )); then
+        say "${svc}: every component is disabled; nothing to recover"
+        rm -f "$marker"
+        continue
+    fi
+    if COMPOSE_PARALLEL_LIMIT=1 docker compose -f "$compose" up -d "${enabled[@]}"; then
+        rm -f "$marker"
+        say "${svc}: completed the interrupted update"
+    else
+        say "${svc}: recovery failed; keeping update marker for the next cycle"
+    fi
+done
+sync -d "$MARK_DIR" 2>/dev/null || true
+UREOF
+
+    cat > /etc/systemd/system/corex-update-recover.service << 'URSEOF'
+[Unit]
+Description=Finish CoreX service updates interrupted by a crash
+After=docker.service corex-boot-repair.service
+Wants=docker.service
+ConditionDirectoryNotEmpty=/var/lib/corex/update-in-progress
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/corex-update-recover.sh
+TimeoutStartSec=10min
+Nice=10
+URSEOF
+
+    cat > /etc/systemd/system/corex-update-recover.timer << 'URTEOF'
+[Unit]
+Description=Retry interrupted CoreX service updates after boot
+
+[Timer]
+OnBootSec=90s
+OnUnitActiveSec=5min
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target
+URTEOF
+
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable --now corex-update-recover.timer 2>/dev/null || true
 }
 
 # ── Blackbox health recorder ──────────────────────────────────────────────────

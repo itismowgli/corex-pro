@@ -809,8 +809,8 @@ _repair_body() {
     # an expired tag was indistinguishable from an update.
     local body
     body=$(awk '/^_update_single\(\)/,/^}/' "${REPO_ROOT}/corex-manage.sh")
-    echo "$body" | grep -qE 'if ! docker compose .* pull'
-    echo "$body" | grep -qE 'if ! docker compose .* up -d'
+    echo "$body" | grep -qE 'if ! update_run_governed .*image pull'
+    echo "$body" | grep -q 'compose_up_enabled'
     echo "$body" | grep -q 'return 1'
 }
 

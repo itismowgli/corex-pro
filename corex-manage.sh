@@ -37,6 +37,8 @@ source "${SCRIPT_DIR}/lib/wizard.sh"
 source "${SCRIPT_DIR}/lib/kuma.sh"
 source "${SCRIPT_DIR}/lib/video.sh"
 source "${SCRIPT_DIR}/lib/recovery.sh"
+source "${SCRIPT_DIR}/lib/update-safety.sh"
+source "${SCRIPT_DIR}/lib/selfheal.sh"
 
 # ── v1 → v2 migration ────────────────────────────────────────────────────────
 # Called automatically when state.json is missing but CoreX appears to be installed
@@ -579,6 +581,11 @@ cmd_disable() {
 cmd_update() {
     local target="${1:---all}"
 
+    # Existing installations do not rerun the full installer after a git
+    # update. Refresh this narrowly scoped generated unit here so the crash
+    # marker written below always has a deployed consumer on upgraded hosts.
+    selfheal_install_update_recovery
+
     if [[ "$target" == "--all" ]]; then
         log_step "Updating all installed services..."
         local svc failed=""
@@ -602,6 +609,10 @@ cmd_update() {
         fi
         log_success "All installed services processed."
     else
+        if ! state_service_is_enabled "$target"; then
+            log_warning "${target}: disabled, refusing to start it for an update"
+            return 1
+        fi
         _update_single "$target"
     fi
 }
@@ -705,7 +716,14 @@ _update_single() {
     done < <(_module_images "$svc")
     if [[ -n "$stale" ]]; then
         log_info "${svc}: the compose file is older than the module, regenerating it"
-        if ! _run_service_fn "$svc" "repair"; then
+        # A repair can recreate containers, so record the intent before it
+        # starts. If power disappears, the boot reconciler knows exactly one
+        # enabled service needs finishing.
+        if ! update_mark_begin "$svc"; then
+            log_warning "${svc}: could not persist update recovery state; refusing to recreate containers"
+            return 1
+        fi
+        if ! update_run_governed "${svc} compose regeneration" _run_service_fn "$svc" "repair"; then
             log_warning "${svc}: could not regenerate the compose file"
             return 1
         fi
@@ -734,14 +752,33 @@ _update_single() {
     # checking, then ran `up -d` and logged success regardless, so a rate
     # limit, an expired tag or a dropped connection all looked identical to a
     # successful update.
-    if ! docker compose -f "${dir}/docker-compose.yml" pull; then
+    # Compose otherwise pulls several layers in parallel. One at a time is
+    # slower but removes the extraction burst that caused this incident.
+    if ! update_run_governed "${svc} image pull" \
+        env COMPOSE_PARALLEL_LIMIT=1 docker compose -f "${dir}/docker-compose.yml" pull; then
         log_warning "${svc}: pull failed, containers left on their current images"
+        # No container is changed by a pull. A marker can only predate it when
+        # compose regeneration ran above and may have recreated the service;
+        # keep that marker for reconciliation in that case.
+        [[ -f "${COREX_UPDATE_STATE_DIR}/${svc}" ]] \
+            && log_warning "${svc}: recovery marker retained because compose was regenerated"
         return 1
     fi
-    if ! docker compose -f "${dir}/docker-compose.yml" up -d; then
+
+    # From here on a crash can leave replacement containers in Created or
+    # Exited. The marker is removed only after Compose confirms the enabled
+    # service (minus deliberately disabled components) is back up.
+    if ! update_mark_begin "$svc"; then
+        log_warning "${svc}: could not persist update recovery state; refusing to recreate containers"
+        return 1
+    fi
+    if ! update_run_governed "${svc} container recreate" \
+        compose_up_enabled "$svc" "${dir}/docker-compose.yml"; then
         log_warning "${svc}: pull succeeded but the containers did not come up"
+        log_warning "${svc}: recovery marker retained for boot-time reconciliation"
         return 1
     fi
+    update_mark_done "$svc"
 
     # Say what changed. An image whose tag has stopped moving upstream is
     # otherwise invisible: uptime-kuma sat ten months behind because
@@ -3511,7 +3548,7 @@ main() {
         remove)       cmd_remove "$@" ;;
         enable)       cmd_enable "$@" ;;
         disable)      cmd_disable "$@" ;;
-        update)       cmd_update "$@" ;;
+        update)       update_session_run "Service update" cmd_update "$@" ;;
         repair)       cmd_repair "$@" ;;
         replace)      cmd_replace "$@" ;;
         doctor)       cmd_doctor ;;
@@ -3522,12 +3559,12 @@ main() {
         disk)         cmd_disk "$@" ;;
         cold)         source "${SCRIPT_DIR}/lib/cold.sh"; cold_manage "$@" ;;
         cleanup)      cmd_cleanup "$@" ;;
-        update-everything) cmd_update_everything ;;
+        update-everything) update_locked_exec_run "Update everything" cmd_update_everything ;;
         lan-setup)    cmd_lan_setup ;;
         network-tune)  cmd_network_tune ;;
         network-check) cmd_network_check ;;
         video-fix)    cmd_video_fix "$@" ;;
-        self-heal)    recovery_install ;;
+        self-heal)    recovery_install; selfheal_install_update_recovery ;;
         restart)      cmd_restart "$@" ;;
         watchdog)     cmd_watchdog "$@" ;;
         kuma-seed)    kuma_seed_http_monitors ;;

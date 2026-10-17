@@ -71,6 +71,7 @@ import hmac
 import json
 import os
 import re
+import signal
 import socket
 import socketserver
 import subprocess
@@ -423,7 +424,15 @@ def run_manage_streamed(action, service, job_id):
     def _kill():
         killed["yes"] = True
         try:
-            proc.kill()
+            # The update governor has a background child that may itself have
+            # a stopped Compose process. Killing only the shell leaves that
+            # tree orphaned, the global update lock held, and the temporary
+            # CPU ceiling unrestored. Give the whole session TERM so the
+            # shell trap restores host state, then bound cleanup with KILL.
+            os.killpg(proc.pid, signal.SIGTERM)
+            time.sleep(5)
+            if proc.poll() is None:
+                os.killpg(proc.pid, signal.SIGKILL)
         except Exception:                               # noqa: BLE001
             pass
 
@@ -431,6 +440,7 @@ def run_manage_streamed(action, service, job_id):
         proc = subprocess.Popen(
             argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, bufsize=1, errors="replace",
+            start_new_session=True,
         )
     except OSError as exc:
         return 1, "could not start %s: %s" % (action, exc)
@@ -459,7 +469,7 @@ def run_manage_streamed(action, service, job_id):
 
     if killed["yes"]:
         chunks.append("\n[stopped after %ds, which is this action's limit]\n" % limit)
-        rc = rc or 124
+        rc = 124
     return rc, cc.strip_ansi("".join(chunks)).strip()
 
 
