@@ -167,6 +167,7 @@ SHED_LIST=/var/lib/corex/thermal-shed.list
 # next boot by corex-boot-repair and then removed.
 EMERG_LIST=/var/lib/corex/thermal-emergency.list
 LOG=/mnt/corex-data/blackbox.log
+UPDATE_LOCK=/run/corex/update.lock
 
 [[ -r "$CONF" ]] || exit 0
 # shellcheck disable=SC1090
@@ -198,6 +199,20 @@ touch "$SHED_LIST" 2>/dev/null
 say() {
     printf '%s thermal: %s\n' "$(date -Is)" "$1" >> "$LOG" 2>/dev/null
     logger -t corex-thermal "$1" 2>/dev/null || true
+}
+
+# The updater deliberately holds the CPU at the thermal floor for its complete
+# Docker window. A cool guardian sample must not interpret that lower ceiling
+# as its own work and step it back up while image extraction is still active.
+# Only upward clock restoration is suppressed: hot bands remain free to lower
+# the ceiling further or shed load.
+update_in_progress() {
+    command -v flock >/dev/null 2>&1 || return 1
+    mkdir -p "$(dirname "$UPDATE_LOCK")" 2>/dev/null || true
+    if flock -n "$UPDATE_LOCK" true 2>/dev/null; then
+        return 1
+    fi
+    return 0
 }
 
 # ── The CPU ceiling, as a dial rather than a fixed setting ──────────────────
@@ -578,7 +593,7 @@ case "$band" in
         # is raised: giving the machine its speed back while Nextcloud is still
         # down would be the wrong order, and would also make the next sample
         # hotter for no benefit.
-        if [[ ! -s "$SHED_LIST" ]]; then
+        if [[ ! -s "$SHED_LIST" ]] && ! update_in_progress; then
             clock_step_up || true
         fi
         ;;

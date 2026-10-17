@@ -39,6 +39,7 @@ source "${SCRIPT_DIR}/lib/video.sh"
 source "${SCRIPT_DIR}/lib/recovery.sh"
 source "${SCRIPT_DIR}/lib/update-safety.sh"
 source "${SCRIPT_DIR}/lib/selfheal.sh"
+source "${SCRIPT_DIR}/lib/thermal.sh"
 
 # ── v1 → v2 migration ────────────────────────────────────────────────────────
 # Called automatically when state.json is missing but CoreX appears to be installed
@@ -582,9 +583,10 @@ cmd_update() {
     local target="${1:---all}"
 
     # Existing installations do not rerun the full installer after a git
-    # update. Refresh this narrowly scoped generated unit here so the crash
-    # marker written below always has a deployed consumer on upgraded hosts.
+    # update. Refresh these generated units here so the crash marker written
+    # below has a deployed consumer and the guardian honours the update lock.
     selfheal_install_update_recovery
+    thermal_install
 
     if [[ "$target" == "--all" ]]; then
         log_step "Updating all installed services..."

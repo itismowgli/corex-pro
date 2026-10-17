@@ -250,4 +250,14 @@ EOF
     local body
     body=$(sed -n '/^cmd_update()/,/^}/p' "${REPO_ROOT}/corex-manage.sh")
     echo "$body" | grep -q 'selfheal_install_update_recovery'
+    echo "$body" | grep -q 'thermal_install'
+}
+
+@test "thermal guardian never raises the updater's temporary CPU ceiling" {
+    local guard
+    guard=$(_generated TGEOF "${REPO_ROOT}/lib/thermal.sh")
+    echo "$guard" | grep -q 'UPDATE_LOCK=/run/corex/update.lock'
+    echo "$guard" | grep -q '^update_in_progress()'
+    echo "$guard" | grep -q 'flock -n "$UPDATE_LOCK" true'
+    echo "$guard" | grep -q '! update_in_progress'
 }

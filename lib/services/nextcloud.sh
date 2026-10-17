@@ -400,7 +400,7 @@ ${ffmpeg_mounts}
   # through Traefik or the tunnel would be a pointless round trip.
   whiteboard:
     # Pinned, not :release. Moving tags carry major upgrades in on a routine
-    # `corex manage update`. See CLAUDE.md gotcha #19.
+    # A routine CoreX update. See CLAUDE.md gotcha #19.
     image: ghcr.io/nextcloud-releases/whiteboard:v1.5.9
     container_name: nextcloud-whiteboard
     restart: unless-stopped

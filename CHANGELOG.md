@@ -16,7 +16,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
   pre-update CPU ceilings are restored on success or signals. A durable
   per-service marker is written before Compose recreation; a post-Docker boot
   worker finishes an interrupted update only when that service is still
-  installed and enabled, and never starts disabled components. This closes the
+  installed and enabled, and never starts disabled components. The thermal
+  guardian also honours the update lock, so its cooling path cannot raise the
+  updater's temporary CPU ceiling while Docker work is still active. This closes the
   failure chain where image extraction drove the host from 77.5C to 84C in 36
   seconds, the machine thermal-tripped, and Nextcloud was left in Created.
 - **DNS lookups no longer time out when the house is busy.** AdGuard ships a
