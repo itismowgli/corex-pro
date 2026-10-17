@@ -329,18 +329,14 @@ security_check() {
 
     # 1. SSH hardening
     echo -e "  ${BOLD}SSH Configuration:${NC}"
-    if [[ -f /etc/ssh/sshd_config.d/99-corex.conf ]]; then
-        local root_login
-        root_login=$(sshd -T 2>/dev/null | awk '/^permitrootlogin /{print $2}')
-        if [[ "$root_login" == "no" ]]; then
-            echo -e "    ${GREEN}OK${NC} PermitRootLogin disabled (port ${SSH_PORT:-2222})"
-            ((passed++))
-        else
-            echo -e "    ${YELLOW}WARN${NC} PermitRootLogin is '${root_login}' (expected 'no')"
-            ((warnings++))
-        fi
+    local root_login ssh_p
+    root_login=$(sshd -T 2>/dev/null | awk '/^permitrootlogin /{print $2}')
+    ssh_p=$(sshd -T 2>/dev/null | awk '/^port /{print $2}')
+    if [[ "$root_login" == "no" ]]; then
+        echo -e "    ${GREEN}OK${NC} PermitRootLogin disabled (port ${ssh_p:-2222})"
+        ((passed++))
     else
-        echo -e "    ${YELLOW}WARN${NC} /etc/ssh/sshd_config.d/99-corex.conf not found"
+        echo -e "    ${YELLOW}WARN${NC} PermitRootLogin is '${root_login}' (expected 'no')"
         ((warnings++))
     fi
 
@@ -414,7 +410,7 @@ security_check() {
 
     # 6. Hardware watchdog and journald
     echo -e "  ${BOLD}Systemd Watchdog and Journald:${NC}"
-    if [[ -f /etc/systemd/system.conf.d/99-corex-watchdog.conf ]]; then
+    if [[ -f /etc/systemd/system.conf.d/99-corex-watchdog.conf || -f /etc/systemd/system.conf.d/corex-watchdog.conf ]]; then
         echo -e "    ${GREEN}OK${NC} Hardware watchdog configuration present"
         ((passed++))
     else

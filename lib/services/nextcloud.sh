@@ -470,11 +470,14 @@ _nextcloud_apply_occ() {
     #    unnoticed. Run at reduced CPU priority to stay inside the thermal budget.
     if "${_o[@]}" status 2>/dev/null | grep -q 'needsDbUpgrade: true'; then
         log_step "Nextcloud needs a database upgrade — running occ upgrade..."
-        if command -v nice >/dev/null 2>&1; then
-            nice -n 19 "${_o[@]}" upgrade 2>&1 | tail -5 | sed 's/^/    /' || true
-        else
-            "${_o[@]}" upgrade 2>&1 | tail -5 | sed 's/^/    /' || true
+        local _runner=()
+        if command -v taskset >/dev/null 2>&1 && (( $(nproc 2>/dev/null || echo 1) > 2 )); then
+            _runner+=(taskset -c 0,1)
         fi
+        if command -v nice >/dev/null 2>&1; then
+            _runner+=(nice -n 19)
+        fi
+        "${_runner[@]}" "${_o[@]}" upgrade 2>&1 | tail -5 | sed 's/^/    /' || true
     fi
 
     # 3. Clear maintenance mode if it is stuck on. occ upgrade prints
