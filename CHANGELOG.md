@@ -9,6 +9,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 ## [Unreleased]
 
 ### Fixed
+- **Immich v3.3.3 is detected and shipped.** The pinned server and machine-
+  learning images move from v3.2.2 to v3.3.3. Release probing now tolerates
+  skipped patch numbers; Immich did not publish v3.3.2, so the previous walk
+  stopped there and incorrectly reported v3.3.1 as the newest release.
 - **Update all stays inside a thermal budget and recovers after interruption.**
   Dashboard and CLI service updates now refuse to start without thermal
   headroom, temporarily cap every CPU frequency policy, serialize Compose

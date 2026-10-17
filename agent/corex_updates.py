@@ -304,11 +304,13 @@ def newer_release(host, repo, tag, budget=24):
     handful of HEAD requests, costs the same on every registry, and stops as
     soon as one is missing.
 
-    Majors first, then minors, then patches. That order cannot stop early on
-    a line that has moved on, and from v3.1.0 it reaches v3.2.2 in six
-    probes. A registry that stops answering part way returns None rather than
-    the best found so far, because a partial climb is a wrong answer rather
-    than a small one.
+    Majors first, then minors, then patches. Patch numbers are allowed to have
+    gaps: Immich published v3.3.1 and v3.3.3 but no v3.3.2, and stopping at the
+    first absent tag hid the real latest release. Three consecutive misses
+    still bound the work while tolerating ordinary skipped releases. A
+    registry that stops answering part way returns None rather than the best
+    found so far, because a partial climb is a wrong answer rather than a
+    small one.
     """
     m = _SEMVER.match(tag)
     if m is None:
@@ -332,8 +334,15 @@ def newer_release(host, repo, tag, budget=24):
         major, minor, patch = major + 1, 0, 0
     while exists(major, minor + 1, 0):
         minor, patch = minor + 1, 0
-    while exists(major, minor, patch + 1):
-        patch += 1
+    candidate = patch + 1
+    misses = 0
+    while state["spent"] < budget and misses < 3:
+        if exists(major, minor, candidate):
+            patch = candidate
+            misses = 0
+        else:
+            misses += 1
+        candidate += 1
 
     if state["lost"]:
         return None

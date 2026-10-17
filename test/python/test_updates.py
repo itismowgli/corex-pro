@@ -56,6 +56,15 @@ class NewerReleaseTest(unittest.TestCase):
         got, _ = self._run('v3.1.0', ['v4.0.0', 'v4.0.1'])
         self.assertEqual(got, 'v4.0.1')
 
+    def test_a_skipped_patch_does_not_hide_a_later_release(self):
+        # Immich released v3.3.3 without publishing v3.3.2. The old walk
+        # stopped at that missing tag and left the dashboard advertising
+        # v3.3.1 indefinitely.
+        got, fake = self._run(
+            'v3.2.2', ['v3.3.0', 'v3.3.1', 'v3.3.3'])
+        self.assertEqual(got, 'v3.3.3')
+        self.assertNotIn('v3.3.2', fake.present)
+
     def test_already_newest_is_not_news(self):
         got, _ = self._run('v3.2.2', [])
         self.assertIsNone(got)
