@@ -467,10 +467,14 @@ _nextcloud_apply_occ() {
     # 2. Finish a pending schema upgrade. Pulling a new image leaves the
     #    database behind the code, and occ refuses almost every command until
     #    this completes — silently, which is how a stale instance goes
-    #    unnoticed.
+    #    unnoticed. Run at reduced CPU priority to stay inside the thermal budget.
     if "${_o[@]}" status 2>/dev/null | grep -q 'needsDbUpgrade: true'; then
         log_step "Nextcloud needs a database upgrade — running occ upgrade..."
-        "${_o[@]}" upgrade 2>&1 | tail -5 | sed 's/^/    /' || true
+        if command -v nice >/dev/null 2>&1; then
+            nice -n 19 "${_o[@]}" upgrade 2>&1 | tail -5 | sed 's/^/    /' || true
+        else
+            "${_o[@]}" upgrade 2>&1 | tail -5 | sed 's/^/    /' || true
+        fi
     fi
 
     # 3. Clear maintenance mode if it is stuck on. occ upgrade prints
@@ -479,7 +483,13 @@ _nextcloud_apply_occ() {
     #    Nextcloud serves HTTP 503 and every config command fails with
     #    "only AppAPI commands are loaded" — so this must be cleared BEFORE
     #    applying settings, or they all fail invisibly.
-    if [[ "$("${_o[@]}" config:system:get maintenance 2>/dev/null)" == "true" ]]; then
+    local in_maint=false
+    if "${_o[@]}" status 2>/dev/null | grep -q 'maintenance: true' || \
+       [[ "$("${_o[@]}" config:system:get maintenance 2>/dev/null)" == "true" ]]; then
+        in_maint=true
+    fi
+
+    if [[ "$in_maint" == "true" ]]; then
         if "${_o[@]}" status 2>/dev/null | grep -q 'needsDbUpgrade: true'; then
             log_warning "Maintenance mode on and upgrade still pending — leaving it."
             return 0
@@ -571,10 +581,21 @@ nextcloud_destroy() {
 }
 
 nextcloud_status() {
+    if ! container_running "nextcloud"; then
+        if container_exists "nextcloud"; then echo "UNHEALTHY"; else echo "MISSING"; fi
+        return 0
+    fi
+
+    local occ_st
+    occ_st=$(docker exec -u www-data nextcloud php occ status 2>/dev/null || true)
+    if echo "$occ_st" | grep -q 'needsDbUpgrade: true' || echo "$occ_st" | grep -q 'maintenance: true'; then
+        echo "UNHEALTHY"
+        return 0
+    fi
+
     if container_running "nextcloud" && container_running "nextcloud-cron"; then echo "HEALTHY"
     elif container_running "nextcloud"; then echo "HEALTHY"
-    elif container_exists "nextcloud"; then echo "UNHEALTHY"
-    else echo "MISSING"; fi
+    else echo "UNHEALTHY"; fi
 }
 
 nextcloud_repair() {

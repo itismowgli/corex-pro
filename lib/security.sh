@@ -143,6 +143,8 @@ Unattended-Upgrade::AutoFixInterruptedDpkg "true";
 Unattended-Upgrade::MinimalSteps "true";
 Unattended-Upgrade::Mail "";
 UUEOF
+    systemctl unmask apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
+    systemctl enable --now apt-daily.timer apt-daily-upgrade.timer unattended-upgrades.service 2>/dev/null || true
     log_success "Unattended security upgrades configured (security-only, no auto-reboot)"
 
     # ── Kernel Hardening + Network Performance ─────────────────────────────────
@@ -312,3 +314,130 @@ WDEOF
     ufw --force enable
     log_success "UFW firewall active (${SSH_PORT}, 80, 443 + LAN services)"
 }
+
+# ── Audit and Re-apply ────────────────────────────────────────────────────────
+
+security_check() {
+    echo ""
+    echo -e "${CYAN}${BOLD}CoreX Security Audit${NC}"
+    echo "─────────────────────────────────────────────────────────"
+    echo ""
+
+    local passed=0
+    local warnings=0
+    local errors=0
+
+    # 1. SSH hardening
+    echo -e "  ${BOLD}SSH Configuration:${NC}"
+    if [[ -f /etc/ssh/sshd_config.d/99-corex.conf ]]; then
+        local root_login
+        root_login=$(sshd -T 2>/dev/null | awk '/^permitrootlogin /{print $2}')
+        if [[ "$root_login" == "no" ]]; then
+            echo -e "    ${GREEN}OK${NC} PermitRootLogin disabled (port ${SSH_PORT:-2222})"
+            ((passed++))
+        else
+            echo -e "    ${YELLOW}WARN${NC} PermitRootLogin is '${root_login}' (expected 'no')"
+            ((warnings++))
+        fi
+    else
+        echo -e "    ${YELLOW}WARN${NC} /etc/ssh/sshd_config.d/99-corex.conf not found"
+        ((warnings++))
+    fi
+
+    # 2. UFW firewall
+    echo -e "  ${BOLD}UFW Firewall:${NC}"
+    if command -v ufw &>/dev/null; then
+        local ufw_status
+        ufw_status=$(ufw status 2>/dev/null | head -1)
+        if [[ "$ufw_status" == *"active"* ]]; then
+            echo -e "    ${GREEN}OK${NC} UFW firewall is active"
+            ((passed++))
+        else
+            echo -e "    ${RED}FAIL${NC} UFW firewall is INACTIVE"
+            ((errors++))
+        fi
+    else
+        echo -e "    ${RED}FAIL${NC} UFW is not installed"
+        ((errors++))
+    fi
+
+    # 3. Fail2ban
+    echo -e "  ${BOLD}Fail2ban Intrusion Prevention:${NC}"
+    if systemctl is-active --quiet fail2ban 2>/dev/null; then
+        echo -e "    ${GREEN}OK${NC} fail2ban service is active"
+        ((passed++))
+    else
+        echo -e "    ${YELLOW}WARN${NC} fail2ban service is inactive"
+        ((warnings++))
+    fi
+
+    # 4. Unattended security updates and timers
+    echo -e "  ${BOLD}Unattended Security Updates:${NC}"
+    local apt_masked=false
+    if systemctl is-enabled apt-daily.timer 2>/dev/null | grep -q "masked" || \
+       systemctl is-enabled apt-daily-upgrade.timer 2>/dev/null | grep -q "masked"; then
+        apt_masked=true
+    fi
+
+    if [[ "$apt_masked" == "true" ]]; then
+        echo -e "    ${RED}FAIL${NC} apt-daily.timer or apt-daily-upgrade.timer is masked (auto-updates suppressed)"
+        ((errors++))
+    elif systemctl is-active --quiet apt-daily-upgrade.timer 2>/dev/null; then
+        echo -e "    ${GREEN}OK${NC} apt-daily and apt-daily-upgrade timers are active"
+        ((passed++))
+    else
+        echo -e "    ${YELLOW}WARN${NC} apt-daily-upgrade.timer is not active"
+        ((warnings++))
+    fi
+
+    if [[ -f /etc/apt/apt.conf.d/50unattended-upgrades ]] && \
+       grep -q 'Unattended-Upgrade::Package-Blacklist' /etc/apt/apt.conf.d/50unattended-upgrades 2>/dev/null; then
+        echo -e "    ${GREEN}OK${NC} Kernel and libc blacklist configured for unattended updates"
+        ((passed++))
+    else
+        echo -e "    ${YELLOW}WARN${NC} 50unattended-upgrades missing CoreX package blacklist"
+        ((warnings++))
+    fi
+
+    # 5. Kernel sysctl parameters
+    echo -e "  ${BOLD}Kernel Hardening:${NC}"
+    local syncookies rp_filter
+    syncookies=$(sysctl -n net.ipv4.tcp_syncookies 2>/dev/null || echo 0)
+    rp_filter=$(sysctl -n net.ipv4.conf.all.rp_filter 2>/dev/null || echo 0)
+    if [[ "$syncookies" == "1" && "$rp_filter" == "1" ]]; then
+        echo -e "    ${GREEN}OK${NC} SYN flood protection and anti-spoofing enabled"
+        ((passed++))
+    else
+        echo -e "    ${YELLOW}WARN${NC} Kernel parameters not active (syncookies=${syncookies}, rp_filter=${rp_filter})"
+        ((warnings++))
+    fi
+
+    # 6. Hardware watchdog and journald
+    echo -e "  ${BOLD}Systemd Watchdog and Journald:${NC}"
+    if [[ -f /etc/systemd/system.conf.d/99-corex-watchdog.conf ]]; then
+        echo -e "    ${GREEN}OK${NC} Hardware watchdog configuration present"
+        ((passed++))
+    else
+        echo -e "    ${YELLOW}WARN${NC} Hardware watchdog not configured"
+        ((warnings++))
+    fi
+
+    echo ""
+    if (( errors > 0 )); then
+        log_warning "Security audit: ${passed} passed, ${warnings} warning(s), ${errors} error(s)."
+        echo "    Run 'sudo corex manage security apply' to apply recommended security hardening."
+        return 1
+    elif (( warnings > 0 )); then
+        log_info "Security audit: ${passed} passed, ${warnings} warning(s)."
+        return 0
+    else
+        log_success "Security audit: all ${passed} checks passed."
+        return 0
+    fi
+}
+
+security_apply() {
+    log_step "Applying CoreX security hardening..."
+    phase2_security
+}
+

@@ -1156,6 +1156,8 @@ cmd_replace() {
 cmd_doctor() {
     cmd_status
     cmd_health
+    source "${SCRIPT_DIR}/lib/security.sh"
+    security_check || true
     echo -e "${CYAN}Running auto-repair on unhealthy services...${NC}"
     cmd_repair
 }
@@ -1310,7 +1312,36 @@ cmd_health() {
     if [[ -n "$swap_used" ]] && (( swap_used > 512 )); then
         log_warning "Swap in use: ${swap_used}MB — memory pressure may be throttling I/O"
     fi
+
+    # ── Auto-updates status ──────────────────────────────────────────────────
+    if systemctl is-enabled apt-daily.timer 2>/dev/null | grep -q "masked" || \
+       systemctl is-enabled apt-daily-upgrade.timer 2>/dev/null | grep -q "masked"; then
+        log_warning "Automatic updates DISABLED: apt-daily.timer is masked (/dev/null)"
+        echo "      Fix with: sudo corex manage security apply"
+    elif ! systemctl is-active --quiet apt-daily-upgrade.timer 2>/dev/null; then
+        log_warning "Automatic updates: apt-daily-upgrade.timer is not active"
+    fi
     echo ""
+}
+
+# ── security ──────────────────────────────────────────────────────────────────
+# Audits host hardening (firewall, SSH, fail2ban, apt timers) or applies it.
+
+cmd_security() {
+    source "${SCRIPT_DIR}/lib/security.sh"
+    local sub="${1:-check}"
+    case "$sub" in
+        check|audit)
+            security_check
+            ;;
+        apply|harden)
+            security_apply
+            ;;
+        *)
+            echo "Usage: sudo corex manage security [check|apply]"
+            return 1
+            ;;
+    esac
 }
 
 # ── mail-setup ────────────────────────────────────────────────────────────────
@@ -3441,6 +3472,8 @@ Commands:
   replace <old> <new> Remove one service, install another
   doctor              Full health check + auto-repair
   health              Host hardware health (temp, SMART, dpkg, last shutdown)
+  security [check|apply]
+                      Audit host security or apply hardening
   os-upgrade          Supervised OS package upgrade (refuses if too hot/unstable)
   mail-setup          Configure Nextcloud outbound SMTP (relay; e.g. Gmail app password)
   storage             Show disk usage breakdown (OS disk, SSD, per-service)
@@ -3510,6 +3543,7 @@ Examples:
   sudo bash corex-manage.sh network-check
   sudo bash corex-manage.sh route add crm.example.com http://twenty-server:3000
   sudo bash corex-manage.sh health
+  sudo bash corex-manage.sh security check
   sudo bash corex-manage.sh os-upgrade
   sudo bash corex-manage.sh mail-setup
   sudo bash corex-manage.sh dashboard-user add admin --email you@example.com
@@ -3555,6 +3589,7 @@ main() {
         replace)      cmd_replace "$@" ;;
         doctor)       cmd_doctor ;;
         health)       cmd_health ;;
+        security)     cmd_security "$@" ;;
         os-upgrade)   cmd_os_upgrade "$@" ;;
         mail-setup)   cmd_mail_setup ;;
         storage)      cmd_storage ;;

@@ -8,7 +8,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ## [Unreleased]
 
+### Added
+- **Security audit and hardening command.** `corex manage security check` verifies
+  host firewall status, SSH configuration, fail2ban jails, apt update timers,
+  kernel sysctl hardening, and watchdog protection. `corex manage security apply`
+  re-applies host hardening without running the full installer, and `corex manage doctor`
+  includes the audit.
+
 ### Fixed
+- **Unattended updates unmask and enable systemd daily timers.** The security
+  configuration previously wrote update configs but left `apt-daily.timer` and
+  `apt-daily-upgrade.timer` untouched, so a masked or disabled timer left the
+  server without automated package upgrades. Host health checks now warn when
+  automatic update timers are masked.
+- **Nextcloud maintenance mode detection and thermal-safe upgrade.** Nextcloud
+  status now checks for pending schema upgrades and maintenance mode rather than
+  reporting healthy while returning HTTP 503. Schema migrations run under
+  reduced CPU priority to prevent thermal tripping on compact servers, and stuck
+  maintenance flags are cleared cleanly after database upgrade completes.
 - **Immich v3.3.3 is detected and shipped.** The pinned server and machine-
   learning images move from v3.2.2 to v3.3.3. Release probing now tolerates
   skipped patch numbers; Immich did not publish v3.3.2, so the previous walk

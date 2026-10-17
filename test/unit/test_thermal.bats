@@ -206,6 +206,18 @@ _generated() {
     grep -q 'Remove-Unused-Kernel-Packages "false"' "${REPO_ROOT}/lib/security.sh"
 }
 
+@test "unattended upgrades unmasks and enables apt daily timers" {
+    local sec="${REPO_ROOT}/lib/security.sh"
+    grep -q 'systemctl unmask apt-daily.timer apt-daily-upgrade.timer' "$sec"
+    grep -q 'systemctl enable --now apt-daily.timer apt-daily-upgrade.timer' "$sec"
+}
+
+@test "security audit and apply functions exist" {
+    local sec="${REPO_ROOT}/lib/security.sh"
+    grep -q '^security_check()' "$sec"
+    grep -q '^security_apply()' "$sec"
+}
+
 # ─── Recovery must be reachable and gradual ──────────────────────────────────
 
 @test "recovery happens below WARN, not only at RECOVER_C" {
