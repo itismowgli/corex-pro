@@ -393,11 +393,18 @@ def service_images(service):
     """Every image the service's compose file names, not just the first one."""
     compose = os.path.join(DOCKER_ROOT, service, "docker-compose.yml")
     if not os.path.exists(compose):
-        alt_compose = "/data/coolify/source/docker-compose.yml"
-        if service == "coolify" and os.path.exists(alt_compose):
-            compose = alt_compose
-        else:
-            return []
+        rc, out = _run(["docker", "ps", "-a", "--filter", "name=%s" % service, "--format", "{{.Image}}"])
+        if rc == 0 and out.strip():
+            seen, images = set(), []
+            for line in out.splitlines():
+                line = line.strip()
+                if not line or line in seen:
+                    continue
+                seen.add(line)
+                images.append(line)
+            if images:
+                return images
+        return []
     rc, out = _run(["docker", "compose", "-f", compose, "config", "--images"])
     if rc != 0:
         return []
