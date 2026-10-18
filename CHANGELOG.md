@@ -33,6 +33,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 - **Pinned service image tags updated for Uptime Kuma and Portainer.** Uptime Kuma
   pinned tag moves from 2.5.5 to 2.5.6 and Portainer CE pinned tag moves from
   2.45.1 to 2.45.2.
+- **Disabled services and standalone stacks can be updated cleanly.** Service updates
+  now pull newer images for disabled services without starting them, keeping the
+  service stopped as intended. The update checker recognizes Coolify compose files
+  in their standalone location and identifies host packages like UPS (NUT) so they
+  no longer show as unknown with missing compose errors.
 - **Update all stays inside a thermal budget and recovers after interruption.**
   Dashboard and CLI service updates now refuse to start without thermal
   headroom, temporarily cap every CPU frequency policy, serialize Compose

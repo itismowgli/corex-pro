@@ -393,7 +393,11 @@ def service_images(service):
     """Every image the service's compose file names, not just the first one."""
     compose = os.path.join(DOCKER_ROOT, service, "docker-compose.yml")
     if not os.path.exists(compose):
-        return []
+        alt_compose = "/data/coolify/source/docker-compose.yml"
+        if service == "coolify" and os.path.exists(alt_compose):
+            compose = alt_compose
+        else:
+            return []
     rc, out = _run(["docker", "compose", "-f", compose, "config", "--images"])
     if rc != 0:
         return []
@@ -498,6 +502,9 @@ _RANK = {"update": 5, "stale-tag": 4, "newer-release": 3, "unknown": 2,
 
 
 def check_service(service):
+    if service == "ups":
+        return {"service": "ups", "state": "current", "images": [],
+                "note": "managed on host via apt (NUT)"}
     images = service_images(service)
     if not images:
         return {"service": service, "state": "unknown", "images": [],

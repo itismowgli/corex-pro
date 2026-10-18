@@ -126,6 +126,16 @@ coolify_repair() {
     log_warning "  curl -fsSL https://cdn.coollabs.io/coolify/install.sh | bash"
 }
 
+coolify_update() {
+    log_info "Updating Coolify..."
+    _coolify_write_route
+    if [[ -x /data/coolify/source/upgrade.sh ]]; then
+        bash /data/coolify/source/upgrade.sh
+    else
+        curl -fsSL https://cdn.coollabs.io/coolify/install.sh | bash
+    fi
+}
+
 coolify_credentials() {
     if [[ -n "${DOMAIN:-}" ]]; then
         echo "Coolify: https://coolify.${DOMAIN} (create admin on first visit)"

@@ -596,7 +596,8 @@ cmd_update() {
             # No point pulling images for something deliberately switched off,
             # and `up -d` afterwards would start it.
             if ! state_service_is_enabled "$svc"; then
-                log_info "${svc}: disabled, skipping"
+                log_info "${svc}: disabled, updating images without starting containers"
+                _update_single_disabled "$svc" || failed+=" $svc"
                 continue
             fi
             _update_single "$svc" || failed+=" $svc"
@@ -612,8 +613,9 @@ cmd_update() {
         log_success "All installed services processed."
     else
         if ! state_service_is_enabled "$target"; then
-            log_warning "${target}: disabled, refusing to start it for an update"
-            return 1
+            log_info "${target}: disabled, updating images without starting containers"
+            _update_single_disabled "$target"
+            return $?
         fi
         _update_single "$target"
     fi
@@ -694,10 +696,65 @@ _module_images() {
         | grep -E '^[A-Za-z0-9][A-Za-z0-9._/-]*:[A-Za-z0-9][A-Za-z0-9._-]*$' || true
 }
 
+_update_single_disabled() {
+    local svc="$1"
+    local dir="${DOCKER_ROOT}/${svc}"
+    if [[ ! -f "${dir}/docker-compose.yml" ]]; then
+        local module="${SCRIPT_DIR}/lib/services/${svc}.sh"
+        if [[ -f "$module" ]]; then
+            # shellcheck disable=SC1090
+            source "$module"
+            if declare -f "${svc}_update" &>/dev/null; then
+                "${svc}_update"
+                _update_recheck "$svc"
+                return $?
+            fi
+        fi
+        log_warning "No compose file for ${svc}, skipping"
+        return 0
+    fi
+
+    log_info "Updating ${svc} images (keeping service disabled)..."
+
+    local want have stale=""
+    have=$(docker compose -f "${dir}/docker-compose.yml" config --images 2>/dev/null || true)
+    while IFS= read -r want; do
+        [[ -n "$want" ]] || continue
+        grep -qxF -- "$want" <<< "$have" || stale="yes"
+    done < <(_module_images "$svc")
+    if [[ -n "$stale" ]]; then
+        log_info "${svc}: updating compose file to match module"
+        _run_service_fn "$svc" "repair" 2>/dev/null || true
+    fi
+
+    if ! update_run_governed "${svc} image pull" \
+        env COMPOSE_PARALLEL_LIMIT=1 docker compose -f "${dir}/docker-compose.yml" pull; then
+        log_warning "${svc}: image pull failed"
+        return 1
+    fi
+
+    # Ensure containers remain stopped
+    docker compose -f "${dir}/docker-compose.yml" stop 2>/dev/null || true
+
+    log_success "${svc}: updated image(s); service remains disabled"
+    _update_recheck "$svc"
+    return 0
+}
+
 _update_single() {
     local svc="$1"
     local dir="${DOCKER_ROOT}/${svc}"
     if [[ ! -f "${dir}/docker-compose.yml" ]]; then
+        local module="${SCRIPT_DIR}/lib/services/${svc}.sh"
+        if [[ -f "$module" ]]; then
+            # shellcheck disable=SC1090
+            source "$module"
+            if declare -f "${svc}_update" &>/dev/null; then
+                "${svc}_update"
+                _update_recheck "$svc"
+                return $?
+            fi
+        fi
         log_warning "No compose file for ${svc}, skipping"
         return 0
     fi

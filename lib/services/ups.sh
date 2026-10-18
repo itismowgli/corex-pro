@@ -300,6 +300,11 @@ ups_repair() {
     fi
 }
 
+ups_update() {
+    log_info "Updating UPS (NUT) packages..."
+    apt-get update -qq && apt-get install --only-upgrade -y nut nut-client nut-server
+}
+
 ups_credentials() {
     echo "UPS Monitoring (NUT, host service — not a container)"
     echo "  Live status:    upsc ${_UPS_DEV_NAME}@localhost"
