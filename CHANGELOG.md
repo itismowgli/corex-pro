@@ -8,14 +8,65 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ## [Unreleased]
 
+---
+
+## [v3.57.0] - 2026-10-19
+
 ### Added
-- **Security audit and hardening command.** `corex manage security check` verifies
-  host firewall status, SSH configuration, fail2ban jails, apt update timers,
-  kernel sysctl hardening, and watchdog protection. `corex manage security apply`
-  re-applies host hardening without running the full installer, and `corex manage doctor`
-  includes the audit.
+- **Security audit and targeted repair.** `corex manage security check`
+  reports the firewall, SSH root login, fail2ban, the apt update timers, the
+  unattended-upgrades package blacklist, kernel hardening and the hardware
+  watchdog, and `corex manage doctor` includes it. `corex manage security
+  apply` repairs what the check reports and nothing more: it rewrites the
+  fail2ban, unattended-upgrades and sysctl configuration, loads the watchdog
+  driver, and enables UFW with the base rules only if UFW is off. It never
+  upgrades packages, never resets the firewall and never edits sshd.
 
 ### Fixed
+- **The hardware watchdog was configured and could not fire.** The installer
+  sets `RuntimeWatchdogSec=60s` so a hung kernel resets itself, and Ubuntu
+  blacklists every hardware watchdog driver by default, so on a machine with
+  no `/dev/watchdog` the setting does nothing. That matches what the unclean
+  shutdowns on this hardware looked like: hours with power and no kernel until
+  someone pulled the plug. Hardening now loads `sp5100_tco` on AMD or
+  `iTCO_wdt` on Intel when no device exists, keeps it in `modules-load.d`, and
+  the audit checks for the device and for systemd using it rather than for the
+  config file.
+- **`security apply` ran the whole installer hardening phase.** That meant a
+  full `apt-get upgrade`, kernel and libc included, which is the transaction
+  gotcha #18 keeps out of unattended runs, and `ufw --force reset`, which
+  deleted every rule a service module had added and reopened mail, Ollama and
+  Open WebUI ports for services that are not installed.
+- **An inactive firewall passed the audit.** The check matched `active`
+  anywhere in `ufw status`, and `Status: inactive` contains it.
+- **Updating a disabled service started it.** When the module pinned a newer
+  image, the update ran a repair to regenerate the compose file, and repair
+  starts every container, then stopped them again. It now pulls the pinned
+  images and touches no container. The first update after enabling applies
+  them.
+- **`update --all` could run the Coolify installer.** A disabled Coolify has
+  no compose file under `DOCKER_ROOT`, so the update fell through to a new
+  `coolify_update` that ran `upgrade.sh`, or `curl | bash` of the installer.
+  Either restarts every Coolify container. Coolify stays manual, and the hook
+  prints the upgrade command instead.
+- **`update --all` ran apt for the UPS module.** NUT is a host package that
+  unattended-upgrades already covers, and a dpkg transaction inside the update
+  window is what the thermal budget exists to avoid. The hook reports the
+  installed version.
+- **The Nextcloud upgrade was not deprioritised.** `nice` and `taskset` were
+  applied to the `docker exec` client, while `php occ upgrade` is started by
+  containerd at normal priority whatever the client was given. `nice` now runs
+  inside the container.
+- **Nextcloud status booted PHP on every dashboard poll.** It ran `occ status`
+  each time to detect maintenance mode and a pending upgrade. It reads
+  `config.php` and `version.php` from disk instead, the two values occ itself
+  compares, and falls back to occ only when they are unreadable.
+- **The update checker claimed other services' containers.** For a stack with
+  no compose file it asked `docker ps --filter name=`, which is a substring
+  match. Names are compared exactly now, or by `<service>-` prefix.
+- **Nine test assertions could never fail.** In bats, `! cmd` on any line but
+  the last cannot fail the test, because `set -e` ignores a negated command. A
+  `refute` helper replaces them in the unit and smoke suites.
 - **Unattended updates unmask and enable systemd daily timers.** The security
   configuration previously wrote update configs but left `apt-daily.timer` and
   `apt-daily-upgrade.timer` untouched, so a masked or disabled timer left the
