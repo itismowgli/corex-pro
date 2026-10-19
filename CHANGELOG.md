@@ -10,6 +10,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.57.3] - 2026-10-19
+
+### Fixed
+- **The hardware watchdog disappeared at every reboot.** `self-heal` wrote
+  the driver's name to `/etc/modules-load.d/`, and `systemd-modules-load`
+  refuses a module on Ubuntu's deny-list, logging "Module 'sp5100_tco' is
+  deny-listed (by kmod)" at every boot. The `modprobe` at install time worked,
+  so the watchdog existed until the first reboot and never after. On
+  2026-10-19 the box hung while idle at 77C and stayed powered and
+  unreachable for twelve hours with nothing to reset it. A unit now runs an
+  explicit `modprobe` before `sysinit.target`, which the deny-list does not
+  stop, and a second unit re-executes systemd after boot if PID 1 is not
+  holding the device. v3.57.0 said `modules-load.d` was enough; it is not.
+  `security apply` uses the same code instead of a copy of it.
+
+---
+
 ## [v3.57.2] - 2026-10-19
 
 ### Fixed

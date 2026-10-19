@@ -81,11 +81,67 @@ _recovery_install_watchdog() {
     fi
     log_success "Hardware watchdog: ${mod} (/dev/watchdog)"
 
-    # Load it at every boot. Without this the device is absent when systemd
-    # starts, and systemd only opens the watchdog once, at startup: a module
-    # loaded later is never used and nothing reports that.
-    echo "$mod" > /etc/modules-load.d/corex-watchdog.conf
-    chmod 644 /etc/modules-load.d/corex-watchdog.conf
+    # Load it at every boot, and not through modules-load.d. Ubuntu deny-lists
+    # every watchdog driver in /lib/modprobe.d/blacklist_linux_*.conf, and
+    # systemd-modules-load honours that: each boot logged "Module 'sp5100_tco'
+    # is deny-listed (by kmod)" and loaded nothing, so the hardware watchdog
+    # this function reported as installed never existed after a reboot. The
+    # box then hung for twelve hours with nothing to reset it. An explicit
+    # modprobe ignores the deny-list, so a unit runs one early in boot.
+    rm -f /etc/modules-load.d/corex-watchdog.conf
+    install_script /usr/local/bin/corex-watchdog-load.sh 755 << WLEOF
+#!/bin/bash
+# Managed by CoreX. "load" runs early in boot; "arm" runs once boot is done.
+MOD="${mod}"
+case "\${1:-load}" in
+    load)
+        modprobe "\$MOD" 2>/dev/null || { logger -t corex-hwwatchdog "modprobe \$MOD failed"; exit 0; }
+        for _ in 1 2 3 4 5; do [[ -e /dev/watchdog0 ]] && exit 0; sleep 1; done
+        logger -t corex-hwwatchdog "\$MOD loaded but no /dev/watchdog0 appeared"
+        ;;
+    arm)
+        # PID 1 opens the watchdog when it starts. If the device appeared
+        # after that, re-executing systemd is what makes it pick it up.
+        [[ -e /dev/watchdog0 ]] || exit 0
+        if ! ls -l /proc/1/fd 2>/dev/null | grep -q '/dev/watchdog'; then
+            logger -t corex-hwwatchdog "systemd is not holding the watchdog; re-executing it"
+            systemctl daemon-reexec
+        fi
+        ;;
+esac
+exit 0
+WLEOF
+
+    cat > /etc/systemd/system/corex-watchdog-load.service << 'WLUEOF'
+[Unit]
+Description=Load the hardware watchdog driver that Ubuntu deny-lists
+DefaultDependencies=no
+After=systemd-modules-load.service
+Before=sysinit.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/corex-watchdog-load.sh load
+
+[Install]
+WantedBy=sysinit.target
+WLUEOF
+
+    cat > /etc/systemd/system/corex-watchdog-arm.service << 'WAUEOF'
+[Unit]
+Description=Make sure systemd is driving the hardware watchdog
+After=multi-user.target corex-watchdog-load.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/corex-watchdog-load.sh arm
+
+[Install]
+WantedBy=multi-user.target
+WAUEOF
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable corex-watchdog-load.service corex-watchdog-arm.service 2>/dev/null || true
 
     # A drop-in rather than editing system.conf, so an Ubuntu upgrade that
     # replaces that file does not silently take the watchdog away with it.

@@ -28,7 +28,7 @@ learning nginx, SSL, Docker networking, or Linux hardening.
 - Re-run on existing server = health-check + repair broken services only
 - No live server required for testing (Docker-in-Docker + bats)
 
-**Current version:** v3.57.2
+**Current version:** v3.57.3
 **Current service modules:** 21 (Traefik, AdGuard, Portainer, Nextcloud,
 Immich, Vaultwarden, Stalwart Mail, Coolify, n8n, Cal.com, Time Machine,
 Uptime Kuma + Grafana + Prometheus (monitoring), Ollama + OpenWebUI +
@@ -3341,15 +3341,38 @@ so it is the cheap half of this to get wrong.
 
 ### 84. A watchdog setting with no watchdog device, and a test line that cannot fail
 
-`RuntimeWatchdogSec=60s` in `/etc/systemd/system.conf.d/99-corex-watchdog.conf`
-is how a hung kernel is meant to reset itself. systemd needs a device to do
-that, and Ubuntu ships `/lib/modprobe.d/blacklist_linux_*.conf` blacklisting
-every hardware watchdog driver, `sp5100_tco` on AMD and `iTCO_wdt` on Intel
-included. With no `/dev/watchdog0` the setting is inert, and the box that hung
-idle and cool three times sat powered and dead until someone pulled the plug.
-The blacklist only stops autoloading by alias, so an explicit `modprobe` and a
-line in `/etc/modules-load.d/corex-watchdog.conf` both work. Check the
-device and `systemctl show -p RuntimeWatchdogUSec`, not the config file.
+`RuntimeWatchdogSec=60s` is how a hung kernel is meant to reset itself.
+systemd needs a device to do that, and Ubuntu ships
+`/lib/modprobe.d/blacklist_linux_*.conf` deny-listing every hardware watchdog
+driver, `sp5100_tco` on AMD and `iTCO_wdt` on Intel included.
+
+`lib/recovery.sh` had handled this since September by writing the module name
+to `/etc/modules-load.d/corex-watchdog.conf`, and reported "Hardware watchdog:
+sp5100_tco" when it did. That file never loaded anything. `systemd-modules-load`
+honours the deny-list, and every boot's journal said so:
+
+```
+systemd-modules-load[494]: Module 'sp5100_tco' is deny-listed (by kmod)
+```
+
+The install-time `modprobe` worked, because an explicit modprobe ignores the
+deny-list, so the watchdog existed until the first reboot and never again. The
+box then hung idle at 77C on 2026-10-19 and sat powered and dead for twelve
+hours with `RuntimeWatchdogUSec=1min` set and no `/dev/watchdog` to drive.
+
+`corex-watchdog-load.service` runs the explicit modprobe before
+`sysinit.target`, and `corex-watchdog-arm.service` re-executes systemd after
+boot if PID 1 is not holding the device. The check that answers the question
+is the one that looks at the process, not the config:
+
+```bash
+sudo ls -l /proc/1/fd | grep watchdog     # PID 1 must hold /dev/watchdog0
+journalctl -b | grep -i deny-listed        # must not name the watchdog module
+```
+
+The lesson is gotcha #50's again, one layer down. An installer that runs a
+command and reports success has proved the command works now. Whether it
+survives a reboot is a separate claim, and only a reboot tests it.
 
 The same review found that a `security apply` built on `phase2_security`
 would have run a full OS upgrade and `ufw --force reset` from a repair

@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://img.shields.io/badge/CoreX_Pro-v3.57.2-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
+  <img src="https://img.shields.io/badge/CoreX_Pro-v3.57.3-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
   <img src="https://img.shields.io/badge/Ubuntu-24.04_LTS-E95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Ubuntu">
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
 </div>
@@ -2070,8 +2070,9 @@ A hardware watchdog reboots the machine when the kernel hangs. systemd is set
 up to use one, but Ubuntu blocks the watchdog drivers from loading by default,
 and without the device the setting does nothing: a hung machine stays powered
 and unreachable until someone cuts the power. Hardening loads `sp5100_tco` on
-AMD or `iTCO_wdt` on Intel and keeps it loaded across reboots. Check it with
-`ls /dev/watchdog0`. If the driver reports that the hardware is disabled, it
+AMD or `iTCO_wdt` on Intel with an explicit `modprobe` at every boot, because
+`modules-load.d` honours the same block and loads nothing. Check that systemd
+is holding it with `sudo ls -l /proc/1/fd | grep watchdog`. If the driver reports that the hardware is disabled, it
 may need turning on in the BIOS.
 
 ## Architecture
@@ -2226,7 +2227,7 @@ fail it.
 
 ## Version history
 
-The current release is v3.57.2. Recent versions added updates that stay inside
+The current release is v3.57.3. Recent versions added updates that stay inside
 a thermal budget and finish after a crash, a security audit with a targeted
 repair, a hardware watchdog that can actually fire, a per-device DNS rate
 limit, an enforced dashboard design system, step-up confirmation before the

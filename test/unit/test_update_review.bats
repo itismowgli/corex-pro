@@ -129,3 +129,19 @@ _nc_state() {
     grep -q 'grep -m1 -E .*ignoreip' <<< "$body"
     grep -qx '\${ignoreip}' <<< "$body"
 }
+
+@test "the watchdog driver is loaded past Ubuntu's deny-list, not via modules-load.d" {
+    # systemd-modules-load honours the kmod deny-list, so a modules-load.d
+    # entry for sp5100_tco loads nothing; only an explicit modprobe does.
+    local rec="${REPO_ROOT}/lib/recovery.sh"
+    refute grep -qE '>[[:space:]]*/etc/modules-load\.d/' "$rec"
+    grep -q 'ExecStart=/usr/local/bin/corex-watchdog-load.sh load' "$rec"
+    grep -q 'Before=sysinit.target' "$rec"
+    grep -q 'corex-watchdog-load.sh arm' "$rec"
+    local gen="${BATS_TEST_TMPDIR}/wl.sh"
+    awk 'index($0, "<< WLEOF") {f=1; next} $0 == "WLEOF" {f=0} f' "$rec" \
+        | sed 's/\\\$/$/g' > "$gen"
+    [ -s "$gen" ]
+    bash -n "$gen"
+    grep -q 'modprobe "$MOD"' "$gen"
+}

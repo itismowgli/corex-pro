@@ -332,23 +332,11 @@ RebootWatchdogSec=10min
 ShutdownWatchdogSec=10min
 WDEOF
     # RuntimeWatchdogSec only does anything if a watchdog device exists, and
-    # Ubuntu blacklists every hardware watchdog driver by default. Without
-    # /dev/watchdog a hung kernel sits dark until someone pulls the plug,
-    # which is what the unclean shutdowns on this hardware looked like. An
-    # explicit modprobe loads a blacklisted module (the blacklist only stops
-    # autoloading by alias), and modules-load.d keeps it across reboots.
-    if [[ ! -e /dev/watchdog0 ]]; then
-        local wd_mod=""
-        if grep -q AuthenticAMD /proc/cpuinfo 2>/dev/null; then wd_mod=sp5100_tco
-        elif grep -q GenuineIntel /proc/cpuinfo 2>/dev/null; then wd_mod=iTCO_wdt
-        fi
-        if [[ -n "$wd_mod" ]] && modprobe "$wd_mod" 2>/dev/null && sleep 1 && [[ -e /dev/watchdog0 ]]; then
-            echo "$wd_mod" > /etc/modules-load.d/corex-watchdog.conf
-            log_success "Loaded the ${wd_mod} hardware watchdog driver"
-        else
-            log_warning "No hardware watchdog device; a hung kernel will not reset itself"
-        fi
-    fi
+    # Ubuntu deny-lists every hardware watchdog driver. lib/recovery.sh owns
+    # loading it at boot, past that deny-list; see gotcha #84.
+    # shellcheck source=lib/recovery.sh
+    source "$(dirname "${BASH_SOURCE[0]}")/recovery.sh"
+    _recovery_install_watchdog
     systemctl daemon-reexec 2>/dev/null || true
     log_success "Watchdog armed (60s runtime timeout)"
 }
