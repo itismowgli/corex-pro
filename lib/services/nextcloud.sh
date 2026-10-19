@@ -470,14 +470,12 @@ _nextcloud_apply_occ() {
     #    unnoticed. Run at reduced CPU priority to stay inside the thermal budget.
     if "${_o[@]}" status 2>/dev/null | grep -q 'needsDbUpgrade: true'; then
         log_step "Nextcloud needs a database upgrade — running occ upgrade..."
-        local _runner=()
-        if command -v taskset >/dev/null 2>&1 && (( $(nproc 2>/dev/null || echo 1) > 2 )); then
-            _runner+=(taskset -c 0,1)
-        fi
-        if command -v nice >/dev/null 2>&1; then
-            _runner+=(nice -n 19)
-        fi
-        "${_runner[@]}" "${_o[@]}" upgrade 2>&1 | tail -5 | sed 's/^/    /' || true
+        # nice has to run inside the container. On the docker CLI it lowers
+        # only the client, while php is started by containerd and runs at
+        # normal priority whatever the client was given.
+        docker exec -u www-data nextcloud sh -c \
+            'if command -v nice >/dev/null 2>&1; then exec nice -n 19 php occ upgrade; else exec php occ upgrade; fi' \
+            2>&1 | tail -5 | sed 's/^/    /' || true
     fi
 
     # 3. Clear maintenance mode if it is stuck on. occ upgrade prints
@@ -583,15 +581,48 @@ nextcloud_destroy() {
     state_service_removed "nextcloud"
 }
 
+# Prints ok, maintenance, upgrade or unknown, from config.php and version.php
+# on the host. A pending upgrade is exactly occ's own test: the version the
+# code ships differs from the version the database was installed at.
+_nextcloud_upgrade_state() {
+    local html="${DATA_ROOT:-/mnt/corex-data/service-data}/nextcloud-html"
+    local conf="${html}/config/config.php" ver="${html}/version.php"
+    [[ -r "$conf" && -r "$ver" ]] || { echo "unknown"; return 0; }
+    if grep -Eq "^[[:space:]]*'maintenance'[[:space:]]*=>[[:space:]]*true" "$conf"; then
+        echo "maintenance"; return 0
+    fi
+    local installed code
+    installed=$(sed -n -E "s/^[[:space:]]*'version'[[:space:]]*=>[[:space:]]*'([0-9.]+)'.*/\1/p" "$conf" | head -1)
+    code=$(sed -n -E 's/^\$OC_Version[[:space:]]*=[[:space:]]*array\(([0-9, ]+)\).*/\1/p' "$ver" | tr -d ' ' | tr ',' '.')
+    if [[ -z "$installed" || -z "$code" ]]; then
+        echo "unknown"
+    elif [[ "$installed" != "$code" ]]; then
+        echo "upgrade"
+    else
+        echo "ok"
+    fi
+}
+
 nextcloud_status() {
     if ! container_running "nextcloud"; then
         if container_exists "nextcloud"; then echo "UNHEALTHY"; else echo "MISSING"; fi
         return 0
     fi
 
-    local occ_st
-    occ_st=$(docker exec -u www-data nextcloud php occ status 2>/dev/null || true)
-    if echo "$occ_st" | grep -q 'needsDbUpgrade: true' || echo "$occ_st" | grep -q 'maintenance: true'; then
+    # Maintenance mode and a pending schema upgrade both serve 503 from a
+    # running container (gotcha #20). Status is polled by the dashboard every
+    # few seconds, and `occ status` boots PHP each time, so read the two files
+    # occ itself compares and fall back to occ only when they are unreadable.
+    local nc_state
+    nc_state=$(_nextcloud_upgrade_state)
+    if [[ "$nc_state" == "unknown" ]]; then
+        local occ_st
+        occ_st=$(docker exec -u www-data nextcloud php occ status 2>/dev/null || true)
+        if grep -qE 'needsDbUpgrade: true|maintenance: true' <<< "$occ_st"; then
+            nc_state="blocked"
+        fi
+    fi
+    if [[ "$nc_state" == "maintenance" || "$nc_state" == "upgrade" || "$nc_state" == "blocked" ]]; then
         echo "UNHEALTHY"
         return 0
     fi

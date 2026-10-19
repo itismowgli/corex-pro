@@ -11,6 +11,16 @@
 REPO_DIR="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
 
 # Common setup: set required env vars, create temp dirs, mock docker
+
+# `! cmd` cannot fail a bats test unless it is the last line: set -e ignores a
+# negated command. refute fails wherever it appears.
+refute() {
+    if "$@"; then
+        echo "expected to fail: $*" >&2
+        return 1
+    fi
+}
+
 setup() {
     export DOMAIN="test.example.com"
     export SERVER_IP="192.168.1.100"
@@ -285,7 +295,7 @@ PYEOF
     grep -q "nextcloud-html/data:/media/nextcloud:ro" "$compose"
     grep -q "jellyfin-media:/media/library:ro" "$compose"
     # No mount under /media may be writable.
-    ! grep -E "^ *- .*:/media/[^:]+$" "$compose"
+    refute grep -E "^ *- .*:/media/[^:]+$" "$compose"
 }
 
 # Accounts are created long after this module is written, so the mount is the
@@ -296,7 +306,7 @@ PYEOF
     mkdir -p "${DATA_ROOT}/nextcloud-html/data/someone/files"
     jellyfin_dirs
     jellyfin_deploy
-    ! grep -q "/media/nextcloud/" "${DOCKER_ROOT}/jellyfin/docker-compose.yml"
+    refute grep -q "/media/nextcloud/" "${DOCKER_ROOT}/jellyfin/docker-compose.yml"
 }
 
 # Swiftfin, Infuse and the Apple TV client cannot follow a browser redirect, so
@@ -344,7 +354,7 @@ PYEOF
     _jellyfin_gpu_groups() { :; }
     jellyfin_deploy
     _assert_yaml "${DOCKER_ROOT}/jellyfin/docker-compose.yml"
-    ! grep -q "group_add:" "${DOCKER_ROOT}/jellyfin/docker-compose.yml"
+    refute grep -q "group_add:" "${DOCKER_ROOT}/jellyfin/docker-compose.yml"
 }
 
 # A missing device is a hard container start failure rather than a degraded
@@ -357,7 +367,7 @@ PYEOF
     if [ -e /dev/dri ]; then
         grep -q "/dev/dri:/dev/dri" "$compose"
     else
-        ! grep -q "/dev/dri" "$compose"
+        refute grep -q "/dev/dri" "$compose"
     fi
 }
 

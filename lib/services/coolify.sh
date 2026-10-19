@@ -126,14 +126,14 @@ coolify_repair() {
     log_warning "  curl -fsSL https://cdn.coollabs.io/coolify/install.sh | bash"
 }
 
+# Coolify is never installed or upgraded by CoreX (CLAUDE.md "What NOT to
+# Do" #4). Its upgrade script restarts every Coolify container, so calling it
+# from `update --all` would also start a deliberately disabled Coolify and its
+# workloads, which on this hardware is the thermal trip of gotcha #17.
 coolify_update() {
-    log_info "Updating Coolify..."
-    _coolify_write_route
-    if [[ -x /data/coolify/source/upgrade.sh ]]; then
-        bash /data/coolify/source/upgrade.sh
-    else
-        curl -fsSL https://cdn.coollabs.io/coolify/install.sh | bash
-    fi
+    log_info "Coolify upgrades itself from its own UI (Settings, Update)."
+    log_info "  From a shell: bash /data/coolify/source/upgrade.sh"
+    return 0
 }
 
 coolify_credentials() {

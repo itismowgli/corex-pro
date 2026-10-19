@@ -696,47 +696,66 @@ _module_images() {
         | grep -E '^[A-Za-z0-9][A-Za-z0-9._/-]*:[A-Za-z0-9][A-Za-z0-9._-]*$' || true
 }
 
+# A module with no compose file under DOCKER_ROOT (a host package, or a stack
+# that installs itself elsewhere) may declare <svc>_update to say what an
+# update means for it.
+_update_without_compose() {
+    local svc="$1"
+    local module="${SCRIPT_DIR}/lib/services/${svc}.sh"
+    if [[ -f "$module" ]]; then
+        # shellcheck disable=SC1090
+        source "$module"
+        if declare -f "${svc}_update" &>/dev/null; then
+            "${svc}_update" || return 1
+            _update_recheck "$svc"
+            return 0
+        fi
+    fi
+    log_warning "No compose file for ${svc}, skipping"
+    return 0
+}
+
 _update_single_disabled() {
     local svc="$1"
     local dir="${DOCKER_ROOT}/${svc}"
     if [[ ! -f "${dir}/docker-compose.yml" ]]; then
-        local module="${SCRIPT_DIR}/lib/services/${svc}.sh"
-        if [[ -f "$module" ]]; then
-            # shellcheck disable=SC1090
-            source "$module"
-            if declare -f "${svc}_update" &>/dev/null; then
-                "${svc}_update"
-                _update_recheck "$svc"
-                return $?
-            fi
-        fi
-        log_warning "No compose file for ${svc}, skipping"
-        return 0
+        _update_without_compose "$svc"
+        return $?
     fi
 
     log_info "Updating ${svc} images (keeping service disabled)..."
 
-    local want have stale=""
+    # Nothing here may touch a container. A repair would regenerate the
+    # compose file and start every container in it, undoing the disable
+    # (gotcha #44), so when the module pins a newer image than the compose
+    # file names, pull the module's images directly. Enable starts the compose
+    # file as it stands; the first update after that regenerates it and finds
+    # the new image already on disk.
+    local want have stale="" images=()
     have=$(docker compose -f "${dir}/docker-compose.yml" config --images 2>/dev/null || true)
     while IFS= read -r want; do
         [[ -n "$want" ]] || continue
+        images+=("$want")
         grep -qxF -- "$want" <<< "$have" || stale="yes"
     done < <(_module_images "$svc")
+
     if [[ -n "$stale" ]]; then
-        log_info "${svc}: updating compose file to match module"
-        _run_service_fn "$svc" "repair" 2>/dev/null || true
+        local img
+        for img in "${images[@]}"; do
+            if ! update_run_governed "${svc} image pull" docker pull --quiet "$img"; then
+                log_warning "${svc}: pull of ${img} failed"
+                return 1
+            fi
+        done
+        log_success "${svc}: pulled the module's pinned image(s); the next update after enable applies them"
+    else
+        if ! update_run_governed "${svc} image pull" \
+            env COMPOSE_PARALLEL_LIMIT=1 docker compose -f "${dir}/docker-compose.yml" pull; then
+            log_warning "${svc}: image pull failed"
+            return 1
+        fi
+        log_success "${svc}: updated image(s); service remains disabled"
     fi
-
-    if ! update_run_governed "${svc} image pull" \
-        env COMPOSE_PARALLEL_LIMIT=1 docker compose -f "${dir}/docker-compose.yml" pull; then
-        log_warning "${svc}: image pull failed"
-        return 1
-    fi
-
-    # Ensure containers remain stopped
-    docker compose -f "${dir}/docker-compose.yml" stop 2>/dev/null || true
-
-    log_success "${svc}: updated image(s); service remains disabled"
     _update_recheck "$svc"
     return 0
 }
@@ -745,18 +764,8 @@ _update_single() {
     local svc="$1"
     local dir="${DOCKER_ROOT}/${svc}"
     if [[ ! -f "${dir}/docker-compose.yml" ]]; then
-        local module="${SCRIPT_DIR}/lib/services/${svc}.sh"
-        if [[ -f "$module" ]]; then
-            # shellcheck disable=SC1090
-            source "$module"
-            if declare -f "${svc}_update" &>/dev/null; then
-                "${svc}_update"
-                _update_recheck "$svc"
-                return $?
-            fi
-        fi
-        log_warning "No compose file for ${svc}, skipping"
-        return 0
+        _update_without_compose "$svc"
+        return $?
     fi
 
     log_info "Updating ${svc}..."

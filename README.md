@@ -208,6 +208,8 @@ sudo bash corex-manage.sh remove <svc>  # remove one, asks about the data
 sudo bash corex-manage.sh update --all  # pull new images for everything
 sudo bash corex-manage.sh repair <svc>  # regenerate config and recreate
 sudo bash corex-manage.sh health        # host hardware: temperature, SMART, dpkg
+sudo bash corex-manage.sh security check # firewall, SSH, fail2ban, updates, watchdog
+sudo bash corex-manage.sh security apply # repair what the check reports, no OS upgrade
 sudo bash corex-manage.sh storage       # disk usage by service
 sudo bash corex-manage.sh cleanup       # reclaim space safely
 sudo bash corex-manage.sh os-upgrade    # supervised OS upgrade with safety gates

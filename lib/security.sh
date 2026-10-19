@@ -50,7 +50,84 @@ SSHEOF
     systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null || true
     log_success "SSH hardened (port ${SSH_PORT}, root login disabled, modern ciphers only)"
 
-    # ── Fail2ban ─────────────────────────────────────────────────────────────
+    _security_fail2ban
+    _security_unattended
+    _security_sysctl
+
+    # ── Journal size cap ─────────────────────────────────────────────────────
+    # systemd-journald defaults to 10% of the filesystem, which on a large SSD
+    # grows to many GB and was never bounded. Persistent storage is kept (it is
+    # what makes post-crash forensics possible) but capped.
+    log_info "Capping systemd journal size..."
+    mkdir -p /etc/systemd/journald.conf.d
+    cat > /etc/systemd/journald.conf.d/99-corex.conf << JEOF
+[Journal]
+Storage=persistent
+SystemMaxUse=500M
+SystemKeepFree=1G
+SystemMaxFileSize=50M
+MaxRetentionSec=1month
+JEOF
+    systemctl restart systemd-journald 2>/dev/null || true
+    log_success "Journal capped at 500M, 1 month retention"
+
+    _security_watchdog
+
+    # ── UFW Firewall ──────────────────────────────────────────────────────────
+    log_info "Configuring UFW firewall..."
+    ufw --force reset > /dev/null 2>&1
+    ufw default deny incoming
+    ufw default allow outgoing
+
+    # Public-facing ports
+    ufw allow "${SSH_PORT}/tcp" comment 'SSH (custom port)'
+    ufw allow 80/tcp            comment 'HTTP (Traefik redirects to HTTPS)'
+    ufw allow 443/tcp           comment 'HTTPS (Traefik TLS termination)'
+    ufw allow 53                comment 'DNS (AdGuard Home, TCP+UDP)'
+    # Traefik dashboard (8080) is bound to 127.0.0.1 — no external rule needed
+    ufw allow 3000/tcp          comment 'AdGuard Home Setup UI'
+    ufw allow 9443/tcp          comment 'Portainer (HTTPS UI)'
+    ufw allow 5678/tcp          comment 'n8n Workflow Automation'
+    ufw allow 2283/tcp          comment 'Immich Photo Management'
+    ufw allow 3001/tcp          comment 'Uptime Kuma Status Page'
+    ufw allow 3002/tcp          comment 'Grafana Dashboards'
+    ufw allow 8000/tcp          comment 'Coolify Web Hosting'
+    ufw allow 5353/udp          comment 'mDNS (Avahi/Bonjour discovery)'
+
+    # Mail ports (Stalwart)
+    ufw allow 25/tcp  comment 'SMTP (inbound mail)'
+    ufw allow 587/tcp comment 'SMTP Submission (outbound mail)'
+    ufw allow 465/tcp comment 'SMTPS (encrypted submission)'
+    ufw allow 143/tcp comment 'IMAP (mail retrieval)'
+    ufw allow 993/tcp comment 'IMAPS (encrypted mail retrieval)'
+
+    # LAN-only services (Time Machine, Ollama, Open WebUI)
+    local lan_subnet="${SERVER_IP%.*}.0/24"
+    ufw allow from "$lan_subnet" to any port 445 proto tcp   comment 'SMB (Time Machine)'
+    ufw allow from "$lan_subnet" to any port 137:139 proto tcp comment 'NetBIOS (Time Machine)'
+    ufw allow from "$lan_subnet" to any port 11434 proto tcp comment 'Ollama LLM (LAN only)'
+    ufw allow from "$lan_subnet" to any port 3003 proto tcp  comment 'Open WebUI (LAN only)'
+
+    # Docker internal traffic (prevents 502 Bad Gateway)
+    ufw allow in on docker0
+    # Compose's per-project bridges (br-<hash>) draw from Docker's default
+    # address pool, so the 172.16.0.0/12 rule below already covers them.
+    ufw allow from 172.16.0.0/12 to any comment 'Docker default address pool'
+    # Docker Swarm / Coolify allocate overlay networks from 10.0.0.0/8, which is
+    # outside 172.16.0.0/12. Without this, overlay traffic (e.g. 10.0.1.x ->
+    # 10.0.0.1) is dropped and logged continuously.
+    ufw allow from 10.0.0.0/8 to any comment 'Docker Swarm / Coolify overlay'
+
+    # Blocked-packet logging stays ON — it is real security signal. The log
+    # flood it used to produce came from the missing 10.0.0.0/8 rule above,
+    # not from logging being too verbose.
+    ufw logging low
+
+    ufw --force enable
+    log_success "UFW firewall active (${SSH_PORT}, 80, 443 + LAN services)"
+}
+
+_security_fail2ban() {
     log_info "Configuring Fail2ban..."
     cat > /etc/fail2ban/jail.local << F2BEOF
 [DEFAULT]
@@ -87,7 +164,10 @@ F2BEOF
     systemctl enable --now fail2ban 2>/dev/null || true
     log_success "Fail2ban active (3 fails → 24hr ban, repeat offenders → 30-day ban)"
 
-    # ── Unattended Security Updates (security-only, no auto-reboot) ──────────
+}
+
+# Security-only unattended upgrades, no auto-reboot.
+_security_unattended() {
     log_info "Configuring unattended security updates..."
     cat > /etc/apt/apt.conf.d/20auto-upgrades << 'AUEOF'
 APT::Periodic::Update-Package-Lists "1";
@@ -147,7 +227,10 @@ UUEOF
     systemctl enable --now apt-daily.timer apt-daily-upgrade.timer unattended-upgrades.service 2>/dev/null || true
     log_success "Unattended security upgrades configured (security-only, no auto-reboot)"
 
-    # ── Kernel Hardening + Network Performance ─────────────────────────────────
+}
+
+# Kernel hardening and network performance parameters.
+_security_sysctl() {
     log_info "Applying kernel security and network performance parameters..."
     cat > /etc/sysctl.d/99-corex.conf << SYEOF
 # ── Security: Anti-spoofing ──────────────────────────────────────────────────
@@ -228,28 +311,11 @@ vm.swappiness = 10
 SYEOF
     sysctl --system > /dev/null 2>&1
     log_success "Kernel hardened + network tuned for multi-gigabit performance"
+}
 
-    # ── Journal size cap ─────────────────────────────────────────────────────
-    # systemd-journald defaults to 10% of the filesystem, which on a large SSD
-    # grows to many GB and was never bounded. Persistent storage is kept (it is
-    # what makes post-crash forensics possible) but capped.
-    log_info "Capping systemd journal size..."
-    mkdir -p /etc/systemd/journald.conf.d
-    cat > /etc/systemd/journald.conf.d/99-corex.conf << JEOF
-[Journal]
-Storage=persistent
-SystemMaxUse=500M
-SystemKeepFree=1G
-SystemMaxFileSize=50M
-MaxRetentionSec=1month
-JEOF
-    systemctl restart systemd-journald 2>/dev/null || true
-    log_success "Journal capped at 500M, 1 month retention"
-
-
-    # ── Hardware watchdog ────────────────────────────────────────────────────
-    # If the kernel hard-hangs, systemd's watchdog resets the box instead of
-    # leaving it dark until someone power-cycles it manually.
+# If the kernel hard-hangs, systemd's watchdog resets the box instead of
+# leaving it dark until someone power-cycles it manually.
+_security_watchdog() {
     log_info "Enabling systemd hardware watchdog..."
     mkdir -p /etc/systemd/system.conf.d
     cat > /etc/systemd/system.conf.d/99-corex-watchdog.conf << WDEOF
@@ -258,62 +324,28 @@ RuntimeWatchdogSec=60s
 RebootWatchdogSec=10min
 ShutdownWatchdogSec=10min
 WDEOF
+    # RuntimeWatchdogSec only does anything if a watchdog device exists, and
+    # Ubuntu blacklists every hardware watchdog driver by default. Without
+    # /dev/watchdog a hung kernel sits dark until someone pulls the plug,
+    # which is what the unclean shutdowns on this hardware looked like. An
+    # explicit modprobe loads a blacklisted module (the blacklist only stops
+    # autoloading by alias), and modules-load.d keeps it across reboots.
+    if [[ ! -e /dev/watchdog0 ]]; then
+        local wd_mod=""
+        if grep -q AuthenticAMD /proc/cpuinfo 2>/dev/null; then wd_mod=sp5100_tco
+        elif grep -q GenuineIntel /proc/cpuinfo 2>/dev/null; then wd_mod=iTCO_wdt
+        fi
+        if [[ -n "$wd_mod" ]] && modprobe "$wd_mod" 2>/dev/null && sleep 1 && [[ -e /dev/watchdog0 ]]; then
+            echo "$wd_mod" > /etc/modules-load.d/corex-watchdog.conf
+            log_success "Loaded the ${wd_mod} hardware watchdog driver"
+        else
+            log_warning "No hardware watchdog device; a hung kernel will not reset itself"
+        fi
+    fi
     systemctl daemon-reexec 2>/dev/null || true
     log_success "Watchdog armed (60s runtime timeout)"
-
-    # ── UFW Firewall ──────────────────────────────────────────────────────────
-    log_info "Configuring UFW firewall..."
-    ufw --force reset > /dev/null 2>&1
-    ufw default deny incoming
-    ufw default allow outgoing
-
-    # Public-facing ports
-    ufw allow "${SSH_PORT}/tcp" comment 'SSH (custom port)'
-    ufw allow 80/tcp            comment 'HTTP (Traefik redirects to HTTPS)'
-    ufw allow 443/tcp           comment 'HTTPS (Traefik TLS termination)'
-    ufw allow 53                comment 'DNS (AdGuard Home, TCP+UDP)'
-    # Traefik dashboard (8080) is bound to 127.0.0.1 — no external rule needed
-    ufw allow 3000/tcp          comment 'AdGuard Home Setup UI'
-    ufw allow 9443/tcp          comment 'Portainer (HTTPS UI)'
-    ufw allow 5678/tcp          comment 'n8n Workflow Automation'
-    ufw allow 2283/tcp          comment 'Immich Photo Management'
-    ufw allow 3001/tcp          comment 'Uptime Kuma Status Page'
-    ufw allow 3002/tcp          comment 'Grafana Dashboards'
-    ufw allow 8000/tcp          comment 'Coolify Web Hosting'
-    ufw allow 5353/udp          comment 'mDNS (Avahi/Bonjour discovery)'
-
-    # Mail ports (Stalwart)
-    ufw allow 25/tcp  comment 'SMTP (inbound mail)'
-    ufw allow 587/tcp comment 'SMTP Submission (outbound mail)'
-    ufw allow 465/tcp comment 'SMTPS (encrypted submission)'
-    ufw allow 143/tcp comment 'IMAP (mail retrieval)'
-    ufw allow 993/tcp comment 'IMAPS (encrypted mail retrieval)'
-
-    # LAN-only services (Time Machine, Ollama, Open WebUI)
-    local lan_subnet="${SERVER_IP%.*}.0/24"
-    ufw allow from "$lan_subnet" to any port 445 proto tcp   comment 'SMB (Time Machine)'
-    ufw allow from "$lan_subnet" to any port 137:139 proto tcp comment 'NetBIOS (Time Machine)'
-    ufw allow from "$lan_subnet" to any port 11434 proto tcp comment 'Ollama LLM (LAN only)'
-    ufw allow from "$lan_subnet" to any port 3003 proto tcp  comment 'Open WebUI (LAN only)'
-
-    # Docker internal traffic (prevents 502 Bad Gateway)
-    ufw allow in on docker0
-    # Compose's per-project bridges (br-<hash>) draw from Docker's default
-    # address pool, so the 172.16.0.0/12 rule below already covers them.
-    ufw allow from 172.16.0.0/12 to any comment 'Docker default address pool'
-    # Docker Swarm / Coolify allocate overlay networks from 10.0.0.0/8, which is
-    # outside 172.16.0.0/12. Without this, overlay traffic (e.g. 10.0.1.x ->
-    # 10.0.0.1) is dropped and logged continuously.
-    ufw allow from 10.0.0.0/8 to any comment 'Docker Swarm / Coolify overlay'
-
-    # Blocked-packet logging stays ON — it is real security signal. The log
-    # flood it used to produce came from the missing 10.0.0.0/8 rule above,
-    # not from logging being too verbose.
-    ufw logging low
-
-    ufw --force enable
-    log_success "UFW firewall active (${SSH_PORT}, 80, 443 + LAN services)"
 }
+
 
 # ── Audit and Re-apply ────────────────────────────────────────────────────────
 
@@ -345,7 +377,8 @@ security_check() {
     if command -v ufw &>/dev/null; then
         local ufw_status
         ufw_status=$(ufw status 2>/dev/null | head -1)
-        if [[ "$ufw_status" == *"active"* ]]; then
+        # "inactive" contains "active", so match the whole word.
+        if [[ "$ufw_status" == "Status: active" ]]; then
             echo -e "    ${GREEN}OK${NC} UFW firewall is active"
             ((passed++))
         else
@@ -408,14 +441,20 @@ security_check() {
         ((warnings++))
     fi
 
-    # 6. Hardware watchdog and journald
-    echo -e "  ${BOLD}Systemd Watchdog and Journald:${NC}"
-    if [[ -f /etc/systemd/system.conf.d/99-corex-watchdog.conf || -f /etc/systemd/system.conf.d/corex-watchdog.conf ]]; then
-        echo -e "    ${GREEN}OK${NC} Hardware watchdog configuration present"
-        ((passed++))
-    else
-        echo -e "    ${YELLOW}WARN${NC} Hardware watchdog not configured"
+    # 6. Hardware watchdog. The systemd setting alone proves nothing: with no
+    #    watchdog device it is silently inert, and the box stays hung.
+    echo -e "  ${BOLD}Hardware Watchdog:${NC}"
+    local wd_usec
+    wd_usec=$(systemctl show -p RuntimeWatchdogUSec --value 2>/dev/null || true)
+    if [[ ! -e /dev/watchdog0 ]]; then
+        echo -e "    ${YELLOW}WARN${NC} No watchdog device, so a hung kernel will not reset itself"
         ((warnings++))
+    elif [[ -z "$wd_usec" || "$wd_usec" == "0" || "$wd_usec" == "infinity" ]]; then
+        echo -e "    ${YELLOW}WARN${NC} Watchdog device present but systemd is not using it"
+        ((warnings++))
+    else
+        echo -e "    ${GREEN}OK${NC} Hardware watchdog armed (${wd_usec})"
+        ((passed++))
     fi
 
     echo ""
@@ -432,8 +471,34 @@ security_check() {
     fi
 }
 
+# Repairs exactly what security_check reports, and nothing else. It is not
+# phase2_security: that runs a full apt upgrade (gotcha #18) and resets UFW,
+# which deletes every rule a service module added and reopens the ports of
+# services that were removed. SSH is reported and never rewritten from here,
+# because a wrong port in sshd_config is a lockout on a box with no console.
 security_apply() {
     log_step "Applying CoreX security hardening..."
-    phase2_security
-}
+    _security_fail2ban
+    _security_unattended
+    _security_sysctl
+    _security_watchdog
 
+    if command -v ufw >/dev/null 2>&1 && ! ufw status 2>/dev/null | grep -q '^Status: active'; then
+        log_info "UFW is inactive; enabling it with the base rules, keeping existing ones"
+        ufw default deny incoming >/dev/null
+        ufw default allow outgoing >/dev/null
+        ufw allow "${SSH_PORT:-22}/tcp" comment 'SSH (custom port)' >/dev/null
+        ufw allow 80/tcp  comment 'HTTP (Traefik redirects to HTTPS)' >/dev/null
+        ufw allow 443/tcp comment 'HTTPS (Traefik TLS termination)' >/dev/null
+        ufw allow 53      comment 'DNS (AdGuard Home, TCP+UDP)' >/dev/null
+        ufw allow from 172.16.0.0/12 to any comment 'Docker default address pool' >/dev/null
+        ufw allow from 10.0.0.0/8 to any comment 'Docker Swarm / Coolify overlay' >/dev/null
+        ufw --force enable >/dev/null && log_success "UFW enabled"
+    fi
+
+    if [[ "$(sshd -T 2>/dev/null | awk '/^permitrootlogin /{print $2}')" != "no" ]]; then
+        log_warning "SSH still permits root login. Set PermitRootLogin no in"
+        log_warning "  /etc/ssh/sshd_config.d/ and run: sshd -t && systemctl reload ssh"
+    fi
+    security_check || true
+}

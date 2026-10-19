@@ -12,6 +12,16 @@
 # `corex doctor` / `corex manage repair` is the only mechanism users have for
 # picking up fixes, so this property is load-bearing for the whole project.
 
+
+# `! cmd` cannot fail a bats test unless it is the last line: set -e ignores a
+# negated command. refute fails wherever it appears.
+refute() {
+    if "$@"; then
+        echo "expected to fail: $*" >&2
+        return 1
+    fi
+}
+
 setup() {
     REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
     export REPO_ROOT
@@ -1134,7 +1144,7 @@ _repair_body() {
 # whitespace, so a tab separator shifted every later value one place left and
 # the listing reported the mountpoint as the label.
 @test "the disk listing does not split lsblk output on IFS whitespace" {
-    ! grep -q "IFS=\$'\\\\t' read -r dev size tran" "${REPO_ROOT}/lib/disks.sh"
+    refute grep -q "IFS=\$'\\\\t' read -r dev size tran" "${REPO_ROOT}/lib/disks.sh"
     grep -q "IFS='|' read -r dev size tran" "${REPO_ROOT}/lib/disks.sh"
 }
 
@@ -1147,7 +1157,7 @@ _repair_body() {
 # changes only what is behind it.
 @test "the fast tier moves databases with bind mounts, not compose edits" {
     grep -q "none bind,nofail" "${REPO_ROOT}/lib/disks.sh"
-    ! grep -qE "sed .*docker-compose.yml" "${REPO_ROOT}/lib/disks.sh"
+    refute grep -qE "sed .*docker-compose.yml" "${REPO_ROOT}/lib/disks.sh"
 }
 
 # A bind that failed while its filesystem mounted is the same catastrophe in a
@@ -1398,11 +1408,11 @@ YAMLEOF
     [ "$(grep -E '^    id: ' "$yaml" | sort | uniq -d | wc -l)" -eq 0 ]
     # An encrypted DNS blocklist takes down every Apple device with a DNS
     # profile installed, because those do not fall back to the network.
-    ! grep -Eq 'adblock/doh(-vpn-proxy-bypass)?\.txt' "$yaml"
+    refute grep -Eq 'adblock/doh(-vpn-proxy-bypass)?\.txt' "$yaml"
     grep -q 'https://example.test/custom.txt' "$yaml"
     grep -q "@@||allowed.example" "$yaml"
     [ -f "${yaml}.corex-before-filters.bak" ]
-    ! grep -q 'adblock/pro.txt' "${yaml}.corex-before-filters.bak"
+    refute grep -q 'adblock/pro.txt' "${yaml}.corex-before-filters.bak"
 
     rm -rf "$work"
 }

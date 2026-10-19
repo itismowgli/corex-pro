@@ -300,9 +300,14 @@ ups_repair() {
     fi
 }
 
+# NUT is a host package, so unattended-upgrades already carries its security
+# fixes. Running apt here would put a dpkg transaction inside the service
+# update window, which is the combination gotcha #18 exists to prevent.
 ups_update() {
-    log_info "Updating UPS (NUT) packages..."
-    apt-get update -qq && apt-get install --only-upgrade -y nut nut-client nut-server
+    local v
+    v=$(dpkg-query -W -f='${Version}' nut-server 2>/dev/null || true)
+    log_info "UPS (NUT ${v:-not installed}) is a host package, upgraded by unattended-upgrades"
+    return 0
 }
 
 ups_credentials() {

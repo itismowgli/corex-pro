@@ -28,7 +28,7 @@ learning nginx, SSL, Docker networking, or Linux hardening.
 - Re-run on existing server = health-check + repair broken services only
 - No live server required for testing (Docker-in-Docker + bats)
 
-**Current version:** v3.56.0
+**Current version:** v3.57.0
 **Current service modules:** 21 (Traefik, AdGuard, Portainer, Nextcloud,
 Immich, Vaultwarden, Stalwart Mail, Coolify, n8n, Cal.com, Time Machine,
 Uptime Kuma + Grafana + Prometheus (monitoring), Ollama + OpenWebUI +
@@ -3332,6 +3332,32 @@ does not reload, so every shot after the first was the first tab again, which
 looks exactly like a working run. And a JSX comment cannot sit between
 attributes in an opening tag, which is a syntax error rather than a silent one,
 so it is the cheap half of this to get wrong.
+
+### 84. A watchdog setting with no watchdog device, and a test line that cannot fail
+
+`RuntimeWatchdogSec=60s` in `/etc/systemd/system.conf.d/99-corex-watchdog.conf`
+is how a hung kernel is meant to reset itself. systemd needs a device to do
+that, and Ubuntu ships `/lib/modprobe.d/blacklist_linux_*.conf` blacklisting
+every hardware watchdog driver, `sp5100_tco` on AMD and `iTCO_wdt` on Intel
+included. With no `/dev/watchdog0` the setting is inert, and the box that hung
+idle and cool three times sat powered and dead until someone pulled the plug.
+The blacklist only stops autoloading by alias, so an explicit `modprobe` and a
+line in `/etc/modules-load.d/corex-watchdog.conf` both work. Check the
+device and `systemctl show -p RuntimeWatchdogUSec`, not the config file.
+
+The same review found that a `security apply` built on `phase2_security`
+would have run a full OS upgrade and `ufw --force reset` from a repair
+command, and that the audit counted `Status: inactive` as active because it
+contains the word. Both are gotcha #50's shape: the command reports what it
+meant rather than what it did.
+
+**In bats, `! cmd` is not an assertion unless it is the last line.** `set -e`
+ignores a negated command, so a failing `! grep` in the middle of a test is
+skipped silently. Nine such lines across the unit and smoke suites had never
+been able to fail. Use `refute cmd`, defined at the top of each file, which
+returns 1 and so stops the test wherever it sits. The new tests were checked
+by running them against the code before the fix, which is how one of them was
+found passing against the bug.
 
 ---
 

@@ -393,15 +393,21 @@ def service_images(service):
     """Every image the service's compose file names, not just the first one."""
     compose = os.path.join(DOCKER_ROOT, service, "docker-compose.yml")
     if not os.path.exists(compose):
-        rc, out = _run(["docker", "ps", "-a", "--filter", "name=%s" % service, "--format", "{{.Image}}"])
-        if rc == 0 and out.strip():
+        # A stack installed outside DOCKER_ROOT (Coolify keeps its compose
+        # file under /data/coolify). Docker's name filter is a substring
+        # match, so "nextcloud" would also claim "nextcloud-db"; match the
+        # service name or its "<name>-" prefix here instead.
+        rc, out = _run(["docker", "ps", "-a", "--format", "{{.Names}}\t{{.Image}}"])
+        if rc == 0:
             seen, images = set(), []
             for line in out.splitlines():
-                line = line.strip()
-                if not line or line in seen:
+                name, _, image = line.strip().partition("\t")
+                if not image or image in seen:
                     continue
-                seen.add(line)
-                images.append(line)
+                if name != service and not name.startswith(service + "-"):
+                    continue
+                seen.add(image)
+                images.append(image)
             if images:
                 return images
         return []

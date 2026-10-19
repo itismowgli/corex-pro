@@ -1,5 +1,15 @@
 #!/usr/bin/env bats
 
+
+# `! cmd` cannot fail a bats test unless it is the last line: set -e ignores a
+# negated command. refute fails wherever it appears.
+refute() {
+    if "$@"; then
+        echo "expected to fail: $*" >&2
+        return 1
+    fi
+}
+
 setup() {
     REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
     export REPO_ROOT
@@ -229,7 +239,7 @@ EOF
         COREX_BLACKBOX_LOG="${BATS_TEST_TMPDIR}/blackbox-disabled.log" bash "$script"
     [ "$status" -eq 0 ]
     [ ! -e "$marks/n8n" ]
-    ! grep -q ' up -d' "$log"
+    refute grep -q ' up -d' "$log"
 }
 
 @test "interrupted-update recovery is ordered after Docker and retried" {
