@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://img.shields.io/badge/CoreX_Pro-v3.13.0-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
+  <img src="https://img.shields.io/badge/CoreX_Pro-v3.57.1-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
   <img src="https://img.shields.io/badge/Ubuntu-24.04_LTS-E95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Ubuntu">
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
 </div>
@@ -7,8 +7,8 @@
 # CoreX Pro
 
 Self-hosted infrastructure for one machine at home. One command installs Docker,
-a reverse proxy with HTTPS, a firewall, encrypted backups, and whichever of the
-16 services you want.
+a reverse proxy with HTTPS, a firewall, encrypted backups, and whichever
+services you want.
 
 The design splits storage in two. Ubuntu and the Docker engine live on the
 internal disk. Everything you care about keeping lives on an external SSD at
@@ -208,8 +208,7 @@ sudo bash corex-manage.sh remove <svc>  # remove one, asks about the data
 sudo bash corex-manage.sh update --all  # pull new images for everything
 sudo bash corex-manage.sh repair <svc>  # regenerate config and recreate
 sudo bash corex-manage.sh health        # host hardware: temperature, SMART, dpkg
-sudo bash corex-manage.sh security check # firewall, SSH, fail2ban, updates, watchdog
-sudo bash corex-manage.sh security apply # repair what the check reports, no OS upgrade
+sudo bash corex-manage.sh security      # audit host hardening, or apply it
 sudo bash corex-manage.sh storage       # disk usage by service
 sudo bash corex-manage.sh cleanup       # reclaim space safely
 sudo bash corex-manage.sh os-upgrade    # supervised OS upgrade with safety gates
@@ -219,6 +218,13 @@ sudo bash corex-manage.sh network-tune  # kernel tuning for gigabit transfers
 sudo bash corex-manage.sh network-check # test HTTPS, certificate expiry, and DNS
 sudo bash corex-manage.sh watchdog      # resource alerting: what is degrading the box
 sudo bash corex-manage.sh restart <svc> # restart its containers, nothing else
+sudo bash corex-manage.sh disable <svc> # stop it, or one container with <svc>:<part>
+sudo bash corex-manage.sh enable <svc>  # start it again, restoring its restart policy
+sudo bash corex-manage.sh replace <old> <new> # remove one service, install another
+sudo bash corex-manage.sh doctor        # status, health and the security audit, then repair
+sudo bash corex-manage.sh self-heal     # install the service healer and crash recovery
+sudo bash corex-manage.sh video-fix     # rewrap QuickTime video as MP4, no re-encode
+sudo bash corex-manage.sh credentials export # encrypted credentials bundle, kept off the box
 sudo bash corex-manage.sh agent         # the agent behind the buttons and the bot
 sudo bash corex-manage.sh maintenance   # the schedule, and what each task last did
 sudo bash corex-manage.sh power         # wake-on-LAN, and the CPU clock ceiling
@@ -232,6 +238,49 @@ sudo bash corex-manage.sh route         # route a hostname Traefik cannot discov
 so a CoreX fix to an environment variable, a resource limit, or a Traefik label
 reaches an install that was set up months ago. `doctor` runs `repair` on
 anything unhealthy, which makes it the command to run after an update.
+
+### Updating
+
+```bash
+sudo bash corex-manage.sh update <svc>        # one service
+sudo bash corex-manage.sh update --all        # every installed service
+sudo bash corex-manage.sh update-everything   # CoreX itself, then every service
+```
+
+Pulling and unpacking images is one of the hottest things this machine does,
+so an update runs inside a thermal budget. It refuses to start within 2C of
+the thermal guardian's warning threshold, which is 78C by default, and also
+when it cannot read the temperature at all. While it runs, every CPU is capped
+at the guardian's lowest clock (1600 MHz by default), Compose pulls one image
+at a time, and the update pauses if it reaches the limit and resumes at 70C.
+The previous clock ceilings come back when it finishes, whether it succeeded
+or not. Only one update runs at a time, from the command line or the
+dashboard.
+
+Before Compose replaces a service's containers, CoreX writes a marker to
+`/var/lib/corex/update-in-progress/`. If the machine loses power part way
+through, `corex-update-recover.timer` finishes the job after the next boot,
+once Docker is up and the CPU is under the update limit. It does that only for
+a service that is still installed and enabled, and it never starts a component
+you disabled.
+
+A disabled service stays stopped. Its new images are downloaded, no container
+is touched, and the first update after you enable it applies them. Coolify
+updates itself from its own interface, and NUT, behind the UPS module, is a
+host package that unattended-upgrades keeps current.
+
+### Cleaning up disk space
+
+```bash
+sudo bash corex-manage.sh cleanup --dry-run --docker-only   # preview
+sudo bash corex-manage.sh cleanup --docker-only             # Docker only
+sudo bash corex-manage.sh cleanup                           # Docker and host
+```
+
+`--docker-only` removes unreferenced images, build cache and unused networks,
+and leaves host journals, package caches and temporary files alone. Docker
+volumes and containers are never removed. An unknown argument fails before
+anything is deleted, and `--help` lists the options.
 
 ## Service reference
 
@@ -919,6 +968,9 @@ the thermal guardian sheds this stack first for exactly that reason.
 If your machine has a mobile processor and integrated graphics, stay under
 about 14 billion parameters or the answers arrive too slowly to be useful.
 
+Ollama unloads a model after two minutes without a request, so an idle model
+does not hold memory. The first answer after that takes longer while it loads.
+
 ### stalwart
 
 A full mail server: SMTP, IMAP and JMAP, in place of Gmail or Fastmail.
@@ -960,6 +1012,14 @@ variables:
 Without them, one bot probing a common path gets the reverse proxy banned
 rather than itself, and every request from the internet is refused while the
 LAN keeps working, which is a genuinely confusing way to lose a service.
+
+### keeper
+
+Calendar sync between Nextcloud, Google and Microsoft calendars. Install it
+with `sudo bash corex-manage.sh add keeper` or from the setup wizard.
+Deploying it does not connect any calendar accounts. [Keeper setup](docs/keeper.md)
+covers Nextcloud CalDAV, the Google and Microsoft OAuth applications, and what
+the backup needs.
 
 ### ups
 
@@ -1251,6 +1311,23 @@ binding it anywhere else would put it on your LAN. Reach it over SSH:
 ssh -L 8080:127.0.0.1:8080 youruser@your-server
 # then open http://localhost:8080/dashboard/ on your own machine
 ```
+
+### Polling, and services that sleep
+
+The dashboard stops polling and closes its live streams while the tab is
+hidden. Portainer and Grafana can sleep when nobody is using them and wake on
+the next web request:
+
+```bash
+sudo bash corex-manage.sh cold enable portainer
+sudo bash corex-manage.sh cold enable grafana
+sudo bash corex-manage.sh cold status
+```
+
+Prometheus, Uptime Kuma, sync jobs and anything on a schedule stay running.
+[Performance and storage](docs/performance-and-storage.md) covers the
+behaviour and its limits, and the migration from the old two-partition disk
+layout.
 
 ## HTTPS and certificates
 
@@ -1879,6 +1956,9 @@ security services, and mail are never stopped, so the machine stays reachable.
 Containers deployed outside CoreX go first, because they carry no resource
 limits and are usually the reason it got hot.
 
+While an update is running, the guardian leaves the lower CPU ceiling the
+update set in place. It can still lower it further or shed load.
+
 Thresholds live in `/etc/corex/thermal.conf`. Set `THERMAL_ENABLED=false` to
 turn it off. A reading has to hold for three consecutive samples before
 anything is stopped, so a brief spike during a backup does not cost you your
@@ -1972,6 +2052,28 @@ sudo bash corex-manage.sh os-upgrade
 That command refuses to start if the CPU is above 85C, if the package database
 is already dirty, or if the machine has been up for less than 15 minutes.
 
+Check the hardening at any time, and put back anything that has drifted:
+
+```bash
+sudo bash corex-manage.sh security check   # firewall, SSH, fail2ban, update timers, kernel, watchdog
+sudo bash corex-manage.sh security apply   # repair what the check reports
+```
+
+`doctor` runs the check as well. `apply` rewrites the fail2ban,
+unattended-upgrades and kernel settings, loads the watchdog driver, and
+enables UFW with the base rules if UFW is off. It never upgrades packages,
+never resets the firewall and never edits the SSH configuration, because a
+wrong port there locks you out of a machine with no screen attached. If root
+login is still allowed, it tells you what to change.
+
+A hardware watchdog reboots the machine when the kernel hangs. systemd is set
+up to use one, but Ubuntu blocks the watchdog drivers from loading by default,
+and without the device the setting does nothing: a hung machine stays powered
+and unreachable until someone cuts the power. Hardening loads `sp5100_tco` on
+AMD or `iTCO_wdt` on Intel and keeps it loaded across reboots. Check it with
+`ls /dev/watchdog0`. If the driver reports that the hardware is disabled, it
+may need turning on in the BIOS.
+
 ## Architecture
 
 ```
@@ -2016,7 +2118,10 @@ sudo bash corex-manage.sh network-check # HTTPS, certificates, DNS per service
 | Slow transfers on the LAN | Traffic is going out through Cloudflare. Run `lan-setup` |
 | Nextcloud returns 503 | It is in maintenance mode. `occ maintenance:mode --off`, after any pending upgrade finishes |
 | Services stopped by themselves | The thermal guardian shed load. Check `blackbox.log` and the temperature |
-| Machine crashes with nothing in the log | Almost certainly heat. The last line of `blackbox.log` will show it |
+| Machine crashes with nothing in the log | Read the last line of `blackbox.log`. A high temperature means heat; a cool, idle reading points at power or a hardware hang |
+| The machine is powered but unreachable for hours | The kernel hung and nothing reset it. Check `ls /dev/watchdog0`, then run `security apply` |
+| An update refuses to start | The CPU is within 2C of the warning threshold, or the temperature cannot be read. Let it cool, or install `lm-sensors` |
+| A service is left in Created after a crash during an update | `corex-update-recover.timer` finishes it once the CPU is cool. `journalctl -t corex-update-recover` shows what it did |
 | Traefik dashboard refuses connections | It is bound to the server's loopback. Use an SSH tunnel |
 | The mail hostname returns 502 while the container is healthy | A bot scanned the hostname and Stalwart banned the proxy's container IP, not the bot's. `corex manage repair stalwart` clears it. See below |
 | Portainer returns 500 through Traefik but 200 on port 9443 | Its self-signed certificate is issued for `0.0.0.0`, so Traefik cannot verify it. Repair Traefik, then Portainer |
@@ -2109,16 +2214,24 @@ will never reach anyone who installed before you shipped them.
 Tests run without root or Docker:
 
 ```bash
+bash test/run-tests.sh all           # syntax, Python, and bats and ShellCheck when installed
 bats test/unit/                      # module contract and thermal logic
-bash -n install-corex-master.sh      # parse check
+cd dashboard/web && npm run build    # TypeScript, bundle, polling and render checks
 ```
+
+The Python tests mock host commands and do not touch the machine they run on.
+In a bats test, write `refute cmd` rather than `! cmd`: bats ignores a negated
+command on any line but the last, so `! grep` in the middle of a test can never
+fail it.
 
 ## Version history
 
-The current release is v3.25.1. Recent versions added step-up confirmation
-before the power actions, reboot and shutdown from the dashboard, wake-on-LAN,
-scheduled maintenance, per-service update badges, Authelia, a CPU clock
-ceiling, and `lan-only`. `CHANGELOG.md` has the detail, including the faults
+The current release is v3.57.1. Recent versions added updates that stay inside
+a thermal budget and finish after a crash, a security audit with a targeted
+repair, a hardware watchdog that can actually fire, a per-device DNS rate
+limit, an enforced dashboard design system, step-up confirmation before the
+power actions, reboot and shutdown from the dashboard, wake-on-LAN, scheduled
+maintenance, Authelia, a CPU clock ceiling, and `lan-only`. `CHANGELOG.md` has the detail, including the faults
 each release fixed and how they were found.
 
 v1.0.0 shipped a single-file installer with 14 services and Restic backups.
@@ -2144,34 +2257,3 @@ See [CHANGELOG.md](CHANGELOG.md) for the detail.
 ## License
 
 MIT. See [LICENSE](LICENSE).
-
-### Targeted storage cleanup
-
-Use `corex manage cleanup --dry-run --docker-only` to preview Docker cleanup.
-Run `corex manage cleanup --docker-only` to remove unreferenced images, eligible
-build cache, and unused networks while leaving host journals, package caches,
-and temporary files alone. Docker volumes and containers are not removed.
-Omit `--docker-only` to include the existing host cleanup steps. Unknown cleanup
-arguments now fail before cleanup starts; `--help` lists supported options.
-
-### Local regression checks
-
-Run `bash test/run-tests.sh all` for shell syntax and Python regression checks,
-plus Bats and ShellCheck when installed. Run `npm run build` in `dashboard/web`
-for TypeScript, production bundling, polling regressions, and browser smoke checks.
-The Python tests mock host commands and do not clean the local machine.
-
-### Efficient dashboard, service sleep and calendar sync
-
-The dashboard pauses background polling and live streams while hidden. AI models
-unload after idle time. Portainer and Grafana can optionally wake on web access
-with `corex manage cold enable portainer` or
-`corex manage cold enable grafana`. Prometheus, Uptime Kuma, sync jobs and
-scheduled services stay running.
-See [performance and storage](docs/performance-and-storage.md) for behavior,
-limits, and the migration plan from legacy Time Machine partitions.
-
-Keeper is available with `corex manage add keeper` or in the setup wizard.
-See [Keeper setup](docs/keeper.md) for Nextcloud CalDAV, Google/Microsoft OAuth,
-and backup requirements. Deploying the module does not connect calendar accounts
-automatically.

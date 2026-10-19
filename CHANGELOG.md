@@ -10,6 +10,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.57.1] - 2026-10-19
+
+### Fixed
+- **The README had fallen thirteen releases behind.** The badge said v3.13.0
+  and the version history said v3.25.1. It now documents the update thermal
+  budget, recovery after a crash during an update, how disabled services are
+  updated, `security check` and `security apply`, and the hardware watchdog.
+  Six manage commands it never mentioned are listed, and three sections that
+  had been appended after the licence are moved into the sections they
+  belong to.
+
+### Added
+- **`test/unit/test_docs.bats`.** It fails when the README badge, the README's
+  current release, `lib/state.sh`, `CLAUDE.md` or the changelog disagree with
+  `corex.sh`, and when a `corex-manage.sh` command is missing from the README.
+
+---
+
 ## [v3.57.0] - 2026-10-19
 
 ### Added

@@ -28,7 +28,7 @@ learning nginx, SSL, Docker networking, or Linux hardening.
 - Re-run on existing server = health-check + repair broken services only
 - No live server required for testing (Docker-in-Docker + bats)
 
-**Current version:** v3.57.0
+**Current version:** v3.57.1
 **Current service modules:** 21 (Traefik, AdGuard, Portainer, Nextcloud,
 Immich, Vaultwarden, Stalwart Mail, Coolify, n8n, Cal.com, Time Machine,
 Uptime Kuma + Grafana + Prometheus (monitoring), Ollama + OpenWebUI +
@@ -116,6 +116,12 @@ git push origin v3.12.0
 gh release create v3.12.0 --repo itismowgli/corex-pro \
   --title v3.12.0 --notes-file /tmp/notes.md --latest
 ```
+
+Every release also updates `README.md`: the version badge, the "current
+release" line in Version history, and the section for every user-visible
+change. `test/unit/test_docs.bats` fails when the badge or that line disagrees
+with `corex.sh`, and when a `corex-manage.sh` command is missing from the
+README, because the README is the file a release forgets.
 
 `tools/release-notes.py` refuses to print notes containing em dashes, an IP
 address, an email address, a bot token or a credential, because a release body
