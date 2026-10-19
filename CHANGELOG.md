@@ -10,6 +10,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.57.5] - 2026-10-19
+
+### Fixed
+- **A kernel panic or a frozen CPU left the machine dead until someone cut
+  the power.** Ubuntu ships `kernel.panic=0`, and its soft and hard lockup
+  detectors only log, to a journal that never flushes from a frozen kernel.
+  `self-heal` and `security apply` now write
+  `/etc/sysctl.d/98-corex-recovery.conf`, which reboots ten seconds after a
+  panic and turns oopses and soft and hard lockups into panics. A task blocked
+  on I/O still does not reboot the machine, because the data disk is USB and
+  can stall for minutes during a backup and recover. `security check` reports
+  the settings.
+- **`os-upgrade` could never install a kernel update.** A new kernel is a new
+  package, and plain `apt-get upgrade` keeps back anything that needs one. It
+  runs with `--with-new-pkgs` now, which installs new dependencies and still
+  never removes a package.
+
+---
+
 ## [v3.57.4] - 2026-10-19
 
 ### Fixed

@@ -22,7 +22,7 @@
 set -uo pipefail
 
 # ── Version ──
-COREX_VERSION="3.57.4"
+COREX_VERSION="3.57.5"
 
 # ── Colors ──
 RED='\033[0;31m'

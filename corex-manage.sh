@@ -1595,10 +1595,16 @@ cmd_os_upgrade() {
     pending=$(apt list --upgradable 2>/dev/null | grep -c upgradable) || pending=0
     echo "  Pending: ${pending} package(s)"
     echo ""
+    # --with-new-pkgs because a kernel update is a new package: linux-generic
+    # moves to depend on a new linux-image-<version>, and plain `upgrade` keeps
+    # it back forever. This command is the only path that installs kernels
+    # (gotcha #18), so without it no kernel update would ever arrive. It still
+    # never removes a package.
     log_step "Upgrading (MinimalSteps so an interruption leaves less broken)..."
     DEBIAN_FRONTEND=noninteractive apt-get -y \
         -o Dpkg::Options::=--force-confdef \
         -o Dpkg::Options::=--force-confold \
+        --with-new-pkgs \
         upgrade || log_warning "Upgrade reported problems — checking dpkg state"
 
     # Always reconcile afterwards, whether or not the upgrade claimed success.

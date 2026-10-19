@@ -28,7 +28,7 @@ learning nginx, SSL, Docker networking, or Linux hardening.
 - Re-run on existing server = health-check + repair broken services only
 - No live server required for testing (Docker-in-Docker + bats)
 
-**Current version:** v3.57.4
+**Current version:** v3.57.5
 **Current service modules:** 21 (Traefik, AdGuard, Portainer, Nextcloud,
 Immich, Vaultwarden, Stalwart Mail, Coolify, n8n, Cal.com, Time Machine,
 Uptime Kuma + Grafana + Prometheus (monitoring), Ollama + OpenWebUI +
@@ -3390,6 +3390,14 @@ is the one that looks at the process, not the config:
 sudo ls -l /proc/1/fd | grep watchdog     # PID 1 must hold /dev/watchdog0
 journalctl -b | grep -i deny-listed        # must not name the watchdog module
 ```
+
+The hardware watchdog is the second line, not the first. Ubuntu ships
+`kernel.panic=0`, `softlockup_panic=0` and `hardlockup_panic=0`, so a kernel
+that panics or a CPU the lockup detector catches stays exactly as it is until
+someone cuts the power, and the detector's log line never reaches the disk.
+`/etc/sysctl.d/98-corex-recovery.conf` turns each of those into a reboot ten
+seconds later. `hung_task_panic` stays off on purpose: the data disk is USB,
+and a 120 second I/O stall during a backup is a slow backup, not a hang.
 
 The lesson is gotcha #50's again, one layer down. An installer that runs a
 command and reports success has proved the command works now. Whether it

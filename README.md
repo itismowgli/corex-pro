@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://img.shields.io/badge/CoreX_Pro-v3.57.4-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
+  <img src="https://img.shields.io/badge/CoreX_Pro-v3.57.5-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
   <img src="https://img.shields.io/badge/Ubuntu-24.04_LTS-E95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Ubuntu">
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
 </div>
@@ -2058,7 +2058,9 @@ sudo bash corex-manage.sh os-upgrade
 ```
 
 That command refuses to start if the CPU is above 85C, if the package database
-is already dirty, or if the machine has been up for less than 15 minutes.
+is already dirty, or if the machine has been up for less than 15 minutes. It
+installs new dependencies, which is how a kernel update arrives, and never
+removes a package.
 
 Check the hardening at any time, and put back anything that has drifted:
 
@@ -2080,7 +2082,15 @@ and without the device the setting does nothing: a hung machine stays powered
 and unreachable until someone cuts the power. Hardening loads `sp5100_tco` on
 AMD or `iTCO_wdt` on Intel with an explicit `modprobe` at every boot, because
 `modules-load.d` honours the same block and loads nothing. Check that systemd
-is holding it with `sudo ls -l /proc/1/fd | grep watchdog`. If the driver reports that the hardware is disabled, it
+is holding it with `sudo ls -l /proc/1/fd | grep watchdog`.
+
+The kernel gets a way back of its own as well. Ubuntu leaves a panicked kernel
+panicked, and a CPU its lockup detector finds frozen only gets a log line that
+never reaches the disk. CoreX sets `kernel.panic=10` and turns oopses, soft
+lockups and hard lockups into panics, so each of them ends in a reboot ten
+seconds later. A task blocked on disk I/O does not, because a USB disk can
+stall for minutes and recover. The settings live in
+`/etc/sysctl.d/98-corex-recovery.conf`, and `security check` reports them. If the driver reports that the hardware is disabled, it
 may need turning on in the BIOS.
 
 ## Architecture
@@ -2235,7 +2245,7 @@ fail it.
 
 ## Version history
 
-The current release is v3.57.4. Recent versions added updates that stay inside
+The current release is v3.57.5. Recent versions added updates that stay inside
 a thermal budget and finish after a crash, a security audit with a targeted
 repair, a hardware watchdog that can actually fire, a per-device DNS rate
 limit, an enforced dashboard design system, step-up confirmation before the

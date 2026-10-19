@@ -183,3 +183,24 @@ _backup_script() {
     grep -q 'brc=${PIPESTATUS\[0\]}' <<< "$body"
     grep -q 'brc != 0' <<< "$body"
 }
+
+@test "a kernel panic or CPU lockup reboots the machine instead of leaving it dead" {
+    local rec="${REPO_ROOT}/lib/recovery.sh"
+    grep -qx 'kernel.panic = 10' "$rec"
+    grep -qx 'kernel.softlockup_panic = 1' "$rec"
+    grep -qx 'kernel.hardlockup_panic = 1' "$rec"
+    # Rebooting for a slow USB disk would turn a long backup into an outage.
+    refute grep -qE '^kernel.hung_task_panic *= *1' "$rec"
+    local body
+    body=$(_body recovery_install "$rec")
+    grep -q '_recovery_install_panic_reboot' <<< "$body"
+    body=$(_body security_check "${REPO_ROOT}/lib/security.sh")
+    grep -q 'kernel.hardlockup_panic' <<< "$body"
+}
+
+@test "os-upgrade can install a kernel update" {
+    local body
+    body=$(awk '/^cmd_os_upgrade\(\) \{/ {f=1} f {print} f && /^}/ {exit}' "${REPO_ROOT}/corex-manage.sh")
+    grep -q -- '--with-new-pkgs' <<< "$body"
+    refute grep -qE 'apt-get[^|]*(dist-upgrade|full-upgrade|autoremove)' <<< "$body"
+}

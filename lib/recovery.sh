@@ -164,6 +164,31 @@ WDEOF
     systemctl daemon-reexec 2>/dev/null || true
 }
 
+# The kernel's own way back, which needs no hardware at all.
+#
+# Ubuntu ships kernel.panic=0, which means a panicked kernel stays panicked
+# until someone presses the power button, and soft and hard lockup detection
+# that only logs. Nothing is logged in practice, because the journal does not
+# flush from a frozen kernel (gotcha #16). With these set, a panic reboots ten
+# seconds later, an oops is treated as a panic, and a CPU the lockup detector
+# finds stuck (10 seconds by default) is a panic too. hung_task_panic is left
+# off on purpose: a USB disk can block I/O for minutes and still recover, and
+# rebooting for that would turn a slow backup into an outage.
+_recovery_install_panic_reboot() {
+    cat > /etc/sysctl.d/98-corex-recovery.conf << 'PREOF'
+# Managed by CoreX (lib/recovery.sh). A machine nobody can reach must reboot
+# itself rather than wait for someone to cut the power.
+kernel.panic = 10
+kernel.panic_on_oops = 1
+kernel.softlockup_panic = 1
+kernel.hardlockup_panic = 1
+PREOF
+    chmod 644 /etc/sysctl.d/98-corex-recovery.conf
+    sysctl -q -p /etc/sysctl.d/98-corex-recovery.conf 2>/dev/null \
+        && log_success "Kernel reboots itself 10s after a panic or a CPU lockup" \
+        || log_warning "Could not apply /etc/sysctl.d/98-corex-recovery.conf"
+}
+
 # ── The software half ────────────────────────────────────────────────────────
 
 _recovery_write_healer() {
@@ -344,6 +369,7 @@ RCEOF
     fi
 
     _recovery_install_watchdog
+    _recovery_install_panic_reboot
     _recovery_write_healer
     _recovery_write_units
     log_success "Self-recovery active (heals services, reboots only as a last resort)"

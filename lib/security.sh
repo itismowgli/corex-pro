@@ -337,6 +337,7 @@ WDEOF
     # shellcheck source=lib/recovery.sh
     source "$(dirname "${BASH_SOURCE[0]}")/recovery.sh"
     _recovery_install_watchdog
+    _recovery_install_panic_reboot
     systemctl daemon-reexec 2>/dev/null || true
     log_success "Watchdog armed (60s runtime timeout)"
 }
@@ -450,6 +451,21 @@ security_check() {
     else
         echo -e "    ${GREEN}OK${NC} Hardware watchdog armed (${wd_usec})"
         ((passed++))
+    fi
+
+    # 7. A panic or a CPU lockup has to end in a reboot, or the machine waits
+    #    for someone to cut the power. Ubuntu ships kernel.panic=0.
+    echo -e "  ${BOLD}Recovery From A Kernel Hang:${NC}"
+    local k_panic k_soft k_hard
+    k_panic=$(sysctl -n kernel.panic 2>/dev/null || echo 0)
+    k_soft=$(sysctl -n kernel.softlockup_panic 2>/dev/null || echo 0)
+    k_hard=$(sysctl -n kernel.hardlockup_panic 2>/dev/null || echo 0)
+    if [[ "$k_panic" != "0" && "$k_soft" == "1" && "$k_hard" == "1" ]]; then
+        echo -e "    ${GREEN}OK${NC} A panic or a CPU lockup reboots after ${k_panic}s"
+        ((passed++))
+    else
+        echo -e "    ${YELLOW}WARN${NC} A kernel panic or lockup leaves the machine dead (panic=${k_panic}, softlockup_panic=${k_soft}, hardlockup_panic=${k_hard})"
+        ((warnings++))
     fi
 
     echo ""
