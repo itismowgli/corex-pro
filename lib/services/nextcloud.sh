@@ -31,7 +31,6 @@ SERVICE_NEEDS_EMAIL=false
 SERVICE_RAM_MB=2048
 SERVICE_DISK_GB=10
 # See the note in keeper.sh for the format.
-SERVICE_HOLDS="ghcr.io/nextcloud-releases/whiteboard\tv2.0.0\tv2.0.0 needs the Nextcloud whiteboard app at 2.x, and the app installed here is 1.5.9. The container has to match the app, so taking the newest tag would break a working service. Check with: occ app:list | grep whiteboard"
 
 SERVICE_DESCRIPTION="Sync files, calendar, and contacts across all your devices. Unlimited storage on your own hardware. Replaces Google Drive, iCloud, Dropbox."
 
@@ -401,7 +400,7 @@ ${ffmpeg_mounts}
   whiteboard:
     # Pinned, not :release. Moving tags carry major upgrades in on a routine
     # A routine CoreX update. See CLAUDE.md gotcha #19.
-    image: ghcr.io/nextcloud-releases/whiteboard:v1.5.9
+    image: ghcr.io/nextcloud-releases/whiteboard:v2.0.0
     container_name: nextcloud-whiteboard
     restart: unless-stopped
     environment:
@@ -547,6 +546,10 @@ _nextcloud_apply_occ() {
     # Point the Whiteboard app at its WebSocket backend. Skipped silently when
     # the app is not enabled, which is why this one is not counted as failure.
     if [[ -n "${WHITEBOARD_SECRET:-}" && -n "${DOMAIN:-}" ]]; then
+        # The backend container and the whiteboard app are released together
+        # and must match (gotcha #79). The container is pinned here, so bring
+        # the app to the same release rather than leave it where it was.
+        "${_o[@]}" app:update whiteboard >/dev/null 2>&1 || true
         "${_o[@]}" config:app:set whiteboard collabBackendUrl \
             --value "https://whiteboard.${DOMAIN}" >/dev/null 2>&1 || true
         "${_o[@]}" config:app:set whiteboard jwt_secret_key \

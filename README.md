@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://img.shields.io/badge/CoreX_Pro-v3.57.5-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
+  <img src="https://img.shields.io/badge/CoreX_Pro-v3.58.0-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
   <img src="https://img.shields.io/badge/Ubuntu-24.04_LTS-E95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Ubuntu">
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
 </div>
@@ -1020,6 +1020,17 @@ with `sudo bash corex-manage.sh add keeper` or from the setup wizard.
 Deploying it does not connect any calendar accounts. [Keeper setup](docs/keeper.md)
 covers Nextcloud CalDAV, the Google and Microsoft OAuth applications, and what
 the backup needs.
+
+Before moving Keeper to a new release, dump its database. Releases that
+change the schema migrate it on first start, and a dump is the way back:
+
+```bash
+sudo sh -c 'umask 077; docker exec keeper su postgres -c "pg_dump -d keeper" \
+  | gzip > /mnt/corex-data/backups/keeper-$(date +%Y%m%d).sql.gz'
+```
+
+The dump holds the calendar accounts' OAuth tokens, which is why it is
+written readable by root only.
 
 ### ups
 
@@ -2245,7 +2256,7 @@ fail it.
 
 ## Version history
 
-The current release is v3.57.5. Recent versions added updates that stay inside
+The current release is v3.58.0. Recent versions added updates that stay inside
 a thermal budget and finish after a crash, a security audit with a targeted
 repair, a hardware watchdog that can actually fire, a per-device DNS rate
 limit, an enforced dashboard design system, step-up confirmation before the

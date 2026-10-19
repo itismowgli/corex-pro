@@ -13,22 +13,17 @@ SERVICE_FIREWALL_SPECS=()
 # separated as image repo, version, reason. Anything at or above the named
 # version is reported as held rather than offered, so the dashboard stops
 # advertising an upgrade that is known not to work here.
-SERVICE_HOLDS="ghcr.io/ridafkih/keeper-standalone\t2.21.7\t2.21.x migrates timestamps to timestamptz and refuses to start unless its embedded Postgres is on UTC. This container takes the box timezone, so the server reports Asia/Kolkata and the migration would move every stored time by that offset. Set the embedded server to UTC first."
 
 SERVICE_DESCRIPTION="Sync personal, work and Nextcloud calendars through Google, Outlook or CalDAV. Runs continuously so calendar changes keep syncing."
 SERVICE_MONITORS="Keeper	https://keeper.${DOMAIN:-}	[\"200-299\",\"307\"]"
-# Held at 2.18.7 deliberately. 2.21.x migrates timestamps to timestamptz and
-# refuses to start while its embedded Postgres server is not on UTC, which it
-# is not here: the container takes the box timezone, so the server reports
-# Asia/Kolkata and the migration would move every stored timestamp by that
-# offset. The image says so itself and stops rather than converting, which is
-# the right behaviour and leaves the choice to a person.
-#
-# To move: set the embedded server to UTC (ALTER SYSTEM SET timezone = 'UTC',
-# then reload) so the conversion is a no-op, and only then raise this pin.
-# Verified on this box: 2.21.7 crash-looped eight times without touching the
-# schema, and 2.18.7 came straight back.
-KEEPER_IMAGE="${KEEPER_IMAGE:-ghcr.io/ridafkih/keeper-standalone:2.18.7}"
+# 2.18.8 moved every timestamp column to timestamptz, and until 2.23.3 it
+# refused to migrate unless the embedded Postgres was on UTC. Setting the
+# server to UTC was the advice, and it was lossy: columns filled by the
+# server's own now() hold its local wall clock (Asia/Kolkata here), so a UTC
+# server reads them 5h30m in the future for good. 2.23.3 replaced the refusal
+# with a repair that reads the server zone and converts those columns before
+# migrating. So the zone is left as it is, and a pg_dump is taken first.
+KEEPER_IMAGE="${KEEPER_IMAGE:-ghcr.io/ridafkih/keeper-standalone:2.26.0}"
 
 keeper_dirs() {
     mkdir -p "${DOCKER_ROOT}/keeper" "${DATA_ROOT}/keeper-db"

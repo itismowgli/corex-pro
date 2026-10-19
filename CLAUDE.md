@@ -28,7 +28,7 @@ learning nginx, SSL, Docker networking, or Linux hardening.
 - Re-run on existing server = health-check + repair broken services only
 - No live server required for testing (Docker-in-Docker + bats)
 
-**Current version:** v3.57.5
+**Current version:** v3.58.0
 **Current service modules:** 21 (Traefik, AdGuard, Portainer, Nextcloud,
 Immich, Vaultwarden, Stalwart Mail, Coolify, n8n, Cal.com, Time Machine,
 Uptime Kuma + Grafana + Prometheus (monitoring), Ollama + OpenWebUI +
@@ -3161,7 +3161,21 @@ docker exec -u 33 nextcloud php occ app:list | grep -i whiteboard
 ```
 
 So a check that finds newer versions must report what exists and leave the
-choice to a person. Anything that auto-applied "newest" would have taken this
+choice to a person.
+
+The whiteboard has since moved to v2.0.0, app and container together, and
+`_nextcloud_apply_occ` now runs `occ app:update whiteboard` so the app follows
+the pinned container instead of staying wherever it was installed.
+
+**A hold's own advice can be wrong, so reread it before acting on it.** Keeper
+was held at 2.18.7 with the note "set the embedded Postgres to UTC first".
+That would have been lossy: columns filled by the server's `now()` hold Asia
+Kolkata wall clock, so a UTC server reads them 5h30m ahead for good. Upstream
+said so in keeper.sh PR #980 and from 2.23.3 converts them itself, reading the
+server zone first. So the zone is left alone, a `pg_dump` goes to
+`/mnt/corex-data/backups/keeper-pre-2.26-*.sql.gz`, and the pin is 2.26.0.
+Check it afterwards: a server-written `createdAt` should move back by the
+offset, and an app-written one (millisecond precision) should not move. Anything that auto-applied "newest" would have taken this
 one, and the same applies to any sidecar paired with an app version: the
 pairing is the constraint, not the tag.
 

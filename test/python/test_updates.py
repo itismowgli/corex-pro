@@ -112,11 +112,11 @@ class HoldsTest(unittest.TestCase):
     def tearDown(self):
         u.REPO_ROOT = self._root
 
-    def test_the_modules_that_hold_a_version_declare_it(self):
-        for svc in ("keeper", "nextcloud"):
-            holds = u.service_holds(svc)
-            self.assertTrue(holds, "%s declares no hold" % svc)
-            for h in holds:
+    def test_every_declared_hold_is_well_formed(self):
+        # Whatever is held today, every hold names an image, a version and why.
+        mods = pathlib.Path(u.REPO_ROOT, "lib", "services").glob("*.sh")
+        for svc in sorted(m.stem for m in mods if not m.name.startswith("._")):
+            for h in u.service_holds(svc):
                 self.assertTrue(h["repo"], svc)
                 self.assertTrue(h["version"], svc)
                 # A hold with no reason is just a silent refusal.
@@ -125,22 +125,29 @@ class HoldsTest(unittest.TestCase):
     def test_a_module_without_holds_returns_none(self):
         self.assertEqual(u.service_holds("traefik"), [])
 
+    # Explicit holds, not a module's live list: what is held changes as pins
+    # move, and the matching rules have to be tested either way.
+    KEEPER_HOLD = [{"repo": "ghcr.io/ridafkih/keeper-standalone", "version": "2.21.7",
+                    "reason": "a fixture hold for the matching rules"}]
+    STACK_HOLD = [{"repo": "ghcr.io/nextcloud-releases/whiteboard", "version": "v2.0.0",
+                   "reason": "a fixture hold on one image of a stack"}]
+
     def test_the_named_version_and_anything_above_it_is_held(self):
-        holds = u.service_holds("keeper")
+        holds = self.KEEPER_HOLD
         ref = "ghcr.io/ridafkih/keeper-standalone:2.18.7"
         self.assertTrue(u.held_reason(holds, ref, "2.21.7"))
         self.assertTrue(u.held_reason(holds, ref, "2.22.0"), "a later release must stay held")
         self.assertTrue(u.held_reason(holds, ref, "3.0.0"))
 
     def test_a_version_below_the_hold_is_not_held(self):
-        holds = u.service_holds("keeper")
+        holds = self.KEEPER_HOLD
         ref = "ghcr.io/ridafkih/keeper-standalone:2.18.7"
         self.assertIsNone(u.held_reason(holds, ref, "2.19.0"))
 
     def test_a_hold_applies_only_to_its_own_image(self):
         # nextcloud holds the whiteboard, not the Nextcloud image itself, and
         # a module can ship several images.
-        holds = u.service_holds("nextcloud")
+        holds = self.STACK_HOLD
         self.assertTrue(
             u.held_reason(holds, "ghcr.io/nextcloud-releases/whiteboard:v1.5.9", "v2.0.0"))
         self.assertIsNone(u.held_reason(holds, "nextcloud:34", "35"))

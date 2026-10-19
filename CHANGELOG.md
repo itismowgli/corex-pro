@@ -10,6 +10,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.58.0] - 2026-10-19
+
+### Changed
+- **Keeper moves from 2.18.7 to 2.26.0.** It was held because 2.18.8 to
+  2.23.2 refuse to migrate their timestamps unless the embedded Postgres is on
+  UTC, and the hold's note said to set it to UTC first. That advice was lossy:
+  columns the database filled with its own `now()` hold the box's local wall
+  clock, and a UTC server would read them five and a half hours ahead for
+  good. 2.23.3 and later read the server zone and convert those columns
+  before migrating, so the zone is left alone. Take a `pg_dump` before
+  updating; 2.25.0 also adds optional OIDC sign-in.
+- **The Nextcloud whiteboard backend moves from v1.5.9 to v2.0.0**, and repair
+  now runs `occ app:update whiteboard`, so the app follows the pinned
+  container instead of staying where it was installed. The two ship from one
+  repository and must match. v2.0.0 changes no environment variables, port or
+  storage setting.
+
+### Removed
+- **Both "held back on purpose" entries.** Nothing is held now.
+
+---
+
 ## [v3.57.5] - 2026-10-19
 
 ### Fixed
