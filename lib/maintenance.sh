@@ -345,9 +345,14 @@ task_backup() {
     export HOME=/var/lib/corex
     export RESTIC_CACHE_DIR=/var/lib/corex/restic-cache
     mkdir -p "$RESTIC_CACHE_DIR"
+    local brc
     nice -n 19 ionice -c 3 "$BACKUP" 2>&1 | tail -20
-    # The script writes its own log and swallows restic's status, so the
-    # snapshot list is what says whether this run produced anything.
+    brc=${PIPESTATUS[0]}
+    # The script exits non-zero when a dump, the prune or the integrity check
+    # failed, after the snapshot itself was saved. Ignoring that status let a
+    # stale lock block every prune and check for ten nights while this task
+    # recorded "backup ok" each time. The snapshot list below still answers the
+    # separate question of whether this run produced anything.
     # Trimmed on both sides. The credentials file is column aligned, so a
     # label is followed by padding, and leaving that padding in the password
     # is how a repository ends up keyed on two spaces plus the real value.
@@ -365,6 +370,12 @@ try:
 except Exception:
     print("")' 2>/dev/null)"
     [[ -n "$latest" ]] || { echo "restic holds no snapshot after this run"; return 1; }
+    if (( brc != 0 )); then
+        local summary
+        summary=$(grep -a -- '-- backup=ok' /var/log/corex-backup.log 2>/dev/null | tail -1 | sed 's/.*-- //')
+        echo "snapshot ${latest} saved, but ${summary:-the backup script exited ${brc}}"
+        return 1
+    fi
     echo "latest snapshot ${latest}"
 }
 

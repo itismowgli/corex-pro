@@ -175,7 +175,9 @@ _generated() {
     local mark up
     mark=$(echo "$body" | grep -n 'update_mark_begin "\$svc"' | tail -1 | cut -d: -f1)
     up=$(echo "$body" | grep -n 'compose_up_enabled' | head -1 | cut -d: -f1)
-    [ -n "$mark" ] && [ -n "$up" ] && [ "$mark" -lt "$up" ]
+    [ -n "$mark" ]
+    [ -n "$up" ]
+    [ "$mark" -lt "$up" ]
     echo "$body" | grep -q 'update_mark_done "\$svc"'
 }
 

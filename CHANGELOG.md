@@ -10,6 +10,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.57.4] - 2026-10-19
+
+### Fixed
+- **A stale restic lock stopped every prune and integrity check for ten
+  nights.** A crash on 2026-10-09 killed a restic run and left its lock in the
+  repository. Every run after that saved its snapshot, failed to prune, and
+  failed to check, and the log called the repository corrupted when the check
+  had never run. The backup script now runs `restic unlock` first, which
+  removes only locks whose process is gone, and says "did not run: the
+  repository is locked" instead of "corrupted" when that is what happened.
+- **The Maintenance tab recorded "backup ok" for those ten runs.** The task
+  ignored the backup script's exit status and only asked whether a snapshot
+  existed. A failed dump, prune or check now fails the task, and the summary
+  names the stage.
+- **A failed prune did not fail the backup script.** It was logged and the
+  script went on to exit 0.
+- **Two more bats assertions could never fail.** A `[ a ] && [ b ]` chain has
+  the same hole as `! cmd`: set -e ignores a failure anywhere in an `&&` list
+  except the last command.
+
+---
+
 ## [v3.57.3] - 2026-10-19
 
 ### Fixed

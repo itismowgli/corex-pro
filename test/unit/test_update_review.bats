@@ -145,3 +145,41 @@ _nc_state() {
     bash -n "$gen"
     grep -q 'modprobe "$MOD"' "$gen"
 }
+
+_backup_script() {
+    awk "index(\$0, \"<< 'BKEOF'\") {f=1; next} \$0 == \"BKEOF\" {f=0} f" "${REPO_ROOT}/lib/backup.sh"
+}
+
+@test "backup clears stale restic locks before it starts" {
+    local gen
+    gen=$(_backup_script)
+    local unlock backup
+    unlock=$(grep -n '^restic unlock' <<< "$gen" | cut -d: -f1)
+    backup=$(grep -n '^restic backup' <<< "$gen" | cut -d: -f1)
+    [ -n "$unlock" ]
+    [ -n "$backup" ]
+    [ "$unlock" -lt "$backup" ]
+    refute grep -q 'unlock --remove-all' <<< "$gen"
+}
+
+@test "a failed prune makes the backup script fail" {
+    local gen
+    gen=$(_backup_script)
+    grep -q 'prune_rc=1' <<< "$gen"
+    grep -q 'prune_rc != 0' <<< "$gen"
+}
+
+@test "a locked repository is not reported as corrupted" {
+    local gen
+    gen=$(_backup_script)
+    grep -q "repository is already locked" <<< "$gen"
+    grep -q 'DID NOT RUN: the repository is locked' <<< "$gen"
+}
+
+@test "the maintenance backup task honours the backup script's exit status" {
+    local body
+    body=$(awk '/^task_backup\(\) \{/ {f=1} f {print} f && /^}/ {exit}' "${REPO_ROOT}/lib/maintenance.sh")
+    [ -n "$body" ]
+    grep -q 'brc=${PIPESTATUS\[0\]}' <<< "$body"
+    grep -q 'brc != 0' <<< "$body"
+}

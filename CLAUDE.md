@@ -28,7 +28,7 @@ learning nginx, SSL, Docker networking, or Linux hardening.
 - Re-run on existing server = health-check + repair broken services only
 - No live server required for testing (Docker-in-Docker + bats)
 
-**Current version:** v3.57.3
+**Current version:** v3.57.4
 **Current service modules:** 21 (Traefik, AdGuard, Portainer, Nextcloud,
 Immich, Vaultwarden, Stalwart Mail, Coolify, n8n, Cal.com, Time Machine,
 Uptime Kuma + Grafana + Prometheus (monitoring), Ollama + OpenWebUI +
@@ -3339,6 +3339,27 @@ looks exactly like a working run. And a JSX comment cannot sit between
 attributes in an opening tag, which is a syntax error rather than a silent one,
 so it is the cheap half of this to get wrong.
 
+### 85. A stale restic lock stopped every prune and check for ten nights
+
+A crash on 2026-10-09 killed a restic run and left its lock in the
+repository. Every night after that the snapshot saved, `forget --prune` and
+`check` both refused to start, and the log said "INTEGRITY CHECK FAILED.
+Repository may be corrupted", which was not true: the check never ran. The
+maintenance history said "backup ok" each time, because `task_backup` piped
+the script through `tail` and only asked whether a snapshot existed.
+
+`restic unlock`, without `--remove-all`, removes only locks whose process is
+gone, so the backup script runs it first; the maintenance flock already rules
+out a second restic of ours. A locked check is reported as not having run, a
+failed prune fails the script, and `task_backup` reads `PIPESTATUS`. The
+general rule is gotcha #45's again: a task that only checks that it produced
+something cannot report that it stopped doing the rest.
+
+Both of the 2026-10-19 hangs happened during a backup run, at 77C to 78C with
+load around 2.5. That is a correlation on two events and not a cause, but the
+restic run reads and writes the same USB SSD at once, and it is the first
+thing to test when a hang next happens.
+
 ### 84. A watchdog setting with no watchdog device, and a test line that cannot fail
 
 `RuntimeWatchdogSec=60s` is how a hung kernel is meant to reset itself.
@@ -3384,7 +3405,10 @@ meant rather than what it did.
 ignores a negated command, so a failing `! grep` in the middle of a test is
 skipped silently. Nine such lines across the unit and smoke suites had never
 been able to fail. Use `refute cmd`, defined at the top of each file, which
-returns 1 and so stops the test wherever it sits. The new tests were checked
+returns 1 and so stops the test wherever it sits. A `[ a ] && [ b ]` chain has
+the same hole: set -e ignores a failure anywhere in an `&&` list except the
+last command, so put each assertion on its own line or end the chain with
+`|| { echo why; false; }`. The new tests were checked
 by running them against the code before the fix, which is how one of them was
 found passing against the bug.
 

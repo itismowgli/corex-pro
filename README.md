@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://img.shields.io/badge/CoreX_Pro-v3.57.3-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
+  <img src="https://img.shields.io/badge/CoreX_Pro-v3.57.4-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
   <img src="https://img.shields.io/badge/Ubuntu-24.04_LTS-E95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Ubuntu">
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
 </div>
@@ -2006,9 +2006,17 @@ reason.
 
 ## Backups
 
-Restic runs nightly at 02:00 and writes an encrypted, deduplicated snapshot to
+Restic runs once a day from the maintenance timer, preferring 03:00, and
+writes an encrypted, deduplicated snapshot to
 `/mnt/corex-data/backups/restic-repo`. It keeps 7 daily, 4 weekly, and 6
-monthly snapshots.
+monthly snapshots. A machine that was off at 03:00 gets its backup at the next
+opportunity instead.
+
+Each run clears any lock a crashed earlier run left behind, then takes the
+snapshot, prunes old ones and spot-checks 5% of the data. If the prune or the
+check fails, the run is recorded as failed on the Maintenance tab, even though
+the snapshot itself was saved. `/var/log/corex-backup.log` ends each run with
+one line saying which stage failed.
 
 ```bash
 sudo /usr/local/bin/corex-backup.sh     # run one now
@@ -2227,7 +2235,7 @@ fail it.
 
 ## Version history
 
-The current release is v3.57.3. Recent versions added updates that stay inside
+The current release is v3.57.4. Recent versions added updates that stay inside
 a thermal budget and finish after a crash, a security audit with a targeted
 repair, a hardware watchdog that can actually fire, a per-device DNS rate
 limit, an enforced dashboard design system, step-up confirmation before the

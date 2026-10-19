@@ -311,6 +311,15 @@ rc=0
 # fstab carries the shared data mount and NVMe database bind mounts. Without
 # it, a bare-system restore has the data but starts services against empty
 # directories on the OS disk.
+# A run killed by a crash leaves its lock in the repository, and every later
+# forget, prune and check then refuses to start. One left on 2026-10-09 meant
+# ten nights of snapshots with no pruning and an integrity check that never
+# ran while the log called the repository corrupted. `restic unlock` without
+# --remove-all removes only locks whose process is gone, and the maintenance
+# runner's flock means no other restic of ours can be running here.
+restic unlock >> "$LOG" 2>&1 \
+    || echo "$(date '+%Y-%m-%d %H:%M:%S') -- WARNING: restic unlock failed" >> "$LOG"
+
 restic backup "${DATA_ROOT}" "${DOCKER_ROOT}" /etc/corex /etc/fstab /var/lib/corex \
     --tag corex \
     --exclude="*.tmp" \
@@ -324,20 +333,30 @@ if (( rc != 0 )); then
     exit "$rc"
 fi
 
+prune_rc=0
 restic forget \
     --keep-daily 7 \
     --keep-weekly 4 \
     --keep-monthly 6 \
     --prune \
-    >> "$LOG" 2>&1 || echo "$(date '+%Y-%m-%d %H:%M:%S') -- forget/prune failed, the snapshot is still there." >> "$LOG"
+    >> "$LOG" 2>&1 || {
+        prune_rc=1
+        echo "$(date '+%Y-%m-%d %H:%M:%S') -- forget/prune FAILED, the snapshot is still there but old ones are not being removed." >> "$LOG"
+    }
 
 # ── Integrity verification (spot-check 5% of data) ───────────────────────
 echo "$(date '+%Y-%m-%d %H:%M:%S') — Running integrity check..." >> "$LOG"
 check_rc=0
-if restic check --read-data-subset=5% >> "$LOG" 2>&1; then
+check_out=$(restic check --read-data-subset=5% 2>&1) || check_rc=1
+printf '%s\n' "$check_out" >> "$LOG"
+if (( check_rc == 0 )); then
     echo "$(date '+%Y-%m-%d %H:%M:%S') -- Integrity check PASSED." >> "$LOG"
+elif grep -q 'repository is already locked' <<< "$check_out"; then
+    # Not a verdict on the data: the check never ran. Saying "corrupted" here
+    # sends someone to restore from a repository that is fine.
+    echo "$(date '+%Y-%m-%d %H:%M:%S') -- INTEGRITY CHECK DID NOT RUN: the repository is locked." >> "$LOG"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') -- Check no restic is running, then: restic unlock" >> "$LOG"
 else
-    check_rc=1
     echo "$(date '+%Y-%m-%d %H:%M:%S') -- INTEGRITY CHECK FAILED. Repository may be corrupted." >> "$LOG"
     echo "$(date '+%Y-%m-%d %H:%M:%S') -- Run manually: restic check --read-data" >> "$LOG"
 fi
@@ -355,8 +374,8 @@ fi
 # Each stage reported separately, and a failure in any of them is the script's
 # exit status. Logging a problem and then exiting 0 is how the scheduled task
 # recorded months of successful backups it had never taken.
-echo "$(date '+%Y-%m-%d %H:%M:%S') -- backup=ok dumps=$( ((dump_rc==0)) && echo ok || echo FAILED ) integrity=$( ((check_rc==0)) && echo ok || echo FAILED )" >> "$LOG"
-if (( dump_rc != 0 || check_rc != 0 )); then
+echo "$(date '+%Y-%m-%d %H:%M:%S') -- backup=ok dumps=$( ((dump_rc==0)) && echo ok || echo FAILED ) prune=$( ((prune_rc==0)) && echo ok || echo FAILED ) integrity=$( ((check_rc==0)) && echo ok || echo FAILED )" >> "$LOG"
+if (( dump_rc != 0 || prune_rc != 0 || check_rc != 0 )); then
     exit 1
 fi
 
