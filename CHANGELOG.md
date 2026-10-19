@@ -10,6 +10,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.57.2] - 2026-10-19
+
+### Fixed
+- **Rewriting `jail.local` dropped the operator's `ignoreip` allowlist.** The
+  live box allowlisted its own LAN so that a mistyped password from a laptop
+  does not ban it for a day, and `security apply` replaced the file with one
+  that had no such line. An existing `ignoreip` is now carried into the new
+  file. Found by diffing the configuration before and after the first real
+  run.
+
+---
+
 ## [v3.57.1] - 2026-10-19
 
 ### Fixed

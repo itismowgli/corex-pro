@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://img.shields.io/badge/CoreX_Pro-v3.57.1-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
+  <img src="https://img.shields.io/badge/CoreX_Pro-v3.57.2-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
   <img src="https://img.shields.io/badge/Ubuntu-24.04_LTS-E95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Ubuntu">
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
 </div>
@@ -2226,7 +2226,7 @@ fail it.
 
 ## Version history
 
-The current release is v3.57.1. Recent versions added updates that stay inside
+The current release is v3.57.2. Recent versions added updates that stay inside
 a thermal budget and finish after a crash, a security audit with a targeted
 repair, a hardware watchdog that can actually fire, a per-device DNS rate
 limit, an enforced dashboard design system, step-up confirmation before the

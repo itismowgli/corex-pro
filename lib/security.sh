@@ -129,12 +129,19 @@ JEOF
 
 _security_fail2ban() {
     log_info "Configuring Fail2ban..."
+    # An ignoreip line is the operator's own allowlist, usually the home LAN so
+    # a mistyped password from the laptop does not ban it for a day. Keep it
+    # across a rewrite; dropping it is a lockout that only shows up later.
+    local ignoreip=""
+    [[ -f /etc/fail2ban/jail.local ]] \
+        && ignoreip=$(grep -m1 -E '^[[:space:]]*ignoreip[[:space:]]*=' /etc/fail2ban/jail.local || true)
     cat > /etc/fail2ban/jail.local << F2BEOF
 [DEFAULT]
 bantime  = 86400
 findtime = 600
 maxretry = 3
 banaction = ufw
+${ignoreip}
 
 [sshd]
 enabled  = true

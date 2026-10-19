@@ -122,3 +122,10 @@ _nc_state() {
     body=$(_body security_check "${REPO_ROOT}/lib/security.sh")
     grep -q '/dev/watchdog0' <<< "$body"
 }
+
+@test "rewriting jail.local keeps the operator's ignoreip allowlist" {
+    local body
+    body=$(_body _security_fail2ban "${REPO_ROOT}/lib/security.sh")
+    grep -q 'grep -m1 -E .*ignoreip' <<< "$body"
+    grep -qx '\${ignoreip}' <<< "$body"
+}
