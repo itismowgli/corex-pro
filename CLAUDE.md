@@ -28,7 +28,7 @@ learning nginx, SSL, Docker networking, or Linux hardening.
 - Re-run on existing server = health-check + repair broken services only
 - No live server required for testing (Docker-in-Docker + bats)
 
-**Current version:** v3.58.0
+**Current version:** v3.58.1
 **Current service modules:** 21 (Traefik, AdGuard, Portainer, Nextcloud,
 Immich, Vaultwarden, Stalwart Mail, Coolify, n8n, Cal.com, Time Machine,
 Uptime Kuma + Grafana + Prometheus (monitoring), Ollama + OpenWebUI +
@@ -3433,6 +3433,35 @@ last command, so put each assertion on its own line or end the chain with
 `|| { echo why; false; }`. The new tests were checked
 by running them against the code before the fix, which is how one of them was
 found passing against the bug.
+
+
+### 86. A watchdog cannot reset a platform that froze with it
+
+Gotcha #84 made the hardware watchdog fire after a kernel hang, and a crash
+test proved it: reset in 64 seconds. Then on 2026-10-20 the box froze at
+13:51, idle at 71C, with `sp5100_tco` armed and held by PID 1, and nothing
+reset it for 34 hours. `bootstatus` read 0 afterwards, so the watchdog never
+fired. That timer lives in the chipset, and the chipset had frozen too.
+
+The first three freezes came at a load under 1, which fits the known
+Ryzen fault on entering the deepest core sleep state. Under `acpi_idle` that
+is C3 (350us wake latency, CC6 in hardware), and the cores spent nearly all
+their idle time there. `_recovery_install_idle_guard` disables every state at
+100us or more on AMD at each boot. Measured with it off: idle stayed at 60C.
+It can be applied live (`echo 1 > .../cpuidle/state3/disable`), so it costs
+no reboot. It is not the whole answer: the box froze again at 00:09 on
+2026-10-22, at load 2 and 75C, with C3 already off on every CPU. Treat it as
+one cause ruled out, not as the fix. Check it with:
+
+```bash
+cat /sys/devices/system/cpu/cpu*/cpuidle/state3/disable | sort | uniq -c   # all 1
+cat /sys/devices/system/cpu/cpu0/cpuidle/state3/usage                       # stops moving
+```
+
+The general rule: every recovery mechanism on the machine shares a fate with
+the machine. The only thing that recovers a frozen platform is outside it, a
+smart plug that power-cycles on lost ping, together with "restore on AC power
+loss" in the BIOS.
 
 ---
 

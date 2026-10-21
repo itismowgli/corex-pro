@@ -10,6 +10,36 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.58.1] - 2026-10-22
+
+### Security
+- **PHP2Shell (CVE-2026-109618, CVE-2026-109619).** Two critical flaws in
+  PHP's upload progress tracking let anyone run code on the server without
+  signing in. The rebuilt `nextcloud:34` image carries PHP 8.5.12, which
+  fixes both; the running container had 8.5.11. Nextcloud's PHP config now
+  also sets `session.upload_progress.enabled = 0`, as the PHP team advises,
+  so the feature stays off even on an unpatched image. Nextcloud shows
+  upload progress from its own chunked uploads and never used it.
+
+### Fixed
+- **A Ryzen box could freeze solid while idle, and nothing brought it back.**
+  The box froze at 13:51 on 2026-10-20 with a load under 1 and the CPU at
+  71C, and stayed down for 34 hours until someone power-cycled it. The
+  hardware watchdog was armed and held by systemd and still did not reset it,
+  so the chipset froze along with the kernel. It was the third freeze in two
+  days, all at low load. That matches a known fault in Ryzen mobile CPUs
+  entering their deepest core sleep state. On AMD,
+  `corex-idle-guard.service` now disables every idle state with a wake
+  latency of 100us or more at each boot. Here that was C3 at 350us, and with
+  it off the idle temperature stayed at 60C. `security check` reports it,
+  and `RECOVERY_DEEP_IDLE=allow` in `/etc/corex/recovery.conf` turns it off.
+  This rules out one known cause and is not proven to be the cause here: the
+  box froze again at 00:09 on 2026-10-22, under load at 75C, with C3 already
+  off. The remaining suspects are hardware and power, and the only thing that
+  recovers a platform freeze is outside the machine.
+
+---
+
 ## [v3.58.0] - 2026-10-19
 
 ### Changed

@@ -231,6 +231,16 @@ PYEOF
     assert_compose_contains "nextcloud" "TRUSTED_PROXIES"
 }
 
+@test "nextcloud: PHP upload progress stays off (PHP2Shell second layer)" {
+    source_service "nextcloud"
+    nextcloud_dirs
+    nextcloud_deploy
+    local ini="${DOCKER_ROOT}/nextcloud/zzz-corex-performance.ini"
+    grep -qx 'session.upload_progress.enabled = 0' "$ini"
+    # The file only matters if the container actually loads it.
+    assert_compose_contains "nextcloud" "zzz-corex-performance.ini:/usr/local/etc/php/conf.d/"
+}
+
 @test "nextcloud: compose contains DB password" {
     source_service "nextcloud"
     nextcloud_dirs

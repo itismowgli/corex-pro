@@ -338,6 +338,7 @@ WDEOF
     source "$(dirname "${BASH_SOURCE[0]}")/recovery.sh"
     _recovery_install_watchdog
     _recovery_install_panic_reboot
+    _recovery_install_idle_guard
     systemctl daemon-reexec 2>/dev/null || true
     log_success "Watchdog armed (60s runtime timeout)"
 }
@@ -466,6 +467,23 @@ security_check() {
     else
         echo -e "    ${YELLOW}WARN${NC} A kernel panic or lockup leaves the machine dead (panic=${k_panic}, softlockup_panic=${k_soft}, hardlockup_panic=${k_hard})"
         ((warnings++))
+    fi
+
+    if grep -q 'AuthenticAMD' /proc/cpuinfo 2>/dev/null; then
+        local deep=0 blocked=0 st
+        for st in /sys/devices/system/cpu/cpu[0-9]*/cpuidle/state[0-9]*; do
+            [[ -r "$st/latency" ]] || continue
+            (( $(cat "$st/latency") >= 100 )) || continue
+            deep=$((deep + 1))
+            [[ "$(cat "$st/disable" 2>/dev/null)" == "1" ]] && blocked=$((blocked + 1))
+        done
+        if (( deep == 0 || blocked == deep )); then
+            echo -e "    ${GREEN}OK${NC} Deep CPU idle state is off, so a low-load freeze cannot happen there"
+            ((passed++))
+        else
+            echo -e "    ${YELLOW}WARN${NC} Ryzen deep idle state is enabled on $((deep - blocked)) of ${deep} CPU entries; it can freeze the whole platform at low load"
+            ((warnings++))
+        fi
     fi
 
     echo ""

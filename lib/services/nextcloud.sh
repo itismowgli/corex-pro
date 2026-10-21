@@ -84,6 +84,15 @@ post_max_size = 16G
 max_execution_time = 3600
 max_input_time = 3600
 memory_limit = 1G
+
+; ── PHP2Shell (CVE-2026-109618, CVE-2026-109619) ──────────────────
+; Both are unauthenticated remote code execution through upload progress
+; tracking, which is on by default. Patched PHP (8.5.12, 8.4.27, 8.3.36) is
+; the fix; this keeps the feature off as a second layer, as the PHP team
+; advises. Nextcloud shows its own progress from chunked uploads and never
+; reads it. fatal_error_backtraces is ignored by a PHP that predates it.
+session.upload_progress.enabled = 0
+fatal_error_backtraces = 0
 PHPEOF
 
     # ── Apache performance config (large file transfer tuning) ───────

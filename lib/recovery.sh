@@ -189,6 +189,63 @@ PREOF
         || log_warning "Could not apply /etc/sysctl.d/98-corex-recovery.conf"
 }
 
+# The freeze neither of the above can catch.
+#
+# Ryzen mobile parts are known to lock up solid while nearly idle, on the way
+# into the deepest core sleep state (C3 under acpi_idle, which is CC6 in the
+# hardware). This box did it three times in two days, each at load under 1,
+# and the last one froze the chipset too: the sp5100_tco watchdog was armed
+# and held by PID 1 and still never reset the machine, so it sat dead for 34
+# hours. Nothing in software runs once the platform is frozen, so the only
+# answer is not to enter that state.
+#
+# Any idle state with a wake latency of 100us or more is disabled at every
+# boot, on AMD only. Measured here: the cores spent nearly all idle time in
+# the 350us C3, and with it off the idle temperature stayed at 60C, because
+# C1 and C2 still idle the cores. RECOVERY_DEEP_IDLE=allow in
+# /etc/corex/recovery.conf leaves the kernel alone.
+_recovery_install_idle_guard() {
+    if ! grep -q 'AuthenticAMD' /proc/cpuinfo 2>/dev/null; then
+        return 0
+    fi
+    install_script /usr/local/bin/corex-idle-guard.sh 755 << 'IGEOF'
+#!/bin/bash
+# Managed by CoreX (lib/recovery.sh). Keeps Ryzen cores out of the deep idle
+# state that freezes the whole platform at low load.
+[[ -f /etc/corex/recovery.conf ]] && . /etc/corex/recovery.conf
+[[ "${RECOVERY_DEEP_IDLE:-block}" == "allow" ]] && exit 0
+n=0
+for s in /sys/devices/system/cpu/cpu[0-9]*/cpuidle/state[0-9]*; do
+    [[ -r "$s/latency" && -w "$s/disable" ]] || continue
+    if (( $(cat "$s/latency") >= 100 )); then
+        echo 1 > "$s/disable" && n=$((n + 1))
+    fi
+done
+logger -t corex-idle-guard "disabled ${n} deep idle state entries"
+exit 0
+IGEOF
+
+    cat > /etc/systemd/system/corex-idle-guard.service << 'IGUEOF'
+[Unit]
+Description=Keep Ryzen cores out of the deep idle state that freezes the platform
+DefaultDependencies=no
+After=sysinit.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/corex-idle-guard.sh
+
+[Install]
+WantedBy=multi-user.target
+IGUEOF
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable corex-idle-guard.service 2>/dev/null || true
+    systemctl restart corex-idle-guard.service 2>/dev/null \
+        && log_success "Deep CPU idle state disabled (Ryzen low-load freeze)" \
+        || log_warning "Could not start corex-idle-guard.service"
+}
+
 # ── The software half ────────────────────────────────────────────────────────
 
 _recovery_write_healer() {
@@ -370,6 +427,7 @@ RCEOF
 
     _recovery_install_watchdog
     _recovery_install_panic_reboot
+    _recovery_install_idle_guard
     _recovery_write_healer
     _recovery_write_units
     log_success "Self-recovery active (heals services, reboots only as a last resort)"

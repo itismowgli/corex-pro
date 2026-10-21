@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://img.shields.io/badge/CoreX_Pro-v3.58.0-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
+  <img src="https://img.shields.io/badge/CoreX_Pro-v3.58.1-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
   <img src="https://img.shields.io/badge/Ubuntu-24.04_LTS-E95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Ubuntu">
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
 </div>
@@ -2101,7 +2101,15 @@ never reaches the disk. CoreX sets `kernel.panic=10` and turns oopses, soft
 lockups and hard lockups into panics, so each of them ends in a reboot ten
 seconds later. A task blocked on disk I/O does not, because a USB disk can
 stall for minutes and recover. The settings live in
-`/etc/sysctl.d/98-corex-recovery.conf`, and `security check` reports them. If the driver reports that the hardware is disabled, it
+`/etc/sysctl.d/98-corex-recovery.conf`, and `security check` reports them.
+
+Neither of those helps when the whole platform freezes, because the watchdog
+timer freezes with it. Ryzen mobile CPUs are known to do that while nearly
+idle, on the way into their deepest core sleep state. On an AMD CPU,
+`corex-idle-guard.service` turns off every idle state with a wake latency of
+100us or more at each boot. The lighter idle states still run, so idle
+temperature barely moves. Set `RECOVERY_DEEP_IDLE=allow` in
+`/etc/corex/recovery.conf` to leave the kernel's choice alone. If the driver reports that the hardware is disabled, it
 may need turning on in the BIOS.
 
 ## Architecture
@@ -2150,6 +2158,7 @@ sudo bash corex-manage.sh network-check # HTTPS, certificates, DNS per service
 | Services stopped by themselves | The thermal guardian shed load. Check `blackbox.log` and the temperature |
 | Machine crashes with nothing in the log | Read the last line of `blackbox.log`. A high temperature means heat; a cool, idle reading points at power or a hardware hang |
 | The machine is powered but unreachable for hours | The kernel hung and nothing reset it. Check `ls /dev/watchdog0`, then run `security apply` |
+| It froze while idle and even the watchdog did not reset it | The whole platform froze. On AMD, check `systemctl status corex-idle-guard`, and put the box on a smart plug that power-cycles it when ping stops |
 | An update refuses to start | The CPU is within 2C of the warning threshold, or the temperature cannot be read. Let it cool, or install `lm-sensors` |
 | A service is left in Created after a crash during an update | `corex-update-recover.timer` finishes it once the CPU is cool. `journalctl -t corex-update-recover` shows what it did |
 | Traefik dashboard refuses connections | It is bound to the server's loopback. Use an SSH tunnel |
@@ -2256,7 +2265,8 @@ fail it.
 
 ## Version history
 
-The current release is v3.58.0. Recent versions added updates that stay inside
+The current release is v3.58.1. Recent versions added the PHP2Shell fix for
+Nextcloud, a guard against the Ryzen low-load freeze, updates that stay inside
 a thermal budget and finish after a crash, a security audit with a targeted
 repair, a hardware watchdog that can actually fire, a per-device DNS rate
 limit, an enforced dashboard design system, step-up confirmation before the

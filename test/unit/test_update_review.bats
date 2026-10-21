@@ -198,6 +198,22 @@ _backup_script() {
     grep -q 'kernel.hardlockup_panic' <<< "$body"
 }
 
+@test "a Ryzen box stays out of the deep idle state that freezes the platform" {
+    local rec="${REPO_ROOT}/lib/recovery.sh" body
+    body=$(_body _recovery_install_idle_guard "$rec")
+    [ -n "$body" ]
+    grep -q 'AuthenticAMD' <<< "$body"
+    grep -q '>= 100' <<< "$body"
+    grep -q 'RECOVERY_DEEP_IDLE' <<< "$body"
+    grep -q 'systemctl enable corex-idle-guard.service' <<< "$body"
+    body=$(_body recovery_install "$rec")
+    grep -q '_recovery_install_idle_guard' <<< "$body"
+    body=$(_body _security_watchdog "${REPO_ROOT}/lib/security.sh")
+    grep -q '_recovery_install_idle_guard' <<< "$body"
+    body=$(_body security_check "${REPO_ROOT}/lib/security.sh")
+    grep -q 'cpuidle' <<< "$body"
+}
+
 @test "os-upgrade can install a kernel update" {
     local body
     body=$(awk '/^cmd_os_upgrade\(\) \{/ {f=1} f {print} f && /^}/ {exit}' "${REPO_ROOT}/corex-manage.sh")
