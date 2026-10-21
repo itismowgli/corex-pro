@@ -191,43 +191,59 @@ PREOF
 
 # The freeze neither of the above can catch.
 #
-# Ryzen mobile parts are known to lock up solid while nearly idle, on the way
-# into the deepest core sleep state (C3 under acpi_idle, which is CC6 in the
-# hardware). This box did it three times in two days, each at load under 1,
-# and the last one froze the chipset too: the sp5100_tco watchdog was armed
-# and held by PID 1 and still never reset the machine, so it sat dead for 34
-# hours. Nothing in software runs once the platform is frozen, so the only
-# answer is not to enter that state.
+# This box froze solid at least 17 times in October 2026, at loads from 0.65
+# to 3.3 and 70C to 79C, with nothing in any log. The journal on the NVMe, the
+# blackbox on the USB disk and ARP replies all stopped at once, and the armed
+# sp5100_tco watchdog never fired, because the chipset froze with the cores.
+# Software on the machine cannot recover that, so the answer is to avoid the
+# power transitions that are documented to hang Ryzen 5000 mobile SoCs:
 #
-# Any idle state with a wake latency of 100us or more is disabled at every
-# boot, on AMD only. Measured here: the cores spent nearly all idle time in
-# the 350us C3, and with it off the idle temperature stayed at 60C, because
-# C1 and C2 still idle the cores. RECOVERY_DEEP_IDLE=allow in
-# /etc/corex/recovery.conf leaves the kernel alone.
+#   cpuidle states with a wake latency of 10us or more (C2 and C3 under
+#   acpi_idle). Disabling C3 alone was tried first and the box froze again.
+#   GFXOFF on the integrated GPU, a known hang source on Renoir and Cezanne.
+#   The box is headless, and VAAPI still works with the GPU kept powered.
+#   NVMe autonomous power states, through each controller's latency limit.
+#
+# All three are runtime switches, so they are applied at every boot with no
+# kernel parameters. Measured with all three: idle 64C to 67C. The BIOS
+# setting "Power Supply Idle Control = Typical Current Idle" reaches the
+# package states the OS cannot, and needs someone at the box.
+# RECOVERY_DEEP_IDLE=allow in /etc/corex/recovery.conf leaves it all alone.
 _recovery_install_idle_guard() {
     if ! grep -q 'AuthenticAMD' /proc/cpuinfo 2>/dev/null; then
         return 0
     fi
     install_script /usr/local/bin/corex-idle-guard.sh 755 << 'IGEOF'
 #!/bin/bash
-# Managed by CoreX (lib/recovery.sh). Keeps Ryzen cores out of the deep idle
-# state that freezes the whole platform at low load.
+# Managed by CoreX (lib/recovery.sh). Keeps a Ryzen SoC out of the power
+# transitions that freeze the whole platform.
 [[ -f /etc/corex/recovery.conf ]] && . /etc/corex/recovery.conf
 [[ "${RECOVERY_DEEP_IDLE:-block}" == "allow" ]] && exit 0
 n=0
 for s in /sys/devices/system/cpu/cpu[0-9]*/cpuidle/state[0-9]*; do
     [[ -r "$s/latency" && -w "$s/disable" ]] || continue
-    if (( $(cat "$s/latency") >= 100 )); then
+    if (( $(cat "$s/latency") >= 10 )); then
         echo 1 > "$s/disable" && n=$((n + 1))
     fi
 done
-logger -t corex-idle-guard "disabled ${n} deep idle state entries"
+nv=0
+for q in /sys/class/nvme/nvme*/power/pm_qos_latency_tolerance_us; do
+    [[ -w "$q" ]] && echo 0 > "$q" && nv=$((nv + 1))
+done
+mountpoint -q /sys/kernel/debug || mount -t debugfs none /sys/kernel/debug 2>/dev/null
+gx=0
+for g in /sys/kernel/debug/dri/*/amdgpu_gfxoff; do
+    # A 32-bit zero. Never read these files with an unbounded reader: they
+    # do not return end of file.
+    [[ -w "$g" ]] && printf '\0\0\0\0' > "$g" && gx=$((gx + 1))
+done
+logger -t corex-idle-guard "cpuidle entries off: ${n}, nvme apst off: ${nv}, gpu gfxoff off: ${gx}"
 exit 0
 IGEOF
 
     cat > /etc/systemd/system/corex-idle-guard.service << 'IGUEOF'
 [Unit]
-Description=Keep Ryzen cores out of the deep idle state that freezes the platform
+Description=Keep a Ryzen SoC out of the power transitions that freeze the platform
 DefaultDependencies=no
 After=sysinit.target
 

@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://img.shields.io/badge/CoreX_Pro-v3.58.1-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
+  <img src="https://img.shields.io/badge/CoreX_Pro-v3.58.2-blue?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Version">
   <img src="https://img.shields.io/badge/Ubuntu-24.04_LTS-E95420?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Ubuntu">
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
 </div>
@@ -2105,10 +2105,13 @@ stall for minutes and recover. The settings live in
 
 Neither of those helps when the whole platform freezes, because the watchdog
 timer freezes with it. Ryzen mobile CPUs are known to do that while nearly
-idle, on the way into their deepest core sleep state. On an AMD CPU,
-`corex-idle-guard.service` turns off every idle state with a wake latency of
-100us or more at each boot. The lighter idle states still run, so idle
-temperature barely moves. Set `RECOVERY_DEEP_IDLE=allow` in
+idle or busy, while the chip changes power state. On an AMD CPU,
+`corex-idle-guard.service` applies three runtime switches at each boot: CPU
+idle states with a wake latency of 10us or more are off, the integrated GPU
+stays powered (GFXOFF off), and NVMe disks stay out of their deep power
+states. The lightest CPU idle state still runs, so idle temperature rises only
+a few degrees. The BIOS setting "Power Supply Idle Control" set to "Typical
+Current Idle" covers the package states Linux cannot reach. Set `RECOVERY_DEEP_IDLE=allow` in
 `/etc/corex/recovery.conf` to leave the kernel's choice alone. If the driver reports that the hardware is disabled, it
 may need turning on in the BIOS.
 
@@ -2265,7 +2268,7 @@ fail it.
 
 ## Version history
 
-The current release is v3.58.1. Recent versions added the PHP2Shell fix for
+The current release is v3.58.2. Recent versions added the PHP2Shell fix for
 Nextcloud, a guard against the Ryzen low-load freeze, updates that stay inside
 a thermal budget and finish after a crash, a security audit with a targeted
 repair, a hardware watchdog that can actually fire, a per-device DNS rate

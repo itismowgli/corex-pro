@@ -473,15 +473,15 @@ security_check() {
         local deep=0 blocked=0 st
         for st in /sys/devices/system/cpu/cpu[0-9]*/cpuidle/state[0-9]*; do
             [[ -r "$st/latency" ]] || continue
-            (( $(cat "$st/latency") >= 100 )) || continue
+            (( $(cat "$st/latency") >= 10 )) || continue
             deep=$((deep + 1))
             [[ "$(cat "$st/disable" 2>/dev/null)" == "1" ]] && blocked=$((blocked + 1))
         done
         if (( deep == 0 || blocked == deep )); then
-            echo -e "    ${GREEN}OK${NC} Deep CPU idle state is off, so a low-load freeze cannot happen there"
+            echo -e "    ${GREEN}OK${NC} Deep CPU idle states are off (corex-idle-guard)"
             ((passed++))
         else
-            echo -e "    ${YELLOW}WARN${NC} Ryzen deep idle state is enabled on $((deep - blocked)) of ${deep} CPU entries; it can freeze the whole platform at low load"
+            echo -e "    ${YELLOW}WARN${NC} Ryzen deep idle states are enabled on $((deep - blocked)) of ${deep} CPU entries; they can freeze the whole platform"
             ((warnings++))
         fi
     fi

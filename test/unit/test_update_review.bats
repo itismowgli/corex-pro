@@ -198,12 +198,14 @@ _backup_script() {
     grep -q 'kernel.hardlockup_panic' <<< "$body"
 }
 
-@test "a Ryzen box stays out of the deep idle state that freezes the platform" {
+@test "a Ryzen box stays out of the power transitions that freeze the platform" {
     local rec="${REPO_ROOT}/lib/recovery.sh" body
     body=$(_body _recovery_install_idle_guard "$rec")
     [ -n "$body" ]
     grep -q 'AuthenticAMD' <<< "$body"
-    grep -q '>= 100' <<< "$body"
+    grep -q '>= 10 ' <<< "$body"
+    grep -q 'pm_qos_latency_tolerance_us' <<< "$body"
+    grep -q 'amdgpu_gfxoff' <<< "$body"
     grep -q 'RECOVERY_DEEP_IDLE' <<< "$body"
     grep -q 'systemctl enable corex-idle-guard.service' <<< "$body"
     body=$(_body recovery_install "$rec")

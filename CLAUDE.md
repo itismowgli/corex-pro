@@ -28,7 +28,7 @@ learning nginx, SSL, Docker networking, or Linux hardening.
 - Re-run on existing server = health-check + repair broken services only
 - No live server required for testing (Docker-in-Docker + bats)
 
-**Current version:** v3.58.1
+**Current version:** v3.58.2
 **Current service modules:** 21 (Traefik, AdGuard, Portainer, Nextcloud,
 Immich, Vaultwarden, Stalwart Mail, Coolify, n8n, Cal.com, Time Machine,
 Uptime Kuma + Grafana + Prometheus (monitoring), Ollama + OpenWebUI +
@@ -3451,7 +3451,15 @@ their idle time there. `_recovery_install_idle_guard` disables every state at
 It can be applied live (`echo 1 > .../cpuidle/state3/disable`), so it costs
 no reboot. It is not the whole answer: the box froze again at 00:09 on
 2026-10-22, at load 2 and 75C, with C3 already off on every CPU. Treat it as
-one cause ruled out, not as the fix. Check it with:
+one cause ruled out, not as the fix.
+
+The guard now covers the other documented transitions too: cpuidle states
+from 10us (C2 as well as C3), amdgpu GFXOFF through
+`/sys/kernel/debug/dri/*/amdgpu_gfxoff`, and NVMe APST through
+`/sys/class/nvme/nvme*/power/pm_qos_latency_tolerance_us`. A read of every
+boot found at least 17 freezes in October, not three, so the count in an
+incident report is a floor. One trap: `amdgpu_gfxoff_status` never returns
+end of file, so `od` on it spins forever. Read four bytes with `head -c4`. Check it with:
 
 ```bash
 cat /sys/devices/system/cpu/cpu*/cpuidle/state3/disable | sort | uniq -c   # all 1

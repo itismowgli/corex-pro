@@ -10,6 +10,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ---
 
+## [v3.58.2] - 2026-10-22
+
+### Fixed
+- **The idle guard now avoids every power transition known to hang a Ryzen
+  5000 mobile SoC, not only the deepest one.** A read of every boot since
+  October found at least 17 whole-platform freezes, at loads from 0.65 to
+  3.3 and 70C to 79C. None left a log line, and the NVMe counts 51 unsafe
+  shutdowns in 69 power cycles. Disabling C3 alone did not stop them, so
+  `corex-idle-guard.service` now disables CPU idle states from 10us (C2 and
+  C3), keeps the integrated GPU powered by turning GFXOFF off, and keeps
+  NVMe disks out of their autonomous power states. All three are runtime
+  switches applied at boot, so nothing needs a kernel parameter. Measured
+  with all three on: idle at 64C to 67C. Never read the amdgpu debugfs files
+  with an unbounded reader such as `od`: they do not return end of file.
+
+---
+
 ## [v3.58.1] - 2026-10-22
 
 ### Security
