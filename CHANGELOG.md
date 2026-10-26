@@ -8,6 +8,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ## [Unreleased]
 
+### Fixed
+- **AdGuard no longer depends on one resolver that blocks nothing.** Its
+  default upstream, Quad9's dns10 address, does no malware blocking and no
+  DNSSEC, and on a live box it failed about 130 lookups in four days. Repair
+  replaces that default, and only that default, with Quad9 and Cloudflare's
+  malware-blocking resolvers asked in parallel, adds 9.9.9.9 and 1.1.1.1 as
+  fallbacks for when both are unreachable, and turns on optimistic caching.
+- **Phones trying DNS over TLS no longer wait for a timeout.** Android's
+  automatic Private DNS and some Apple devices try port 853 on the network's
+  resolver first. The firewall dropped it, so each one waited before falling
+  back to port 53; it is now refused, which answers at once.
+- **n8n stops reporting usage to an address AdGuard blocks.**
+  `N8N_DIAGNOSTICS_ENABLED=false`. With it on, the log carried an
+  `ECONNREFUSED 0.0.0.0:443` every few minutes, 96 lines in four days.
+
 ---
 
 ## [v3.58.2] - 2026-10-22

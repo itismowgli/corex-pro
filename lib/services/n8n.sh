@@ -143,6 +143,10 @@ services:
       WEBHOOK_URL: "https://${sub}.${DOMAIN}"
       N8N_ENCRYPTION_KEY: "${N8N_ENCRYPTION_KEY}"
       GENERIC_TIMEZONE: "${TIMEZONE}"
+      # n8n reports usage to its own analytics service. AdGuard's blocklists
+      # answer that name with 0.0.0.0, so with this on the log filled with
+      # ECONNREFUSED 0.0.0.0:443 every few minutes, burying real errors.
+      N8N_DIAGNOSTICS_ENABLED: "false"
     volumes:
       - ${DATA_ROOT}/n8n:/home/node/.n8n
     networks: [proxy-net]

@@ -362,7 +362,12 @@ its own is blocked, it stops resolving altogether.
 
 Repair also sets AdGuard's rate limit per device, at 100 lookups a second,
 because the default of 20 a second per /24 is shared by every device on a home
-network. Existing custom filters, allow rules and DNS rewrites are preserved,
+network. It replaces AdGuard's single default upstream, which blocks no
+malware, with Quad9 and Cloudflare's malware-blocking resolvers asked in
+parallel, with plain fallbacks for when both are unreachable, and turns on
+optimistic caching. An upstream list you have edited is left alone. Port 853
+is refused rather than dropped, so a phone trying DNS over TLS falls back to
+port 53 at once. Existing custom filters, allow rules and DNS rewrites are preserved,
 and a list switched off in the AdGuard UI stays off. Apply it to an existing
 installation with:
 

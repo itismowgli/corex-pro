@@ -41,6 +41,10 @@ adguard_firewall() {
     ufw allow 53    comment 'DNS (AdGuard Home, TCP+UDP)'    2>/dev/null || true
     ufw allow 3000/tcp comment 'AdGuard Home Setup UI'       2>/dev/null || true
     ufw allow 5353/udp comment 'mDNS (Avahi/Bonjour)'       2>/dev/null || true
+    # Android's automatic Private DNS and some Apple devices try DNS over TLS
+    # on the network's resolver first. A silent drop makes each of them wait
+    # out a timeout before falling back to port 53; a reset answers at once.
+    ufw reject 853/tcp comment 'DNS over TLS: refuse fast, clients fall back to 53' 2>/dev/null || true
 }
 
 # Add the maintained CoreX filter baseline to an AdGuard configuration that
@@ -198,6 +202,46 @@ _adguard_tune_ratelimit() {
     [[ "$was_running" == "yes" ]] && docker start adguard >/dev/null 2>&1 || true
 }
 
+# AdGuard ships with one upstream, Quad9's dns10 address, which does no malware
+# blocking and no DNSSEC validation, and it is the only resolver for the whole
+# house. Measured over four days on a live box it failed about 130 lookups, each
+# one a retry a client waited for. Two filtering resolvers asked in parallel
+# answer from whichever is faster, and either can be down without anyone
+# noticing; the plain addresses are used only when both encrypted ones fail.
+# Optimistic caching answers a popular name from cache while it refreshes.
+#
+# Only AdGuard's own default is replaced. An install whose upstream list has
+# been edited by hand is left exactly as it is, including its mode and cache.
+_adguard_tune_upstreams() {
+    local yaml="$1"
+    [[ -s "$yaml" ]] || return 0
+    local current
+    current=$(awk '/^  upstream_dns:$/{f=1; next} f && /^    - /{print; next} {f=0}' "$yaml")
+    [[ "$current" == "    - https://dns10.quad9.net/dns-query" ]] || return 0
+
+    local was_running="" tmp="${yaml}.corex.$$"
+    if declare -f container_running >/dev/null 2>&1 && container_running adguard; then
+        was_running="yes"
+        docker stop adguard >/dev/null 2>&1 || {
+            log_warning "AdGuard upstreams were not changed: could not stop AdGuard safely"
+            return 0
+        }
+    fi
+    if cp -p "$yaml" "$tmp" 2>/dev/null \
+        && sed -i \
+            -e 's#^    - https://dns10\.quad9\.net/dns-query$#    - https://dns.quad9.net/dns-query\n    - https://security.cloudflare-dns.com/dns-query#' \
+            -e 's/^  upstream_mode: load_balance$/  upstream_mode: parallel/' \
+            -e 's/^  cache_optimistic: false$/  cache_optimistic: true/' \
+            -e 's/^  fallback_dns: \[\]$/  fallback_dns:\n    - 9.9.9.9\n    - 1.1.1.1/' "$tmp" \
+        && mv "$tmp" "$yaml"; then
+        log_success "AdGuard asks Quad9 and Cloudflare in parallel, both with malware blocking"
+    else
+        rm -f "$tmp"
+        log_warning "AdGuard upstreams were not changed: could not rewrite the config"
+    fi
+    [[ "$was_running" == "yes" ]] && docker start adguard >/dev/null 2>&1 || true
+}
+
 # Point the host's own resolver at AdGuard, once AdGuard can answer.
 #
 # The public resolvers written during deploy are a bootstrap step: AdGuard is
@@ -343,6 +387,7 @@ adguard_deploy() {
         fi
         _adguard_seed_filter_lists "$yaml"
         _adguard_tune_ratelimit "$yaml"
+        _adguard_tune_upstreams "$yaml"
     else
         log_info "AdGuard first run, the wizard will listen on port 3000"
     fi

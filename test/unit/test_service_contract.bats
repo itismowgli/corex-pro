@@ -1445,6 +1445,43 @@ YAMLEOF
     rm -rf "$work"
 }
 
+@test "adguard's default upstream becomes two filtering resolvers, a chosen one is kept" {
+    local work yaml
+    work=$(mktemp -d /tmp/corex-adguard-up-XXXXXX)
+    yaml="${work}/AdGuardHome.yaml"
+    printf 'dns:\n  upstream_dns:\n    - https://dns10.quad9.net/dns-query\n  upstream_dns_file: ""\n  fallback_dns: []\n  upstream_mode: load_balance\n  cache_optimistic: false\n' > "$yaml"
+
+    log_success() { :; }
+    log_warning() { echo "$*" >&2; }
+    container_running() { return 1; }
+    docker() { return 0; }
+    source "${REPO_ROOT}/lib/services/adguard.sh"
+
+    _adguard_tune_upstreams "$yaml"
+    grep -qx '    - https://dns.quad9.net/dns-query' "$yaml"
+    grep -qx '    - https://security.cloudflare-dns.com/dns-query' "$yaml"
+    grep -qx '  upstream_mode: parallel' "$yaml"
+    grep -qx '  cache_optimistic: true' "$yaml"
+    grep -qx '    - 1.1.1.1' "$yaml"
+    refute grep -q 'dns10' "$yaml"
+    # Running it again changes nothing.
+    cp "$yaml" "${work}/once"
+    _adguard_tune_upstreams "$yaml"
+    cmp "$yaml" "${work}/once"
+
+    # An upstream someone chose is theirs, and so are its mode and cache.
+    printf 'dns:\n  upstream_dns:\n    - https://dns10.quad9.net/dns-query\n    - tls://dns.example\n  fallback_dns: []\n  upstream_mode: load_balance\n  cache_optimistic: false\n' > "$yaml"
+    cp "$yaml" "${work}/chosen"
+    _adguard_tune_upstreams "$yaml"
+    cmp "$yaml" "${work}/chosen"
+
+    rm -rf "$work"
+}
+
+@test "n8n does not report usage to a host AdGuard blocks" {
+    grep -q 'N8N_DIAGNOSTICS_ENABLED: "false"' "${REPO_ROOT}/lib/services/n8n.sh"
+}
+
 # ─── Video containers, and the LAN mask ──────────────────────────────────────
 
 # A rewrap copies streams; a conversion decodes and re-encodes them. On this
