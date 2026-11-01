@@ -8,6 +8,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ## [Unreleased]
 
+### Security
+- **SSH accepts keys only, once an administrator has one.** CoreX wrote
+  `PasswordAuthentication` into `99-corex.conf`, but sshd keeps the first value
+  it reads and Ubuntu's `50-cloud-init.conf` says yes, so password login stayed
+  on through every hardening run. `security apply` writes `00-corex-auth.conf`
+  instead, and only when a key exists.
+- **New inbound IPv6 from the internet is refused.** The server had a public
+  IPv6 address, and Docker publishes every port on IPv6 ahead of UFW, so DNS,
+  AdGuard and every published service depended on the router alone. One rule
+  before the host and Docker drops new connections from global IPv6 on the
+  LAN interface.
+- **Vaultwarden's admin panel is LAN-only** when the LAN allowlist exists. It
+  was published with the vault and guarded by a single token. The vault itself
+  stays reachable from anywhere.
+- **CrowdSec reads the SSH log.** With no `acquis.yaml` the image parses a
+  placeholder path, so it had never read a line.
+- Image pins: Immich v3.3.5, Uptime Kuma 2.5.9, Portainer 2.45.3, and the
+  Nextcloud whiteboard v2.1.2, which matches the whiteboard app Nextcloud had
+  already moved to 2.1.0.
+
 ### Added
 - **The machine restarts itself when its system disk stops answering.** On
   2026-10-27 the NVMe holding the root filesystem stopped completing requests.

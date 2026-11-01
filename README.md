@@ -2120,10 +2120,19 @@ sudo bash corex-manage.sh security apply   # repair what the check reports
 
 `doctor` runs the check as well. `apply` rewrites the fail2ban,
 unattended-upgrades and kernel settings, loads the watchdog driver, and
-enables UFW with the base rules if UFW is off. It never upgrades packages,
-never resets the firewall and never edits the SSH configuration, because a
-wrong port there locks you out of a machine with no screen attached. If root
-login is still allowed, it tells you what to change.
+enables UFW with the base rules if UFW is off. It never upgrades packages and
+never resets the firewall. It touches SSH in one way only: once an
+administrator has an authorized key, it turns password login off, and it does
+nothing when nobody has a key yet, because that would be a lockout. It never
+changes the port, because a wrong port locks you out of a machine with no
+screen attached. If root login is still allowed, it tells you what to change.
+
+`apply` also refuses new inbound IPv6 connections from the internet. A home
+router usually gives the server a public IPv6 address, and Docker publishes
+every port on IPv6 ahead of UFW, so without this the server relies on the
+router alone to keep DNS and every published service off the internet. Nothing
+on a home network needs it: devices reach the server over IPv4, and Tailscale
+uses its own interface.
 
 A hardware watchdog reboots the machine when the kernel hangs. systemd is set
 up to use one, but Ubuntu blocks the watchdog drivers from loading by default,

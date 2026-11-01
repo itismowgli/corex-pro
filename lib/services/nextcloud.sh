@@ -409,7 +409,7 @@ ${ffmpeg_mounts}
   whiteboard:
     # Pinned, not :release. Moving tags carry major upgrades in on a routine
     # A routine CoreX update. See CLAUDE.md gotcha #19.
-    image: ghcr.io/nextcloud-releases/whiteboard:v2.0.0
+    image: ghcr.io/nextcloud-releases/whiteboard:v2.1.2
     container_name: nextcloud-whiteboard
     restart: unless-stopped
     environment:
