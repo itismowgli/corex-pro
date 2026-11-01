@@ -50,10 +50,14 @@ _crowdsec_install_bouncer() {
         return 1
     fi
 
-    # Generate or regenerate the bouncer API key (--force = safe on re-run)
+    # Regenerate the bouncer API key. Delete then add, rather than --force:
+    # CrowdSec 1.8 removed that flag, so on the :latest image the add failed,
+    # no key was written, and the package's own config pointed the bouncer at
+    # 127.0.0.1:8080, which is Traefik, so it exited on a 404 at every start.
+    docker exec crowdsec cscli bouncers delete corex-firewall-bouncer >/dev/null 2>&1 || true
     local BOUNCER_KEY
     BOUNCER_KEY=$(docker exec crowdsec \
-        cscli bouncers add corex-firewall-bouncer --force -o raw 2>/dev/null) || {
+        cscli bouncers add corex-firewall-bouncer -o raw 2>/dev/null) || {
         log_warning "Failed to generate bouncer API key"
         return 1
     }

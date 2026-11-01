@@ -24,8 +24,10 @@ _io_guard_write_default_conf() {
 # Watch the system disk at all.
 IO_GUARD_ENABLED=true
 
-# reboot: restart the machine when the disk is stuck.
-# alert:  send a Telegram message and leave it alone.
+# reboot:      restart the machine when the disk is stuck.
+# power-cycle: power off and let the board's clock switch it back on, so the
+#              disk loses power. A hung NVMe can survive a reboot.
+# alert:       send a Telegram message and leave it alone.
 IO_GUARD_ACTION=reboot
 
 # Seconds requests may sit in flight with none completing before the disk
@@ -126,8 +128,8 @@ io_guard_set() {
             esac ;;
         action|IO_GUARD_ACTION)
             key=IO_GUARD_ACTION
-            [[ "$val" == "reboot" || "$val" == "alert" ]] \
-                || { log_warning "action is reboot or alert"; return 1; } ;;
+            [[ "$val" == "reboot" || "$val" == "power-cycle" || "$val" == "alert" ]] \
+                || { log_warning "action is reboot, power-cycle or alert"; return 1; } ;;
         stall|stall_sec|IO_GUARD_STALL_SEC)
             key=IO_GUARD_STALL_SEC
             [[ "$val" =~ ^[0-9]+$ ]] && (( val >= 30 && val <= 3600 )) \

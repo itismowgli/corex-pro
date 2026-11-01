@@ -21,6 +21,9 @@ teardown() { rm -rf "$WORK"; }
     grep -qx 'IO_GUARD_ACTION=reboot' "$IO_GUARD_CONF"
     io_guard_set action alert
     grep -qx 'IO_GUARD_ACTION=alert' "$IO_GUARD_CONF"
+    io_guard_set action power-cycle
+    grep -qx 'IO_GUARD_ACTION=power-cycle' "$IO_GUARD_CONF"
+    io_guard_set action alert
     grep -qx 'IO_GUARD_STALL_SEC=300' "$IO_GUARD_CONF"
     io_guard_set enabled off
     grep -qx 'IO_GUARD_ENABLED=false' "$IO_GUARD_CONF"

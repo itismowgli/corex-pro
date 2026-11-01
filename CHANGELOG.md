@@ -8,6 +8,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ## [Unreleased]
 
+### Fixed
+- **The disk guard can power cycle, because a reboot did not bring the
+  machine back.** On 2026-11-01 the guard caught a stuck NVMe and rebooted as
+  designed. The machine did not return: a reboot keeps the disk powered, its
+  controller stayed hung, and the firmware found no boot disk until someone cut
+  the power. `IO_GUARD_ACTION=power-cycle` arms the board's RTC wake alarm,
+  which needs no disk, and powers off, so the disk loses power and the clock
+  switches the machine back on 90 seconds later. Without a wake alarm it
+  reboots instead.
+- **The CrowdSec firewall bouncer starts.** CrowdSec 1.8 removed
+  `cscli bouncers add --force`, so on the `:latest` image no key was made and
+  the package's own config pointed the bouncer at 127.0.0.1:8080, which is
+  Traefik. It exited on a 404 at every start. The key is now deleted and
+  added.
+
 ### Security
 - **SSH accepts keys only, once an administrator has one.** CoreX wrote
   `PasswordAuthentication` into `99-corex.conf`, but sshd keeps the first value

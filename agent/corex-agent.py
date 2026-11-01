@@ -641,7 +641,7 @@ def handle_maintenance(req):
 # argv element, so nothing from the request reaches a shell.
 IO_GUARD_KEYS = {
     "enabled": lambda v: v in (True, False),
-    "action": lambda v: v in ("reboot", "alert"),
+    "action": lambda v: v in ("reboot", "power-cycle", "alert"),
     "stall_sec": lambda v: isinstance(v, int) and 30 <= v <= 3600,
     "boot_grace_sec": lambda v: isinstance(v, int) and 120 <= v <= 7200,
 }

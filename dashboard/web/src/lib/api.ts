@@ -575,7 +575,7 @@ export type IoGuard = {
   running: boolean
   status: {
     enabled: boolean
-    action: "reboot" | "alert"
+    action: "reboot" | "power-cycle" | "alert"
     stall_sec: number
     boot_grace_sec: number
     devices_setting: "auto" | string[]
@@ -583,13 +583,15 @@ export type IoGuard = {
     state: "ok" | "stalling" | "stuck" | "disabled"
     in_boot_grace: boolean
     memory_locked: boolean
+    /** The board's wake alarm can be set, so power-cycle can switch it back on. */
+    rtc_alarm?: boolean
   } | null
   events: { at: string; event: string; device?: string; in_flight?: number; stalled_sec?: number }[]
 }
 
 export type IoGuardSettings = Partial<{
   enabled: boolean
-  action: "reboot" | "alert"
+  action: "reboot" | "power-cycle" | "alert"
   stall_sec: number
   boot_grace_sec: number
 }>

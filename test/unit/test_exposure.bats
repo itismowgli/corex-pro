@@ -50,4 +50,5 @@ setup() {
 @test "crowdsec reads a real log, not the image's placeholder" {
     grep -q '_crowdsec_write_acquis$' "${REPO_ROOT}/lib/services/crowdsec.sh"
     grep -q '/var/log/auth.log' "${REPO_ROOT}/lib/services/crowdsec.sh"
+    refute grep -q 'bouncers add.*--force' "${REPO_ROOT}/lib/services/crowdsec.sh"
 }

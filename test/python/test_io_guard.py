@@ -49,6 +49,9 @@ class Conf(unittest.TestCase):
         self.assertEqual(g.parse_conf("IO_GUARD_STALL_SEC=5")["stall_sec"], 30)
         self.assertEqual(g.parse_conf("IO_GUARD_BOOT_GRACE_SEC=0")["boot_grace_sec"], 120)
 
+    def test_power_cycle_is_an_action(self):
+        self.assertEqual(g.parse_conf("IO_GUARD_ACTION=power-cycle")["action"], "power-cycle")
+
     def test_bad_values_fall_back(self):
         c = g.parse_conf("IO_GUARD_ACTION=format\nIO_GUARD_STALL_SEC=soon\n"
                          "IO_GUARD_DEVICES=../../etc\n")

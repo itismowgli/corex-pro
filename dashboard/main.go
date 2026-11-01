@@ -1337,8 +1337,8 @@ func ioGuardHandler(w http.ResponseWriter, r *http.Request) {
 		settings["enabled"] = *body.Enabled
 	}
 	if body.Action != nil {
-		if *body.Action != "reboot" && *body.Action != "alert" {
-			writeErr(w, http.StatusBadRequest, "action is reboot or alert")
+		if *body.Action != "reboot" && *body.Action != "power-cycle" && *body.Action != "alert" {
+			writeErr(w, http.StatusBadRequest, "action is reboot, power-cycle or alert")
 			return
 		}
 		settings["action"] = *body.Action

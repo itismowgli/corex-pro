@@ -33,6 +33,7 @@ const GRACE = [
   { value: "1200", label: "20 min" },
 ]
 const ACTION = [
+  { value: "power-cycle", label: "Power cycle" },
   { value: "reboot", label: "Restart" },
   { value: "alert", label: "Alert only" },
 ]
@@ -114,6 +115,14 @@ export function IoGuardCard({
                 : undefined
             }
           />
+          {s?.action === "power-cycle" && s.rtc_alarm === false && (
+            <Row
+              label="Wake alarm"
+              value="not available"
+              tone="warn"
+              hint="This board has no wake alarm the guard can set, so it will reboot instead of power cycling."
+            />
+          )}
           {s && !s.memory_locked && (
             <Row
               label="Memory lock"
@@ -181,8 +190,14 @@ export function IoGuardCard({
                   <Row
                     key={e.at + e.event}
                     label={when(e.at)}
-                    value={e.event === "reboot" ? "Restarted" : "Alerted"}
-                    tone={e.event === "reboot" ? "warn" : undefined}
+                    value={
+                      e.event === "reboot"
+                        ? "Restarted"
+                        : e.event === "power-cycle"
+                          ? "Power cycled"
+                          : "Alerted"
+                    }
+                    tone={e.event === "alert" ? undefined : "warn"}
                     hint={
                       e.device
                         ? `${e.device}: ${e.in_flight ?? "?"} requests waiting, ${e.stalled_sec ?? "?"}s with none completing`

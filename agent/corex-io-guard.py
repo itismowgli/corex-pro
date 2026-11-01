@@ -69,6 +69,9 @@ EVENT_LOGS = tuple(filter(None, [os.environ.get("IO_GUARD_EVENT_LOG")])) or (
 # without the ability to reboot anything.
 SYSRQ = os.environ.get("IO_GUARD_SYSRQ", "/proc/sysrq-trigger")
 SYS_BLOCK = os.environ.get("IO_GUARD_SYS_BLOCK", "/sys/block")
+RTC_WAKE = os.environ.get("IO_GUARD_RTC", "/sys/class/rtc/rtc0/wakealarm")
+# Seconds between powering off and the board's clock switching it back on.
+POWER_CYCLE_OFF_SEC = 90
 INTERVAL = 5
 
 DEFAULTS = {
@@ -79,6 +82,13 @@ DEFAULTS = {
     "IO_GUARD_DEVICES": "auto",
 }
 LIMITS = {"IO_GUARD_STALL_SEC": (30, 3600), "IO_GUARD_BOOT_GRACE_SEC": (120, 7200)}
+# power-cycle exists because reboot was not enough. On 2026-11-01 the guard
+# caught a stuck NVMe and rebooted exactly as designed, and the machine did not
+# come back: a reboot keeps the disk powered, its controller stayed hung, and
+# the firmware could not find a boot disk until someone cut the power. A
+# power-cycle sets the board's RTC alarm and powers off, so the disk loses
+# power and the clock switches the machine back on.
+ACTIONS = ("reboot", "power-cycle", "alert")
 DEVICE_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 
 
@@ -94,7 +104,7 @@ def parse_conf(text):
             raw[m.group(1)] = m.group(2).strip()
     cfg = {
         "enabled": raw["IO_GUARD_ENABLED"].lower() in ("true", "yes", "1", "on"),
-        "action": raw["IO_GUARD_ACTION"] if raw["IO_GUARD_ACTION"] in ("reboot", "alert") else "reboot",
+        "action": raw["IO_GUARD_ACTION"] if raw["IO_GUARD_ACTION"] in ACTIONS else "reboot",
     }
     for key, name in (("IO_GUARD_STALL_SEC", "stall_sec"), ("IO_GUARD_BOOT_GRACE_SEC", "boot_grace_sec")):
         lo, hi = LIMITS[key]
@@ -340,6 +350,34 @@ def reboot(sysrq_fd):
             time.sleep(pause)
 
 
+def power_cycle(sysrq_fd, rtc_fd):
+    """Arm the RTC alarm, then power off. Falls back to a reboot without one.
+
+    The alarm is a sysfs write, so it needs no disk. It is cleared first,
+    because the kernel refuses to arm an alarm that is already set.
+    """
+    armed = False
+    if rtc_fd is not None:
+        try:
+            for value in (b"0", ("+%d" % POWER_CYCLE_OFF_SEC).encode()):
+                os.lseek(rtc_fd, 0, os.SEEK_SET)
+                os.write(rtc_fd, value)
+            armed = True
+        except OSError as exc:
+            _say("RTC alarm failed: %s" % exc)
+    if not armed:
+        _say("no RTC alarm, rebooting instead of powering off")
+        reboot(sysrq_fd)
+        return
+    for key, pause in ((b"s", 5), (b"u", 3), (b"o", 0)):
+        try:
+            os.write(sysrq_fd, key)
+        except OSError as exc:
+            _say("sysrq %s failed: %s" % (key.decode(), exc))
+        if pause:
+            time.sleep(pause)
+
+
 # ── Main loop ────────────────────────────────────────────────────────────────
 
 
@@ -376,6 +414,10 @@ def main():
         locked = False
 
     sysrq_fd = os.open(SYSRQ, os.O_WRONLY)
+    try:
+        rtc_fd = os.open(RTC_WAKE, os.O_WRONLY)
+    except OSError:
+        rtc_fd = None
     tg = Telegram()
     host = socket.gethostname()
     state = {"cfg": read_conf()}
@@ -430,6 +472,7 @@ def main():
             "stall_sec": cfg["stall_sec"], "boot_grace_sec": cfg["boot_grace_sec"],
             "devices_setting": cfg["devices"], "devices": per, "state": verdict,
             "in_boot_grace": in_grace, "uptime_sec": int(up), "memory_locked": locked,
+            "rtc_alarm": rtc_fd is not None,
         })
 
         # A reboot that did not happen (sysrq refused, say) must not turn into
@@ -438,15 +481,23 @@ def main():
         if verdict == "stuck" and not in_grace and retry_ok:
             detail = "%s has had %d requests waiting for %d seconds with none completing" % (
                 worst_dev, per[worst_dev]["in_flight"], worst)
-            if cfg["action"] == "reboot":
-                _say("STUCK: %s, rebooting" % detail)
-                record({"event": "reboot", "device": worst_dev, "stalled_sec": int(worst),
+            if cfg["action"] in ("reboot", "power-cycle"):
+                cycle = cfg["action"] == "power-cycle"
+                _say("STUCK: %s, %s" % (detail, "power cycling" if cycle else "rebooting"))
+                record({"event": cfg["action"], "device": worst_dev, "stalled_sec": int(worst),
                         "in_flight": per[worst_dev]["in_flight"]})
-                tg.send("fail", "%s: system disk stopped, restarting" % host,
-                        "%s. Nothing that needs the disk can run, so the machine is "
-                        "rebooting itself. Expect it back in about three minutes." % detail)
+                tg.send("fail", "%s: system disk stopped, %s" % (
+                            host, "power cycling" if cycle else "restarting"),
+                        "%s. Nothing that needs the disk can run, so the machine is %s. "
+                        "Expect it back in about %s minutes." % (
+                            detail,
+                            "switching itself off and back on so the disk loses power" if cycle
+                            else "rebooting itself", "four" if cycle else "three"))
                 rebooted_at = time.monotonic()
-                reboot(sysrq_fd)
+                if cycle:
+                    power_cycle(sysrq_fd, rtc_fd)
+                else:
+                    reboot(sysrq_fd)
             elif worst_dev not in alerted:
                 alerted.add(worst_dev)
                 _say("STUCK: %s, alert only" % detail)
