@@ -63,8 +63,11 @@ CONF = os.environ.get("IO_GUARD_CONF", "/etc/corex/io-guard.conf")
 STATUS = os.environ.get("IO_GUARD_STATUS", "/run/corex/io-guard.json")
 # The event log lives on the data disk when there is one, beside the blackbox
 # log and for the same reason: the system disk is the one this is about.
-EVENT_LOGS = ("/mnt/corex-data/io-guard.log", "/var/lib/corex/io-guard.log")
-SYSRQ = "/proc/sysrq-trigger"
+EVENT_LOGS = tuple(filter(None, [os.environ.get("IO_GUARD_EVENT_LOG")])) or (
+    "/mnt/corex-data/io-guard.log", "/var/lib/corex/io-guard.log")
+# Overridable so a test instance can run the whole loop against fake counters
+# without the ability to reboot anything.
+SYSRQ = os.environ.get("IO_GUARD_SYSRQ", "/proc/sysrq-trigger")
 SYS_BLOCK = os.environ.get("IO_GUARD_SYS_BLOCK", "/sys/block")
 INTERVAL = 5
 
@@ -346,6 +349,7 @@ def uptime():
 
 
 def write_status(status):
+    os.makedirs(os.path.dirname(STATUS), exist_ok=True)
     tmp = STATUS + ".tmp"
     try:
         with open(tmp, "w", encoding="utf-8") as fh:
@@ -356,6 +360,9 @@ def write_status(status):
 
 
 def main():
+    # mlockall locks every mapping in full, so the default 8MB thread stack
+    # becomes 8MB of RAM per thread. Nothing here recurses deeply.
+    threading.stack_size(512 * 1024)
     try:
         os.set_blocking(1, False)
     except OSError:

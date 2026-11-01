@@ -76,6 +76,9 @@ RestartSec=5
 # The guard locks itself into memory so nothing it needs is ever read back
 # from the disk it is watching.
 LimitMEMLOCK=infinity
+# One malloc arena: each extra arena is a 64MB reservation that mlockall
+# would lock in full.
+Environment=MALLOC_ARENA_MAX=1
 OOMScoreAdjust=-900
 Nice=-5
 
