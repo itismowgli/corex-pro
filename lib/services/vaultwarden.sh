@@ -36,9 +36,33 @@ vaultwarden_firewall() {
     : # Traefik handles all HTTPS; no extra ports needed
 }
 
+# The admin panel manages every account on the server and is guarded by one
+# token. It is published with the rest of the vault, so without this the
+# internet could reach it. A second router on /admin carries the LAN allowlist:
+# home and Tailscale keep the panel, a request through the tunnel gets a 403,
+# and the vault itself stays reachable from anywhere.
+#
+# Written only when the allowlist middleware exists. A router naming a
+# middleware Traefik cannot find answers 404 for the whole hostname rather
+# than falling back (gotcha #44), which would take the vault down with it.
+_vaultwarden_admin_labels() {
+    local lan="${DOCKER_ROOT:-/mnt/corex-data/docker-configs}/traefik/dynamic/corex-lan.yml"
+    [[ -f "$lan" ]] || return 0
+    printf '%s\n' \
+        "      - \"traefik.http.routers.vw-admin.rule=Host(\`vault.${DOMAIN}\`) && PathPrefix(\`/admin\`)\"" \
+        "      - \"traefik.http.routers.vw-admin.entrypoints=websecure\"" \
+        "      - \"traefik.http.routers.vw-admin.tls.certresolver=myresolver\"" \
+        "      - \"traefik.http.routers.vw-admin.service=vw\"" \
+        "      - \"traefik.http.routers.vw-admin.priority=1000\"" \
+        "      - \"traefik.http.routers.vw-admin.middlewares=corex-lan@file\""
+}
+
 vaultwarden_deploy() {
     vaultwarden_dirs
     local dir="${DOCKER_ROOT}/vaultwarden"
+    local admin_labels
+    admin_labels="$(_vaultwarden_admin_labels)"
+    [[ -n "$admin_labels" ]] || log_warning "Vaultwarden's admin panel is reachable wherever the vault is. Restrict it with: corex manage lan-only add <any router>"
 
     cat > "${dir}/docker-compose.yml" << DCEOF
 services:
@@ -68,6 +92,7 @@ services:
       - "traefik.http.routers.vw.entrypoints=websecure"
       - "traefik.http.routers.vw.tls.certresolver=myresolver"
       - "traefik.http.services.vw.loadbalancer.server.port=80"
+${admin_labels}
 networks:
   proxy-net: { external: true }
 DCEOF

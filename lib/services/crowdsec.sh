@@ -86,6 +86,26 @@ BEOF
 
 # ── Functions ─────────────────────────────────────────────────────────────────
 
+# What CrowdSec reads. Without this file the image falls back to its own
+# placeholder, {"filename": "/does/not/exist"}, and parses nothing at all: a
+# live install ran that way with zero lines read and no alert ever possible.
+#
+# Only the SSH log. Traefik is not here on purpose: every request from the
+# internet reaches it through the Cloudflare tunnel, so its access log names
+# the cloudflared container for every visitor, CrowdSec whitelists private
+# addresses, and a ban on that address would take every public hostname down.
+_crowdsec_write_acquis() {
+    local conf="${DATA_ROOT}/crowdsec-config"
+    mkdir -p "$conf"
+    cat > "${conf}/acquis.yaml" << 'ACQEOF'
+# Written by CoreX.
+filenames:
+  - /var/log/auth.log
+labels:
+  type: syslog
+ACQEOF
+}
+
 crowdsec_dirs() {
     mkdir -p "${DOCKER_ROOT}/crowdsec"
     mkdir -p "${DATA_ROOT}/crowdsec-db" "${DATA_ROOT}/crowdsec-config"
@@ -100,6 +120,7 @@ crowdsec_deploy() {
     crowdsec_dirs
     local dir="${DOCKER_ROOT}/crowdsec"
 
+    _crowdsec_write_acquis
     cat > "${dir}/docker-compose.yml" << DCEOF
 services:
   crowdsec:
