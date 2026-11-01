@@ -8,6 +8,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ## [Unreleased]
 
+### Added
+- **The machine restarts itself when its system disk stops answering.** On
+  2026-10-27 the NVMe holding the root filesystem stopped completing requests.
+  The volume above it held 22 in flight while the disk reported none, every
+  process that touched it waited forever, and the load average passed 110 on
+  an idle box. The hardware watchdog never fired, because systemd pets it from
+  memory, and the journal recorded nothing, because it is on that disk. It
+  took a power button to recover. `corex-io-guard` is one process locked into
+  memory that reads only sysfs. When requests sit in flight with none
+  completing for two minutes, it tells Telegram and reboots through
+  `/proc/sysrq-trigger`. It never acts in the first ten minutes after boot.
+  The System tab has an Automatic restart card that shows each watched disk,
+  every time it acted, and its settings, which change after a step-up
+  confirmation. `corex manage io-guard` does the same from SSH, and
+  `corex manage self-heal` installs it.
+
 ### Fixed
 - **AdGuard no longer depends on one resolver that blocks nothing.** Its
   default upstream, Quad9's dns10 address, does no malware blocking and no

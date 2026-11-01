@@ -169,6 +169,7 @@ corex-pro/
 │   ├── kuma.sh               # Seeds Kuma HTTP checks from SERVICE_MONITORS
 │   ├── agent.sh              # Privileged action agent + Telegram bot (#30)
 │   ├── selfheal.sh           # Boot self-repair: dpkg + unclean shutdown (#16)
+│   ├── io_guard.sh           # Reboot when the system disk stops answering (#87)
 │   └── services/             # One file per service (auto-discovered)
 │       ├── traefik.sh
 │       ├── adguard.sh
@@ -182,6 +183,7 @@ corex-pro/
 │   ├── corex-usersctl.py     # Dashboard accounts, behind corex manage dashboard-user
 │   ├── corex_users.py        # Dashboard user store: hashing, reset mail, access log
 │   ├── corex_metrics.py      # Host vitals, disks, series, Kuma states, as data
+│   ├── corex-io-guard.py     # Memory-locked stuck-disk watcher, reboots via sysrq
 │   └── corex_common.py       # Shared helpers, installed to /usr/local/lib/corex
 └── test/
     ├── Dockerfile.test       # Ubuntu 24.04 test container
@@ -207,6 +209,9 @@ corex-pro/
 | `/etc/corex/maintenance.conf` | Maintenance schedule and temperature limit (0640) |
 | `/etc/corex/authelia.conf` | Which routers sit behind the shared login (0644) |
 | `/etc/corex/power.conf` | CPU clock ceiling and energy preference (0644) |
+| `/etc/corex/io-guard.conf` | Stuck-disk guard: enabled, action, limits (0644) |
+| `/run/corex/io-guard.json` | Guard status, rewritten every 5s (memory) |
+| `/mnt/corex-data/io-guard.log` | Every time the guard started, alerted or rebooted |
 | `${DOCKER_ROOT}/authelia/.secrets` | Authelia JWT, session and storage keys (0600) |
 | `${DOCKER_ROOT}/authelia/.admin-password` | Portal password, stable across re-runs (0600) |
 | `/var/lib/corex/maintenance.json` | What each scheduled task last did (0644) |
@@ -3470,6 +3475,56 @@ The general rule: every recovery mechanism on the machine shares a fate with
 the machine. The only thing that recovers a frozen platform is outside it, a
 smart plug that power-cycles on lost ping, together with "restore on AC power
 loss" in the BIOS.
+
+### 87. A disk that stops answering leaves PID 1 alive, so nothing on the box recovers
+
+On 2026-10-27 the NVMe holding `/` stopped completing requests. Read from
+`/sys/block`, which is kernel memory and still answered:
+
+| Device | In flight | Completions over 5s |
+|---|---|---|
+| `dm-0` (root volume) | 22 | 0 |
+| `dm-1` (database volume) | 5 | 0 |
+| `nvme0n1` | **0** | 0 |
+
+The requests were lost between the volume and the disk, so the disk itself
+looked idle. Every process that touched `/` then sat in D state: `sudo`, `ps`,
+`docker`, an SSH login after authentication. Load passed 110 with the CPU idle.
+DNS and Traefik still answered from memory, which is what made it read as
+"some things work".
+
+Each existing safety net missed it for its own reason. The hardware watchdog
+(gotcha #84) is petted by systemd from memory, so PID 1 kept saying alive.
+`hung_task_panic` is off on purpose. The journal is on the disk that stopped.
+And `timeout` cannot kill a process in D state, so every diagnostic run over
+SSH hung in turn and added to the load.
+
+`agent/corex-io-guard.py` is the answer and its constraints are the lesson:
+
+- **A daemon, not a timer.** A timer starts a process per check, and starting
+  a process reads the disk.
+- **Locked in memory**, `mlockall` with `LimitMEMLOCK=infinity`, and every
+  module imported at start, including `encodings.idna`, which urllib loads
+  lazily on the first hostname. The TLS context for Telegram is built at start
+  too, because building it reads the CA bundle.
+- **stdout non-blocking.** It is a pipe into journald, journald hangs with the
+  disk, and a full pipe would freeze the guard exactly when it is needed.
+- **Config is reread in its own thread**, because the config file is on the
+  disk being watched.
+- **Watch the volume, not just the disk.** Stuck means in flight above zero
+  and completions frozen. The disk alone showed zero in flight.
+- **Reboot through `/proc/sysrq-trigger`**, opened at start: `s`, `u`, `b`.
+  `systemctl reboot` needs the disk.
+
+To diagnose a hang like this without root, which is all that will work:
+
+```bash
+cat /sys/block/dm-0/inflight /sys/block/nvme0n1/inflight
+awk '{print $1, $5}' /sys/block/dm-0/stat; sleep 5; awk '{print $1, $5}' /sys/block/dm-0/stat
+head -1 /proc/pressure/io
+```
+
+Do not run `ps`, `sudo` or `docker` against it. Each one joins the queue.
 
 ---
 

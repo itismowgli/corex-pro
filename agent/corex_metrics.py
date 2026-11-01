@@ -863,6 +863,44 @@ def wake_on_lan():
 
 # ── Assembly ────────────────────────────────────────────────────────────────
 
+IO_GUARD_STATUS = "/run/corex/io-guard.json"
+IO_GUARD_LOGS = ("/mnt/corex-data/io-guard.log", "/var/lib/corex/io-guard.log")
+
+
+def io_guard(status_path=None, logs=None):
+    """The disk guard's live state and its last few events.
+
+    The guard rewrites its status every five seconds, so a file older than a
+    minute means it is not running, which is reported as such rather than as
+    whatever it last said.
+    """
+    out = {"installed": False, "running": False, "status": None, "events": []}
+    path = status_path or IO_GUARD_STATUS
+    try:
+        with open(path, encoding="utf-8") as fh:
+            out["status"] = json.load(fh)
+        out["installed"] = True
+        out["running"] = time.time() - os.path.getmtime(path) < 60
+    except (OSError, ValueError):
+        out["installed"] = os.path.exists("/etc/systemd/system/corex-io-guard.service")
+    for log in (logs or IO_GUARD_LOGS):
+        try:
+            with open(log, encoding="utf-8", errors="replace") as fh:
+                lines = fh.readlines()[-20:]
+        except OSError:
+            continue
+        for line in reversed(lines):
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(ev, dict):
+                out["events"].append(ev)
+        break
+    out["events"] = out["events"][:8]
+    return out
+
+
 def collect(want_sizes=True):
     temp, temp_src = cpu_temp()
     mem = meminfo() or {}
@@ -916,6 +954,7 @@ def collect(want_sizes=True):
         "dpkg": dpkg_clean(),
         "wol": wake_on_lan(),
         "maintenance": maintenance(),
+        "io_guard": io_guard(),
         # Behind want_sizes for the same reason the `du` is: the vitals stream
         # asks for metrics every five seconds and neither of these changes on
         # that timescale. The cache is a file read; what is being avoided is

@@ -401,6 +401,8 @@ export type Metrics = {
   // client can map over it without a guard (gotcha #37).
   wol: WakeOnLan[]
   maintenance: Maintenance | null
+  // Absent on the fast vitals stream and on an agent older than the guard.
+  io_guard?: IoGuard | null
   // null on the fast vitals stream, which does not carry it.
   updates: Updates | null
   os_updates: OsUpdates | null
@@ -566,6 +568,32 @@ export type Overview = {
 
 export type PowerMode = "reboot" | "shutdown"
 
+/** The guard that reboots the machine when its system disk stops answering. */
+export type IoGuard = {
+  installed: boolean
+  /** The status file is rewritten every five seconds; older means stopped. */
+  running: boolean
+  status: {
+    enabled: boolean
+    action: "reboot" | "alert"
+    stall_sec: number
+    boot_grace_sec: number
+    devices_setting: "auto" | string[]
+    devices: Record<string, { in_flight: number | null; stalled_sec: number; present: boolean }>
+    state: "ok" | "stalling" | "stuck" | "disabled"
+    in_boot_grace: boolean
+    memory_locked: boolean
+  } | null
+  events: { at: string; event: string; device?: string; in_flight?: number; stalled_sec?: number }[]
+}
+
+export type IoGuardSettings = Partial<{
+  enabled: boolean
+  action: "reboot" | "alert"
+  stall_sec: number
+  boot_grace_sec: number
+}>
+
 export const api = {
   state: () => req<State>("/api/state"),
   services: () => req<Service[]>("/api/services"),
@@ -586,6 +614,13 @@ export const api = {
   // Behind a step-up confirmation on the server, so the first call of a
   // session throws ElevationRequired and is retried after a factor.
   power: (mode: PowerMode) => req<Job>(`/api/power/${mode}`, { method: "POST" }),
+  // Behind the same step-up as power: it decides when the machine reboots.
+  ioGuard: (settings: IoGuardSettings) =>
+    req<{ ok: boolean; output: string }>("/api/io-guard", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(settings),
+    }),
   // os-upgrade is the one behind a step-up, so this can throw
   // ElevationRequired for that task alone.
   maintenance: (task: MaintenanceTaskName) =>

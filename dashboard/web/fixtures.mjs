@@ -136,6 +136,26 @@ export const METRICS = {
     { interface: "enp2s0", supported: true, enabled: false, modes: "d" },
     { interface: "wlp3s0", supported: false, enabled: false, modes: "d" },
   ],
+  // Stalling on purpose, with a past restart in the log: the two states the
+  // card exists to show. The volume holds requests while the disk below it
+  // reports none, which is the exact shape of the 2026-10-27 hang.
+  io_guard: {
+    installed: true,
+    running: true,
+    status: {
+      enabled: true, action: "reboot", stall_sec: 120, boot_grace_sec: 600,
+      devices_setting: "auto",
+      devices: {
+        "dm-0": { in_flight: 22, stalled_sec: 45, present: true },
+        nvme0n1: { in_flight: 0, stalled_sec: 0, present: true },
+      },
+      state: "stalling", in_boot_grace: false, memory_locked: true,
+    },
+    events: [
+      { at: "2026-10-27T22:52:51+0530", event: "reboot", device: "dm-0", in_flight: 22, stalled_sec: 120 },
+      { at: "2026-10-27T15:48:10+0530", event: "start" },
+    ],
+  },
   // One of each outcome on purpose: a task that has never run must not draw a
   // tick, a failure has to be legible, and a task held back for temperature
   // is neither of those.

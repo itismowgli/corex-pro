@@ -634,6 +634,44 @@ def handle_maintenance(req):
             "message": "%s started" % task}
 
 
+# ── I/O guard settings ──────────────────────────────────────────────────────
+
+# The dashboard's settings for the guard that reboots on a stuck system disk.
+# Each value is checked here and again by corex-manage, and passed as its own
+# argv element, so nothing from the request reaches a shell.
+IO_GUARD_KEYS = {
+    "enabled": lambda v: v in (True, False),
+    "action": lambda v: v in ("reboot", "alert"),
+    "stall_sec": lambda v: isinstance(v, int) and 30 <= v <= 3600,
+    "boot_grace_sec": lambda v: isinstance(v, int) and 120 <= v <= 7200,
+}
+IO_GUARD_ARG = {"enabled": "enabled", "action": "action",
+                "stall_sec": "stall", "boot_grace_sec": "grace"}
+
+
+def handle_io_guard_set(req):
+    changes = req.get("settings")
+    if not isinstance(changes, dict) or not changes:
+        return {"ok": False, "error": "no settings given"}
+    for key, val in changes.items():
+        check = IO_GUARD_KEYS.get(key)
+        if check is None or isinstance(val, bool) and key != "enabled" or not check(val):
+            return {"ok": False, "error": "invalid value for %s" % key}
+    out = []
+    for key, val in changes.items():
+        arg = ("true" if val else "false") if key == "enabled" else str(val)
+        proc = subprocess.run(["bash", MANAGE, "io-guard", "set", IO_GUARD_ARG[key], arg],
+                              capture_output=True, text=True, timeout=30, check=False)
+        out.append(cc.strip_ansi(proc.stdout + proc.stderr).strip())
+        if proc.returncode != 0:
+            return {"ok": False, "error": out[-1] or "could not change %s" % key}
+    actor = str(req.get("actor", "") or "unknown")
+    say("io-guard settings changed by %s: %s" % (actor, json.dumps(changes, sort_keys=True)))
+    cu.auth_log_append("io-guard-settings", username=actor, ip=str(req.get("ip", "")),
+                       detail=json.dumps(changes, sort_keys=True))
+    return {"ok": True, "output": "\n".join(out)}
+
+
 # ── Power ───────────────────────────────────────────────────────────────────
 
 
@@ -790,6 +828,9 @@ def handle(req):
 
     if action == "maintenance":
         return handle_maintenance(req)
+
+    if action == "io-guard-set":
+        return handle_io_guard_set(req)
 
     if action not in ACTIONS:
         return {"ok": False, "error": "unknown action"}

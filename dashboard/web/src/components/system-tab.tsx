@@ -1,6 +1,7 @@
+import { IoGuardCard } from "@/components/io-guard-card"
 import { PowerCard } from "@/components/power-card"
 import { Empty, Row, Rows, Section } from "@/components/ui/section"
-import type { Metrics, Port, PowerMode, State } from "@/lib/api"
+import type { IoGuardSettings, Metrics, Port, PowerMode, State } from "@/lib/api"
 
 /**
  * What this machine is.
@@ -23,6 +24,7 @@ const COMMANDS: [string, string][] = [
   ["Update CoreX and every service", "corex manage update-everything"],
   ["LAN fast path", "corex manage lan-setup"],
   ["Wake-on-LAN state", "corex manage power"],
+  ["Automatic restart on a stuck disk", "corex manage io-guard"],
 ]
 
 export function SystemTab({
@@ -31,12 +33,16 @@ export function SystemTab({
   metrics,
   powerBusy,
   onPower,
+  ioGuardBusy,
+  onIoGuard,
 }: {
   state: State | null
   ports: Port[]
   metrics: Metrics | null
   powerBusy: PowerMode | null
   onPower: (mode: PowerMode) => void
+  ioGuardBusy: boolean
+  onIoGuard: (settings: IoGuardSettings) => void
 }) {
   const port = state?.ssh_port || "22"
   const v = (s: string | undefined) => s || "unknown"
@@ -84,7 +90,10 @@ export function SystemTab({
         </pre>
       </Section>
 
-      <PowerCard metrics={metrics} busy={powerBusy} onPower={onPower} />
+      <div className="grid gap-6 lg:grid-cols-2">
+        <PowerCard metrics={metrics} busy={powerBusy} onPower={onPower} />
+        <IoGuardCard data={metrics?.io_guard ?? null} busy={ioGuardBusy} onSave={onIoGuard} />
+      </div>
 
       <Section title="Direct ports">
         <p className="text-muted-foreground text-small">

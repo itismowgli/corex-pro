@@ -44,6 +44,7 @@ import {
   type MaintenanceTaskName,
   type Overview,
   type Me,
+  type IoGuardSettings,
   type PowerMode,
   type RunAction,
   type Service,
@@ -224,6 +225,7 @@ function Dashboard({
   const [logs, setLogs] = React.useState<{ container: string; label: string } | null>(null)
   const [drill, setDrill] = React.useState<Consumer | null>(null)
   const [powerBusy, setPowerBusy] = React.useState<PowerMode | null>(null)
+  const [ioGuardBusy, setIoGuardBusy] = React.useState(false)
   // A step-up confirmation, shared by anything the server guards. guard()
   // runs the action, and if the server asks for a factor it collects one and
   // runs the same action again.
@@ -354,6 +356,21 @@ function Dashboard({
       setPowerBusy(null)
       fail(mode, e)
     })
+  }
+
+  const saveIoGuard = (settings: IoGuardSettings) => {
+    void guard("Changing automatic restart", async () => {
+      setIoGuardBusy(true)
+      try {
+        await api.ioGuard(settings)
+        // The guard is told to reread its config and writes its status on the
+        // next five second cycle, so the refresh waits that long.
+        await new Promise((r) => window.setTimeout(r, 6_000))
+        await overview.refresh()
+      } finally {
+        setIoGuardBusy(false)
+      }
+    }).catch((e) => fail("automatic restart", e))
   }
 
   // Box-wide commands: health, watchdog, network-check, route-list, doctor,
@@ -782,6 +799,8 @@ function Dashboard({
               metrics={overview.data?.metrics ?? null}
               powerBusy={powerBusy}
               onPower={runPower}
+              ioGuardBusy={ioGuardBusy}
+              onIoGuard={saveIoGuard}
             />
           )}
           {tab === "account" && <AccountTab me={me} refresh={refreshMe} />}

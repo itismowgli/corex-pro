@@ -113,6 +113,9 @@ const ONCE = {
 
 const EXPECT = {
   system: "enp2s0",
+  // The disk guard reads its fixture: a live stall, and the restart it did.
+  systemIoGuard: "Disk stalled for 45s",
+  systemIoGuardEvent: "22 requests waiting, 120s with none completing",
   maintenance: "Never run",
   // The any-hour schedule, which must not render as a clock time.
   maintenanceAnyHour: "whenever it falls due",

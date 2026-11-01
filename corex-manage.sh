@@ -3056,6 +3056,21 @@ cmd_power() {
     esac
 }
 
+# Reboot when the system disk stops answering. See lib/io_guard.sh.
+cmd_io_guard() {
+    source "${SCRIPT_DIR}/lib/io_guard.sh"
+    local sub="${1:-status}"
+    shift || true
+    case "$sub" in
+        status|"") io_guard_status ;;
+        setup|install) check_root; io_guard_install ;;
+        enable|on)  check_root; io_guard_set enabled true ;;
+        disable|off) check_root; io_guard_set enabled false ;;
+        set)        check_root; io_guard_set "${1:-}" "${*:2}" ;;
+        *) log_error "Usage: corex manage io-guard [status|setup|enable|disable|set <enabled|action|stall|grace|devices> <value>]" ;;
+    esac
+}
+
 cmd_dashboard_user() {
     local sub="${1:-list}"
     shift || true
@@ -3579,6 +3594,13 @@ Commands:
                                         every boot. Worth 10C on hardware that
                                         cannot sustain its own boost clock
                         power cpu off   remove the ceiling
+  io-guard [sub]      Reboot when the system disk stops answering
+                        io-guard            state of each watched disk
+                        io-guard setup      install or update the guard
+                        io-guard enable     or disable
+                        io-guard set action reboot|alert
+                        io-guard set stall  30-3600 seconds stuck before acting
+                        io-guard set grace  120-7200 seconds after boot to wait
   kuma-seed           Create the Uptime Kuma HTTP checks each installed module
                       declares, adopting any monitor of the same name
   watchdog [sub]      Resource alerting: temp, load, RAM, disk, container health
@@ -3679,6 +3701,7 @@ main() {
         kuma-seed)    kuma_seed_http_monitors ;;
         agent)        cmd_agent "$@" ;;
         power)        cmd_power "$@" ;;
+        io-guard)     cmd_io_guard "$@" ;;
         maintenance)  cmd_maintenance "$@" ;;
         lan-only)     cmd_lan_only "$@" ;;
         dashboard-user) cmd_dashboard_user "$@" ;;

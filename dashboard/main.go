@@ -269,6 +269,9 @@ func main() {
 	// The one route on this mux that needs more than a session. See
 	// stepup.go for what requireElevated asks for and why only this needs it.
 	api.Handle("/api/power/", requireElevated(http.HandlerFunc(powerHandler)))
+	// The disk guard decides when the machine reboots itself, so changing it
+	// asks for the same proof a reboot does.
+	api.Handle("/api/io-guard", requireElevated(http.HandlerFunc(ioGuardHandler)))
 
 	mux := http.NewServeMux()
 	// Signing in, and the account pages, which have to be reachable before
@@ -1304,6 +1307,77 @@ func powerHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	record(r, "power-"+mode, actor, "from the dashboard")
 	writeJSON(w, http.StatusOK, jobFromAgent(res, mode))
+}
+
+// ioGuardHandler serves POST /api/io-guard, changing the settings of the guard
+// that reboots the machine when its system disk stops answering.
+//
+// Only the fields present are changed. The agent checks every value again and
+// passes each to corex-manage as its own argument; the ranges are here as well
+// so a bad request is refused before it reaches the privileged side at all.
+func ioGuardHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	var body struct {
+		Enabled      *bool   `json:"enabled"`
+		Action       *string `json:"action"`
+		StallSec     *int    `json:"stall_sec"`
+		BootGraceSec *int    `json:"boot_grace_sec"`
+	}
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4*1024))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "malformed settings")
+		return
+	}
+	settings := map[string]interface{}{}
+	if body.Enabled != nil {
+		settings["enabled"] = *body.Enabled
+	}
+	if body.Action != nil {
+		if *body.Action != "reboot" && *body.Action != "alert" {
+			writeErr(w, http.StatusBadRequest, "action is reboot or alert")
+			return
+		}
+		settings["action"] = *body.Action
+	}
+	if body.StallSec != nil {
+		if *body.StallSec < 30 || *body.StallSec > 3600 {
+			writeErr(w, http.StatusBadRequest, "stall is 30 to 3600 seconds")
+			return
+		}
+		settings["stall_sec"] = *body.StallSec
+	}
+	if body.BootGraceSec != nil {
+		if *body.BootGraceSec < 120 || *body.BootGraceSec > 7200 {
+			writeErr(w, http.StatusBadRequest, "boot grace is 120 to 7200 seconds")
+			return
+		}
+		settings["boot_grace_sec"] = *body.BootGraceSec
+	}
+	if len(settings) == 0 {
+		writeErr(w, http.StatusBadRequest, "nothing to change")
+		return
+	}
+	actor := "the dashboard"
+	if _, sess := currentSession(r); sess != nil && sess.User != "" {
+		actor = sess.User
+	}
+	res, err := agentCall(map[string]interface{}{
+		"action": "io-guard-set", "settings": settings, "actor": actor, "ip": clientIP(r),
+	}, 60*time.Second)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	if !agentOK(res) {
+		writeErr(w, http.StatusConflict, agentString(res, "error"))
+		return
+	}
+	record(r, "io-guard-settings", actor, "from the dashboard")
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "output": agentString(res, "output")})
 }
 
 // jobHandler serves GET /api/job/<id>, which the client polls while an action

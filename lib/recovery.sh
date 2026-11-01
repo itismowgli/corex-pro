@@ -444,6 +444,10 @@ RCEOF
     _recovery_install_watchdog
     _recovery_install_panic_reboot
     _recovery_install_idle_guard
+    # A disk that stops answering leaves PID 1 alive, so the hardware
+    # watchdog above never fires. This covers that case (gotcha #87).
+    source "$(dirname "${BASH_SOURCE[0]}")/io_guard.sh"
+    io_guard_install || log_warning "I/O guard not installed"
     _recovery_write_healer
     _recovery_write_units
     log_success "Self-recovery active (heals services, reboots only as a last resort)"

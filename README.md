@@ -1908,6 +1908,39 @@ guardian and the maintenance budget work at all.
 
 Remove it with `power cpu off`.
 
+### Automatic restart when the system disk stops
+
+A system disk can stop answering without the machine crashing. Requests to it
+wait forever, so everything that touches it waits too: logins, `sudo`, Docker,
+every service. The kernel is still running, so the hardware watchdog keeps
+getting its signal and never resets anything, and nothing reaches the log
+because the log is on that disk. Before this existed, the only way out was the
+power button.
+
+The I/O guard watches the disk that holds the system. When requests have been
+in flight for two minutes with none completing, it sends a Telegram message
+and reboots through the kernel, which needs no disk. It runs as one process
+locked into memory, so it is never itself waiting on the disk it is watching.
+It does nothing in the first ten minutes after boot, which is what stops one
+bad disk from becoming a reboot loop.
+
+The Automatic restart card on the System tab shows what it is watching and
+every time it acted, and changes its settings after you confirm who you are.
+From the command line:
+
+```bash
+sudo corex manage io-guard                    # state of each watched disk, recent events
+sudo corex manage io-guard setup              # install or update it
+sudo corex manage io-guard set action alert   # message only, never reboot
+sudo corex manage io-guard set stall 300      # stuck for 5 minutes before acting
+sudo corex manage io-guard disable            # or enable
+```
+
+Settings are in `/etc/corex/io-guard.conf`. Events are logged to
+`/mnt/corex-data/io-guard.log`, on the data disk rather than the system disk
+for the same reason the blackbox log is. A restart cuts off whatever was
+being written, which is no worse than the power button and much sooner.
+
 ## Keeping a panel off the internet
 
 Some things do not belong on a public hostname. Portainer, Grafana and AdGuard
