@@ -1853,6 +1853,7 @@ to confirm who you are first.
 sudo bash corex-manage.sh power             # what is armed, and the clock ceiling
 sudo bash corex-manage.sh power wol on      # arm the NIC, now and at every boot
 sudo bash corex-manage.sh power cpu 3000    # cap the clock at 3000 MHz
+sudo bash corex-manage.sh power restart     # restart the way this machine is set to
 ```
 
 ### Switching off is easy, switching on is the honest part
@@ -1907,6 +1908,33 @@ useful above it, so getting the idle number below that is what makes the
 guardian and the maintenance budget work at all.
 
 Remove it with `power cpu off`.
+
+### A restart for a machine that stays dark after a reboot
+
+A reboot is a warm reset: the power stays on and the kernel hands over to the
+firmware. Some small boards do not come back from that. One was rebooted
+after a clean shutdown, showed nothing on its screen, and stayed that way
+through two more restarts for seven hours. Switching it off and on at the
+button brought it back at once.
+
+`power restart-mode power-cycle` makes a restart do what the button did. The
+machine shuts down cleanly and powers off with its clock alarm set five
+minutes ahead, and the alarm switches it on with every device starting cold.
+Measured on that machine: off at 19:00:54, alarm at 19:04:53, answering at
+19:05:26.
+
+```bash
+sudo bash corex-manage.sh power restart-mode power-cycle   # restart by power-off and alarm
+sudo bash corex-manage.sh power restart-mode reboot        # back to an ordinary reboot
+sudo bash corex-manage.sh power restart                    # restart now
+```
+
+The dashboard's Reboot button uses the same setting. It is off by default,
+because whether a board wakes from its clock alarm depends on the board and
+its BIOS. Prove it once while you are next to the machine: set the mode, run
+`power restart`, and watch it come back. The command refuses the mode on a
+machine with no clock alarm, and falls back to an ordinary reboot if the
+alarm cannot be set, so it never powers off without a way back on.
 
 ### Automatic restart when the system disk stops
 

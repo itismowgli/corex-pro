@@ -9,6 +9,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 ## [Unreleased]
 
 ### Added
+- **A restart that powers off and wakes on the clock alarm.** A reboot after
+  a clean shutdown left one machine with a blank screen for seven hours;
+  switching it off and on brought it straight back. `corex manage power
+  restart-mode power-cycle` makes a restart do the same thing: a clean
+  power-off with the clock alarm five minutes ahead. `corex manage power
+  restart` and the dashboard's Reboot button both follow the setting. It is
+  off by default, is refused on a machine with no clock alarm, and falls back
+  to an ordinary reboot if the alarm cannot be set.
 - **An alert from outside the machine when it stops.** Everything that
   watched this server ran on this server, so a machine that was down could
   not say so, and on 2026-11-07 and 2026-11-09 it stayed down for 2.4 and 3.6

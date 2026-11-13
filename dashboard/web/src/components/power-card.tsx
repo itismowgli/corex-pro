@@ -142,7 +142,8 @@ export function PowerCard({
           ) : (
             <div className="flex flex-col gap-3 text-body">
               <p>
-                Every service stops and starts again. It should be answering in a couple of minutes.
+                Every service stops and starts again. It should be answering in a couple of minutes, or about
+                six on a machine set to restart by switching off and waking on its clock.
               </p>
               <p className="text-muted-foreground">
                 A reboot on this box also runs the boot self-repair, which is what clears a dpkg

@@ -23,7 +23,10 @@ set -u
 
 POWER_UNIT="/etc/systemd/system/corex-wol.service"
 POWER_CPU_UNIT="/etc/systemd/system/corex-cpu.service"
-POWER_CONF="/etc/corex/power.conf"
+POWER_CONF="${POWER_CONF:-/etc/corex/power.conf}"
+# The clock alarm a restart by power-off sets, and how far ahead it sets it.
+POWER_RTC_ALARM="${POWER_RTC_ALARM:-/sys/class/rtc/rtc0/wakealarm}"
+POWER_RESTART_WAKE_SEC="${POWER_RESTART_WAKE_SEC:-300}"
 
 # _power_ifaces prints the physical interfaces, skipping the ones Docker and
 # the tunnel create. A magic packet arrives on a real NIC or not at all.
@@ -159,14 +162,14 @@ power_wol_disable() {
 # it: an empty POWER_CPU_MAX_MHZ leaves the CPU exactly as the kernel set it.
 
 _power_cpu_read() {
-    POWER_CPU_MAX_MHZ=""; POWER_CPU_EPP=""
+    POWER_CPU_MAX_MHZ=""; POWER_CPU_EPP=""; POWER_RESTART_MODE=""
     [[ -r "$POWER_CONF" ]] || return 0
     # shellcheck source=/dev/null
     . "$POWER_CONF" 2>/dev/null || true
 }
 
 _power_cpu_write_conf() {
-    mkdir -p /etc/corex
+    mkdir -p "$(dirname "$POWER_CONF")"
     cat > "$POWER_CONF" << PCEOF
 # CoreX CPU clock settings, applied at boot by corex-cpu.service.
 #
@@ -182,6 +185,11 @@ _power_cpu_write_conf() {
 #                    "performance" even under the powersave governor.
 POWER_CPU_MAX_MHZ="${POWER_CPU_MAX_MHZ:-}"
 POWER_CPU_EPP="${POWER_CPU_EPP:-}"
+#
+# POWER_RESTART_MODE how "corex manage power restart" and the dashboard
+#                    restart the machine: reboot, or power-cycle, which
+#                    switches off and lets the clock alarm switch it on.
+POWER_RESTART_MODE="${POWER_RESTART_MODE:-}"
 PCEOF
     chmod 644 "$POWER_CONF"
 }
@@ -254,6 +262,9 @@ power_cpu_set() {
         log_warning "This kernel exposes no cpufreq controls, so there is nothing to set"
         return 1
     fi
+    # Read first: the file holds more than these two, and writing it from
+    # only what this function knows would drop the restart mode.
+    _power_cpu_read
     POWER_CPU_MAX_MHZ="$mhz"
     POWER_CPU_EPP="$epp"
     _power_cpu_write_conf
@@ -271,6 +282,7 @@ power_cpu_set() {
 }
 
 power_cpu_reset() {
+    _power_cpu_read
     POWER_CPU_MAX_MHZ=""; POWER_CPU_EPP=""
     _power_cpu_write_conf
     systemctl disable --now corex-cpu.service >/dev/null 2>&1 || true
@@ -316,6 +328,86 @@ _power_cpu_show() {
     fi
 }
 
+# ── Restart ────────────────────────────────────────────────────────────────
+#
+# A restart is a warm reset: the kernel hands over to the firmware with the
+# power still on. Some boards do not come back from that. On 2026-11-13 this
+# class of machine was restarted with "reboot" after a clean shutdown, showed
+# nothing on its screen, and stayed that way through two more restarts for
+# seven hours. Switching it off and on brought it back at once.
+#
+# So a restart can be done the way that worked: a clean power-off with the
+# clock alarm set a few minutes ahead, which switches the machine on again
+# with every device starting cold. Measured the same evening: off at
+# 19:00:54, alarm at 19:04:53, answering at 19:05:26.
+#
+# Off by default, for the reason the clock ceiling is: whether a board wakes
+# from its clock alarm is a property of the board and its BIOS, and a restart
+# that powers off and never wakes is worse than the fault it avoids. Prove it
+# once while standing next to the machine, then set it.
+
+_power_can_wake() {
+    command -v rtcwake >/dev/null 2>&1 && [[ -w "$POWER_RTC_ALARM" ]]
+}
+
+power_restart_mode() {
+    _power_cpu_read
+    case "${POWER_RESTART_MODE:-}" in
+        power-cycle) echo "power-cycle" ;;
+        *)           echo "reboot" ;;
+    esac
+}
+
+power_restart_mode_set() {
+    local mode="${1:-}"
+    case "$mode" in
+        reboot|power-cycle) ;;
+        *) log_warning "The restart mode is reboot or power-cycle"; return 1 ;;
+    esac
+    if [[ "$mode" == "power-cycle" ]] && ! _power_can_wake; then
+        log_warning "No clock alarm to wake this machine (rtcwake and ${POWER_RTC_ALARM}), so it would switch off and stay off"
+        return 1
+    fi
+    _power_cpu_read
+    POWER_RESTART_MODE="$mode"
+    _power_cpu_write_conf
+    if [[ "$mode" == "power-cycle" ]]; then
+        log_success "A restart now switches the machine off and the clock switches it on $(( POWER_RESTART_WAKE_SEC / 60 )) minutes later"
+    else
+        log_success "A restart is an ordinary reboot"
+    fi
+}
+
+# power_restart restarts the machine the way power.conf says to. The alarm is
+# set well ahead because the shutdown has to finish first: stopping the
+# containers alone took a minute here, and an alarm that fires into a machine
+# that is still on wakes nothing.
+power_restart() {
+    local mode
+    mode="$(power_restart_mode)"
+    if [[ "$mode" == "power-cycle" ]]; then
+        if _power_can_wake; then
+            log_info "Switching off. The clock switches it back on in $(( POWER_RESTART_WAKE_SEC / 60 )) minutes."
+            sync
+            rtcwake -m off -s "$POWER_RESTART_WAKE_SEC" && return 0
+            log_warning "The clock alarm could not be set, so this is an ordinary reboot"
+        else
+            log_warning "No clock alarm on this machine now, so this is an ordinary reboot"
+        fi
+    fi
+    log_info "Rebooting."
+    systemctl reboot
+}
+
+_power_restart_show() {
+    if [[ "$(power_restart_mode)" == "power-cycle" ]]; then
+        echo -e "  Restart: ${GREEN}power-off, then the clock alarm${NC} ($(( POWER_RESTART_WAKE_SEC / 60 )) minutes)"
+    else
+        echo "  Restart: ordinary reboot"
+        echo "  If a reboot leaves this machine dark: corex manage power restart-mode power-cycle"
+    fi
+}
+
 power_show() {
     echo ""
     echo -e "${BOLD}Power${NC}"
@@ -347,6 +439,8 @@ power_show() {
 
     echo ""
     _power_cpu_show
+    echo ""
+    _power_restart_show
     echo ""
     if systemctl is-enabled corex-wol.service >/dev/null 2>&1; then
         echo -e "  Reapplied at boot: ${GREEN}yes${NC} (corex-wol.service)"

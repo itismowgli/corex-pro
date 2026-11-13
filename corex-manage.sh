@@ -1613,7 +1613,8 @@ cmd_os_upgrade() {
     echo ""
     if [[ -f /var/run/reboot-required ]]; then
         log_warning "Reboot required to activate the new kernel."
-        echo "    Reboot deliberately, when you can watch it come back up."
+        echo "    Restart deliberately, when you can watch it come back up:"
+        echo "    sudo corex manage power restart"
     else
         log_success "Upgrade complete, no reboot required."
     fi
@@ -3050,8 +3051,20 @@ cmd_power() {
                 *) power_cpu_set "$1" "${2:-balance_power}" ;;
             esac
             ;;
+        restart)
+            check_root
+            power_restart
+            ;;
+        restart-mode)
+            if [[ -z "${1:-}" ]]; then
+                power_restart_mode
+            else
+                check_root
+                power_restart_mode_set "$1"
+            fi
+            ;;
         *)
-            log_error "Usage: corex manage power [show|wol on|wol off|cpu <MHz>|cpu off]"
+            log_error "Usage: corex manage power [show|wol on|wol off|cpu <MHz>|cpu off|restart|restart-mode reboot|power-cycle]"
             ;;
     esac
 }
@@ -3622,6 +3635,13 @@ Commands:
                                         every boot. Worth 10C on hardware that
                                         cannot sustain its own boost clock
                         power cpu off   remove the ceiling
+                        power restart   restart the machine the way that is set
+                        power restart-mode power-cycle
+                                        restart by switching off and letting
+                                        the clock alarm switch it on, for a
+                                        board that stays dark after a reboot
+                        power restart-mode reboot
+                                        back to an ordinary reboot
   io-guard [sub]      Reboot when the system disk stops answering
                         io-guard            state of each watched disk
                         io-guard setup      install or update the guard

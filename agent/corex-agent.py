@@ -150,7 +150,10 @@ MUTATING = {"start", "stop", "restart", "repair", "update", "cleanup"}
 # The command is delayed a few seconds so the caller gets an answer and the
 # Telegram message leaves while there is still a network.
 POWER = {
-    "reboot":   (["systemctl", "reboot"],  "Rebooting now"),
+    # Through corex-manage, not systemctl: on a board that stays dark after a
+    # warm reset the restart has to be a power-off and a clock alarm, and
+    # /etc/corex/power.conf is where that is decided.
+    "reboot":   (["bash", MANAGE, "power", "restart"], "Restarting now"),
     "shutdown": (["systemctl", "poweroff"], "Shutting down now"),
 }
 POWER_DELAY = 4
@@ -675,6 +678,21 @@ def handle_io_guard_set(req):
 # ── Power ───────────────────────────────────────────────────────────────────
 
 
+POWER_CONF = os.environ.get("POWER_CONF", "/etc/corex/power.conf")
+
+
+def restart_mode(path=None):
+    """How a restart is done here: "reboot", or "power-cycle" when
+    power.conf asks for a power-off and a clock alarm."""
+    try:
+        with open(path or POWER_CONF, encoding="utf-8", errors="replace") as fh:
+            text = fh.read()
+    except OSError:
+        return "reboot"
+    found = re.findall(r'^POWER_RESTART_MODE="?([a-z-]*)"?\s*$', text, re.M)
+    return "power-cycle" if found and found[-1] == "power-cycle" else "reboot"
+
+
 def _power_fire(mode, argv):
     """Run the command after a pause, and report if it refuses to run."""
     time.sleep(POWER_DELAY)
@@ -700,8 +718,9 @@ def _power_fire(mode, argv):
             "fail", "The %s did not happen" % mode,
             "systemd refused the request, so the machine is still running.",
             detail=detail,
-            footer="Try it over SSH: sudo systemctl %s" %
-                   ("reboot" if mode == "reboot" else "poweroff")))
+            footer="Try it over SSH: sudo %s" %
+                   ("corex manage power restart" if mode == "reboot"
+                    else "systemctl poweroff")))
 
 
 def handle_power(mode, req):
@@ -731,6 +750,10 @@ def handle_power(mode, req):
             body = ("Asked for by %s from the dashboard. Nothing on the network "
                     "can turn it back on again." % actor)
             footer = "Cut and restore the power at the plug to boot it."
+        elif restart_mode() == "power-cycle":
+            body = ("Asked for by %s from the dashboard. It switches fully off "
+                    "and its clock switches it back on." % actor)
+            footer = "It should answer again in about six minutes."
         else:
             body = "Asked for by %s from the dashboard." % actor
             footer = "It should answer again in a couple of minutes."
