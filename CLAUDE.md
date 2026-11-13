@@ -3583,6 +3583,48 @@ The general rule is gotcha #84's with the condition added: a test of a
 recovery path has to reproduce the fault the path exists for. A power-off
 test with a healthy disk tested the alarm and nothing else.
 
+### 89. A reboot is a warm reset, and this hardware does not come back from one
+
+On 2026-11-13 the box was rebooted with `sudo reboot` after a clean shutdown:
+the journal ends at `Reached target reboot.target` with no NVMe error in the
+whole boot. It then showed nothing on its screen, no firmware logo and no
+"no boot device", through two more restarts, for seven hours. Switching it
+off and on brought it back at once.
+
+A blank screen means the firmware never finished its own start, so nothing
+in the boot order ran. The rescue entry (gotcha #88) covers a firmware that
+starts and finds no disk. It cannot cover this.
+
+What does work was measured the same evening:
+
+```bash
+sync; sudo rtcwake -m off -s 300
+```
+
+Off at 19:00:54, alarm at 19:04:53, answering at 19:05:26, Unsafe Shutdowns
+unchanged. `corex manage power restart-mode power-cycle` makes that the
+restart, and `power restart` and the dashboard's Reboot button follow it.
+
+Three things to keep straight.
+
+**Never run or suggest `reboot` on this box.** Use `corex manage power
+restart`. A test that needs a restart needs the operator beside the machine.
+
+**The mode is opt-in and fails toward a reboot.** A board that does not wake
+from its clock alarm would power off and stay off, which is worse than the
+fault. So it is refused where there is no alarm, and an alarm that cannot be
+set becomes an ordinary reboot.
+
+**Paths that still warm-reset are outside this.** The hardware watchdog, a
+kernel panic with `kernel.panic=10`, and the disk guard's cold-reset fallback
+all reset without powering off. None of them can set an alarm first.
+
+The setup command for the rescue entry had its own fault the same day.
+`readlink -f` succeeds when only the last part of a path is missing and
+prints the path it was given, so "is there a rescue partition" answered with
+a name on a box that had none, and setup skipped the partitioning. Test for
+a block device, never for a non-empty answer.
+
 ---
 
 ## What NOT to Do
