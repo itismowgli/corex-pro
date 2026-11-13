@@ -151,7 +151,10 @@ export const METRICS = {
       },
       state: "stalling", in_boot_grace: false, memory_locked: true,
     },
+    // The return that took days is the awkward case on purpose: it must read
+    // as an outage, not as a recovery.
     events: [
+      { at: "2026-11-13T08:45:46+0530", event: "returned", after: "power-cycle", after_sec: 314136, unattended: false },
       { at: "2026-10-27T22:52:51+0530", event: "reboot", device: "dm-0", in_flight: 22, stalled_sec: 120 },
       { at: "2026-10-27T15:48:10+0530", event: "start" },
     ],

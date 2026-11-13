@@ -586,7 +586,17 @@ export type IoGuard = {
     /** The board's wake alarm can be set, so power-cycle can switch it back on. */
     rtc_alarm?: boolean
   } | null
-  events: { at: string; event: string; device?: string; in_flight?: number; stalled_sec?: number }[]
+  events: {
+    at: string
+    event: string
+    device?: string
+    in_flight?: number
+    stalled_sec?: number
+    /** On a "returned" event: seconds from the action to the machine being back. */
+    after_sec?: number
+    /** On a "returned" event: it came back without anyone touching it. */
+    unattended?: boolean
+  }[]
 }
 
 export type IoGuardSettings = Partial<{

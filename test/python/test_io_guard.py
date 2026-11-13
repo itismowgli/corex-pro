@@ -121,5 +121,78 @@ class Devices(unittest.TestCase):
             self.assertEqual(m._disks_under("sda1"), {"sda"})
 
 
+class PowerCycle(unittest.TestCase):
+    """The power-off that hung. On 2026-11-07 and 2026-11-09 the guard asked
+    for a power-off on a dead disk and the machine stayed down for days."""
+
+    def run_cycle(self, rtc=True, reboot_type=True):
+        with tempfile.TemporaryDirectory() as root:
+            paths = {n: os.path.join(root, n) for n in ("sysrq", "rtc", "type")}
+            for p in paths.values():
+                open(p, "w").close()
+            sysrq = os.open(paths["sysrq"], os.O_WRONLY | os.O_APPEND)
+            rtc_fd = os.open(paths["rtc"], os.O_WRONLY | os.O_APPEND) if rtc else None
+            type_fd = os.open(paths["type"], os.O_WRONLY) if reboot_type else None
+            waits = []
+            path = g.power_cycle(sysrq, rtc_fd, type_fd, sleep=waits.append)
+            for fd in (sysrq, rtc_fd, type_fd):
+                if fd is not None:
+                    os.close(fd)
+            out = {n: pathlib.Path(p).read_text() for n, p in paths.items()}
+            return path, out, waits
+
+    def test_a_poweroff_that_never_finishes_becomes_a_cold_reset(self):
+        # sleep is faked, so the process is "still running" after the grace:
+        # exactly what a power-off stuck in device shutdown looks like.
+        path, out, waits = self.run_cycle()
+        self.assertEqual(path, "cold-reset")
+        self.assertEqual(out["sysrq"], "suob")
+        self.assertEqual(out["type"], "pci")
+        self.assertIn(g.POWEROFF_GRACE_SEC, waits)
+
+    def test_the_alarm_goes_off_after_the_poweroff_has_had_its_time(self):
+        # An alarm that fires while the machine is still shutting down wakes
+        # nothing, and the machine then stays off for good.
+        self.assertGreater(g.POWER_CYCLE_OFF_SEC, g.POWEROFF_GRACE_SEC + 60)
+        _, out, _ = self.run_cycle()
+        self.assertEqual(out["rtc"], "0+%d" % g.POWER_CYCLE_OFF_SEC)
+
+    def test_no_alarm_means_a_reboot_and_no_poweroff(self):
+        path, out, _ = self.run_cycle(rtc=False)
+        self.assertEqual(path, "reboot")
+        self.assertNotIn("o", out["sysrq"])
+
+    def test_cold_reset_still_resets_without_the_type_knob(self):
+        path, out, _ = self.run_cycle(reboot_type=False)
+        self.assertEqual(path, "cold-reset")
+        self.assertTrue(out["sysrq"].endswith("b"))
+
+
+class Returned(unittest.TestCase):
+    ACT = '{"at": "2026-11-09T17:30:10+0530", "device": "dm-0", "event": "power-cycle"}'
+    START = '{"at": "2026-11-13T08:45:46+0530", "event": "start"}'
+
+    def test_measured_to_now_when_this_is_the_first_start(self):
+        now = g._parse_at("2026-11-09T17:36:10")
+        ev, gap = g.pending_return([self.ACT], now)
+        self.assertEqual((ev["event"], gap), ("power-cycle", 360))
+        self.assertLessEqual(gap, g.SELF_RETURN_MAX_SEC)
+
+    def test_an_old_log_is_measured_to_its_own_start_not_to_now(self):
+        # The real log: an action, then one start 3.6 days later.
+        ev, gap = g.pending_return([self.ACT, self.START], g._parse_at("2026-12-25T00:00:00"))
+        self.assertEqual(gap, 314136)
+        self.assertGreater(gap, g.SELF_RETURN_MAX_SEC)
+        self.assertEqual(g.how_long(gap), "3.6 days")
+
+    def test_reported_once(self):
+        done = '{"after_sec": 314136, "at": "2026-11-13T11:00:00+0530", "event": "returned"}'
+        self.assertIsNone(g.pending_return([self.ACT, self.START, done, self.START], 0))
+        self.assertIsNone(g.pending_return([self.ACT, self.START, self.START], 0))
+
+    def test_nothing_pending_and_garbage_lines(self):
+        self.assertIsNone(g.pending_return([self.START, "not json", "[1]", ""], 0))
+
+
 if __name__ == "__main__":
     unittest.main()

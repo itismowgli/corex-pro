@@ -3071,6 +3071,34 @@ cmd_io_guard() {
     esac
 }
 
+# An alert from outside the machine when it stops. See lib/heartbeat.sh.
+cmd_heartbeat() {
+    source "${SCRIPT_DIR}/lib/heartbeat.sh"
+    local sub="${1:-status}"
+    shift || true
+    case "$sub" in
+        status|"") heartbeat_status || true ;;
+        setup)     check_root; heartbeat_setup "${1:-}" ;;
+        test)      check_root; heartbeat_test ;;
+        disable|off|remove) check_root; heartbeat_disable ;;
+        *) log_error "Usage: corex manage heartbeat [status|setup <https url>|test|disable]" ;;
+    esac
+}
+
+# Keep trying when the firmware cannot see the system disk. See lib/rescue_boot.sh.
+cmd_rescue_boot() {
+    source "${SCRIPT_DIR}/lib/rescue_boot.sh"
+    local sub="${1:-status}"
+    shift || true
+    case "$sub" in
+        status|"") rescue_boot_status || true ;;
+        setup)     check_root; rescue_boot_setup "${1:-}" ;;
+        test)      check_root; rescue_boot_test ;;
+        remove)    check_root; rescue_boot_remove ;;
+        *) log_error "Usage: corex manage rescue-boot [status|setup [disk]|test|remove]" ;;
+    esac
+}
+
 cmd_dashboard_user() {
     local sub="${1:-list}"
     shift || true
@@ -3598,9 +3626,21 @@ Commands:
                         io-guard            state of each watched disk
                         io-guard setup      install or update the guard
                         io-guard enable     or disable
-                        io-guard set action reboot|alert
+                        io-guard set action reboot|power-cycle|alert
                         io-guard set stall  30-3600 seconds stuck before acting
                         io-guard set grace  120-7200 seconds after boot to wait
+  heartbeat [sub]     Tell a service outside the house that this machine is
+                      working, so something notices when it stops
+                        heartbeat             whether it is set up and beating
+                        heartbeat setup URL   send a beat a minute to URL
+                        heartbeat test        send one now
+                        heartbeat disable     stop and forget the URL
+  rescue-boot [sub]   A second boot entry on the data disk, so a boot that
+                      cannot see the system disk retries instead of stopping
+                        rescue-boot          whether it exists and is proven
+                        rescue-boot setup    create or refresh it
+                        rescue-boot test     route the next boot through it
+                        rescue-boot remove   delete the boot entry
   kuma-seed           Create the Uptime Kuma HTTP checks each installed module
                       declares, adopting any monitor of the same name
   watchdog [sub]      Resource alerting: temp, load, RAM, disk, container health
@@ -3702,6 +3742,8 @@ main() {
         agent)        cmd_agent "$@" ;;
         power)        cmd_power "$@" ;;
         io-guard)     cmd_io_guard "$@" ;;
+        heartbeat)    cmd_heartbeat "$@" ;;
+        rescue-boot)  cmd_rescue_boot "$@" ;;
         maintenance)  cmd_maintenance "$@" ;;
         lan-only)     cmd_lan_only "$@" ;;
         dashboard-user) cmd_dashboard_user "$@" ;;

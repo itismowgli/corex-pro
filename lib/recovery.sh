@@ -448,6 +448,14 @@ RCEOF
     # watchdog above never fires. This covers that case (gotcha #87).
     source "$(dirname "${BASH_SOURCE[0]}")/io_guard.sh"
     io_guard_install || log_warning "I/O guard not installed"
+    # Regenerated, not left as installed (gotcha #22). Only where the operator
+    # has given a URL: there is no default service to beat to.
+    source "$(dirname "${BASH_SOURCE[0]}")/heartbeat.sh"
+    if [[ -n "$(heartbeat_url)" ]]; then
+        heartbeat_setup || log_warning "Heartbeat not reinstalled"
+    else
+        log_warning "No outside heartbeat: nothing will notice if this machine stops. See: corex manage heartbeat"
+    fi
     _recovery_write_healer
     _recovery_write_units
     log_success "Self-recovery active (heals services, reboots only as a last resort)"

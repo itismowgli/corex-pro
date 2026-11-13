@@ -25,8 +25,9 @@ _io_guard_write_default_conf() {
 IO_GUARD_ENABLED=true
 
 # reboot:      restart the machine when the disk is stuck.
-# power-cycle: power off and let the board's clock switch it back on, so the
-#              disk loses power. A hung NVMe can survive a reboot.
+# power-cycle: power off and let the board's clock switch it back on five
+#              minutes later, so the disk loses power. A hung NVMe can survive
+#              a reboot. If the power-off itself hangs, the guard resets cold.
 # alert:       send a Telegram message and leave it alone.
 IO_GUARD_ACTION=reboot
 

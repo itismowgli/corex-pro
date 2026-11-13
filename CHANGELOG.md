@@ -8,7 +8,40 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
 
 ## [Unreleased]
 
+### Added
+- **An alert from outside the machine when it stops.** Everything that
+  watched this server ran on this server, so a machine that was down could
+  not say so, and on 2026-11-07 and 2026-11-09 it stayed down for 2.4 and 3.6
+  days. `corex manage heartbeat setup <url>` sends one request a minute to a
+  dead-man's-switch service of your choice, which alerts when they stop. Each
+  beat first writes to the system disk and asks Docker a question, so a
+  machine with a hung disk goes quiet while it still answers ping.
+- **A boot entry for the boot where the system disk is missing.**
+  `corex manage rescue-boot setup` puts a small EFI partition on the data disk
+  with a second boot entry. It boots the system disk when it can see it, and
+  otherwise waits 45 seconds and resets, so a machine whose firmware found no
+  boot disk keeps trying where it used to stop and wait for a person.
+- **The disk guard reports how long each recovery took.** At every start it
+  measures the gap since it last acted, records it, and sends it to Telegram.
+  A return that took days is shown on the System tab as an outage.
+- **The dashboard build checks accessibility on every screen.** Every control
+  needs a name, every field a label, and each page one heading and a main
+  landmark. The first run found no way for a keyboard to get past the
+  navigation, so there is now a skip link, and animations stop for anyone who
+  has asked their system for reduced motion.
+- **Every suite runs on Linux for each push.** `.github/workflows/ci.yml` runs
+  the syntax check, unit, Python and smoke tests, builds the dashboard image
+  and drives the login end to end.
+
 ### Fixed
+- **A power cycle that hung left the machine down for days.** The guard asked
+  the kernel to power off after arming a 90 second wake alarm. That power-off
+  shuts devices down in order, the stuck disk included, and nothing limited
+  how long it could take, so the alarm could fire into a machine that was
+  still on. The alarm is now five minutes out, and if the machine is still
+  running 150 seconds after the power-off was asked for, the guard resets it
+  cold through the chipset. Which of the two happened in November is not
+  recorded anywhere, because nothing can be written after the disk stops.
 - **The disk guard can power cycle, because a reboot did not bring the
   machine back.** On 2026-11-01 the guard caught a stuck NVMe and rebooted as
   designed. The machine did not return: a reboot keeps the disk powered, its

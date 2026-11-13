@@ -170,6 +170,8 @@ corex-pro/
 │   ├── agent.sh              # Privileged action agent + Telegram bot (#30)
 │   ├── selfheal.sh           # Boot self-repair: dpkg + unclean shutdown (#16)
 │   ├── io_guard.sh           # Reboot when the system disk stops answering (#87)
+│   ├── heartbeat.sh          # Beats to an outside service, so a dead box is noticed (#88)
+│   ├── rescue_boot.sh        # Boot entry on the data disk that retries a missing system disk (#88)
 │   └── services/             # One file per service (auto-discovered)
 │       ├── traefik.sh
 │       ├── adguard.sh
@@ -211,7 +213,9 @@ corex-pro/
 | `/etc/corex/power.conf` | CPU clock ceiling and energy preference (0644) |
 | `/etc/corex/io-guard.conf` | Stuck-disk guard: enabled, action, limits (0644) |
 | `/run/corex/io-guard.json` | Guard status, rewritten every 5s (memory) |
-| `/mnt/corex-data/io-guard.log` | Every time the guard started, alerted or rebooted |
+| `/mnt/corex-data/io-guard.log` | Every time the guard started, alerted, acted or came back |
+| `/etc/corex/heartbeat.conf` | Outside heartbeat URL, a secret (0600 root) |
+| `/var/lib/corex/heartbeat.last` | Time of the last beat the outside service accepted |
 | `${DOCKER_ROOT}/authelia/.secrets` | Authelia JWT, session and storage keys (0600) |
 | `${DOCKER_ROOT}/authelia/.admin-password` | Portal password, stable across re-runs (0600) |
 | `/var/lib/corex/maintenance.json` | What each scheduled task last did (0644) |
@@ -3525,6 +3529,59 @@ head -1 /proc/pressure/io
 ```
 
 Do not run `ps`, `sudo` or `docker` against it. Each one joins the queue.
+
+### 88. A recovery proved on a healthy disk is not proved
+
+The disk guard's `power-cycle` was tested on 2026-11-02: clean power-off, RTC
+alarm 90 seconds later, booted on its own. It then fired for real twice and
+the machine stayed down both times:
+
+| Guard acted | Back up | Down for |
+|---|---|---|
+| 2026-11-07 06:05 | 2026-11-09 16:37 | 2.4 days |
+| 2026-11-09 17:30 | 2026-11-13 08:45 | 3.6 days |
+
+The test had a working disk and the real event did not, and the power-off
+path depends on the disk. `sysrq b` calls the kernel's emergency restart,
+which shuts nothing down. `sysrq o` is the ordinary `kernel_power_off`, which
+runs every device's shutdown first, the hung NVMe included. So there are two
+ways it fails, and the logs cannot say which happened because nothing can be
+written after the disk stops: the power-off never finishes and the alarm
+fires into a running machine, or it finishes after the alarm time and nothing
+is left to wake it. A third is possible on this drive: it powers off, wakes,
+and the firmware finds no boot disk, which is what the 2026-11-01 reboot did.
+
+Four things follow, and each is in the tree.
+
+**Bound every step of a recovery.** The alarm is 300 seconds out and the
+power-off gets 150. If the guard is still running after that, it sets
+`/sys/kernel/reboot/type` to `pci` and sends `sysrq b`, which writes the
+full-reset value to port CF9 without shutting any device down. Whether CF9
+cuts power to the M.2 slot on a given board has to be measured: read the
+disk's SMART Power Cycles count before and after.
+
+**Record the outcome at the next start, since it cannot be recorded at the
+time.** The guard measures the gap between its last action and its own start
+and writes a `returned` event. The length tells the paths apart: about three
+minutes is the cold reset, about six is the alarm, and hours is a person.
+
+**The firmware does not retry, so give it something that does.**
+`lib/rescue_boot.sh` puts the system's own signed shim and GRUB on the data
+disk with a grub.cfg that boots the system disk if it can see it and
+otherwise sleeps and resets. It looks before it waits, so being first in the
+boot order by mistake costs nothing.
+
+**Nothing on the box can report the box being down.** Kuma, the watchdog and
+the bot all stopped with it, which is why a four minute promise turned into
+days without anyone knowing. `lib/heartbeat.sh` beats to a service outside
+the house. It is a timer and the guard is a daemon for opposite reasons: the
+guard has to survive a dead disk, and the heartbeat has to stop with one, so
+each beat starts a process, writes to the system disk and asks Docker
+something first.
+
+The general rule is gotcha #84's with the condition added: a test of a
+recovery path has to reproduce the fault the path exists for. A power-off
+test with a healthy disk tested the alarm and nothing else.
 
 ---
 

@@ -1932,6 +1932,7 @@ From the command line:
 sudo corex manage io-guard                    # state of each watched disk, recent events
 sudo corex manage io-guard setup              # install or update it
 sudo corex manage io-guard set action alert   # message only, never reboot
+sudo corex manage io-guard set action power-cycle   # power off and back on
 sudo corex manage io-guard set stall 300      # stuck for 5 minutes before acting
 sudo corex manage io-guard disable            # or enable
 ```
@@ -1940,6 +1941,67 @@ Settings are in `/etc/corex/io-guard.conf`. Events are logged to
 `/mnt/corex-data/io-guard.log`, on the data disk rather than the system disk
 for the same reason the blackbox log is. A restart cuts off whatever was
 being written, which is no worse than the power button and much sooner.
+
+A hung NVMe can stay hung through a reboot, and the firmware then finds no
+disk to boot. `power-cycle` is for that: it sets the board's clock to switch
+the machine on five minutes later and powers off, so the disk loses power. The
+kernel's power-off shuts devices down in order, the stuck disk included, so it
+can hang too. If the machine is still running 150 seconds after the power-off
+was asked for, the guard resets it cold through the chipset.
+
+Every time the machine comes back after the guard acted, the guard records
+how long that took and sends it to Telegram. A return within a few minutes was
+automatic. A return after hours means someone had to press the button, and
+the card shows it as the outage it was.
+
+### An alert from outside when the machine stops
+
+Uptime Kuma, the watchdog and the Telegram bot all run on this machine, so
+they stop when it does. The one failure they cannot report is the whole
+machine being down, and that is the failure that lasts longest.
+
+The heartbeat sends one request a minute to a dead-man's-switch service you
+choose, and that service alerts you when the requests stop. healthchecks.io
+has a free tier that sends to Telegram; a push monitor on an Uptime Kuma
+somewhere else works the same way. Create a check there that expects a beat
+every minute with three minutes of grace, then give CoreX its URL:
+
+```bash
+sudo corex manage heartbeat setup https://hc-ping.com/your-check-id
+sudo corex manage heartbeat          # is it beating, and when was the last one
+sudo corex manage heartbeat test     # send one now
+sudo corex manage heartbeat disable  # stop and forget the URL
+```
+
+Before each beat the machine writes to its system disk and asks Docker a
+question, and sends nothing unless both finish. A machine that answers ping
+with a dead disk therefore goes quiet, which is what raises the alarm. The
+request carries no hostname or address. The URL is stored in
+`/etc/corex/heartbeat.conf`, readable by root only, because whoever holds it
+can keep the alarm quiet.
+
+### A boot entry for when the system disk is missing
+
+Firmware tries each boot entry once. When the system disk does not answer at
+power-on, it finds nothing and waits at a "no boot device" screen until a
+person arrives.
+
+`rescue-boot` adds a 256MB EFI partition to the data disk and a second boot
+entry pointing at it. That entry looks for the system disk. If the disk is
+there it boots it at once. If not, it waits 45 seconds and resets, so the
+machine keeps trying and boots normally on the first attempt after the disk
+answers again. It cannot repair a dead disk.
+
+```bash
+sudo corex manage rescue-boot setup    # asks before adding the partition
+sudo corex manage rescue-boot test     # route the next boot through it, once
+sudo corex manage rescue-boot          # exists, position, and whether proven
+sudo corex manage rescue-boot remove   # delete the boot entry
+```
+
+Existing partitions are not moved or resized. After `test` and a reboot, the
+status line says whether the last boot came through the rescue entry and
+reached the system, which is the proof that the firmware can start it.
 
 ## Keeping a panel off the internet
 

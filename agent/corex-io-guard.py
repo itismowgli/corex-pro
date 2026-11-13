@@ -33,9 +33,16 @@ coming back.
 
 WHAT IT DOES
 
-  reboot   tells Telegram, asks the kernel to sync and remount read-only, then
-           reboots through /proc/sysrq-trigger, which needs no disk at all
-  alert    tells Telegram once per stall and leaves the machine alone
+  reboot       tells Telegram, asks the kernel to sync and remount read-only,
+               then reboots through /proc/sysrq-trigger, which needs no disk
+  power-cycle  arms the board's clock, powers off, and forces a cold reset if
+               the power-off itself hangs on the disk
+  alert        tells Telegram once per stall and leaves the machine alone
+
+At every start it looks for an action in the event log that has no return
+recorded against it, and records how long the machine took to come back. That
+number is the only evidence of which path a recovery took, because nothing can
+be written between the action and the next boot.
 
 It never acts during the first IO_GUARD_BOOT_GRACE_SEC of a boot, which is
 what stops one bad disk turning into a reboot loop.
@@ -70,8 +77,15 @@ EVENT_LOGS = tuple(filter(None, [os.environ.get("IO_GUARD_EVENT_LOG")])) or (
 SYSRQ = os.environ.get("IO_GUARD_SYSRQ", "/proc/sysrq-trigger")
 SYS_BLOCK = os.environ.get("IO_GUARD_SYS_BLOCK", "/sys/block")
 RTC_WAKE = os.environ.get("IO_GUARD_RTC", "/sys/class/rtc/rtc0/wakealarm")
-# Seconds between powering off and the board's clock switching it back on.
-POWER_CYCLE_OFF_SEC = 90
+REBOOT_TYPE = os.environ.get("IO_GUARD_REBOOT_TYPE", "/sys/kernel/reboot/type")
+# The alarm has to go off after the machine is off, or it wakes nothing. The
+# kernel's power-off shuts devices down in order, and on a hung NVMe that
+# means waiting out the driver's own timeouts, so the power-off gets
+# POWEROFF_GRACE_SEC to finish and the alarm is set well beyond that. The
+# first version used 90 seconds for the alarm and no limit on the power-off,
+# and on 2026-11-07 and 2026-11-09 the machine stayed dark for days.
+POWER_CYCLE_OFF_SEC = int(os.environ.get("IO_GUARD_ALARM_SEC", "300"))
+POWEROFF_GRACE_SEC = int(os.environ.get("IO_GUARD_POWEROFF_GRACE_SEC", "150"))
 INTERVAL = 5
 
 DEFAULTS = {
@@ -315,25 +329,40 @@ class Telegram:
         except Exception:                                   # noqa: BLE001
             self.ctx = None
 
-    def send(self, kind, headline, body, wait=8):
-        if not (self.token and self.chat and self.ctx):
-            return
+    def _post(self, kind, headline, body, wait):
         text = self.fmt(kind, headline, body) if self.fmt else "%s\n\n%s" % (headline, body)
         data = urllib.parse.urlencode({
             "chat_id": self.chat, "text": text,
             "parse_mode": "MarkdownV2" if self.fmt else "",
         }).encode()
         url = "https://api.telegram.org/bot%s/sendMessage" % self.token
+        try:
+            urllib.request.urlopen(url, data=data, timeout=wait, context=self.ctx).close()
+            return True
+        except Exception:                                   # noqa: BLE001
+            return False
 
-        def post():
-            try:
-                urllib.request.urlopen(url, data=data, timeout=wait, context=self.ctx).close()
-            except Exception:                               # noqa: BLE001
-                pass
-        _in_thread(post, wait + 1)
+    def send(self, kind, headline, body, wait=8):
+        """One attempt, abandoned after wait. For the moment before acting."""
+        if not (self.token and self.chat and self.ctx):
+            return
+        _in_thread(lambda: self._post(kind, headline, body, wait), wait + 1)
+
+    def send_when_online(self, kind, headline, body, tries=20, gap=30):
+        """Keep trying in the background. For a message sent at boot, when
+        this process is usually running before the network is."""
+        if not (self.token and self.chat and self.ctx):
+            return
+
+        def loop():
+            for _ in range(tries):
+                if self._post(kind, headline, body, 8):
+                    return
+                time.sleep(gap)
+        threading.Thread(target=loop, daemon=True).start()
 
 
-def reboot(sysrq_fd):
+def reboot(sysrq_fd, sleep=time.sleep):
     """Sync, remount read-only, reboot. All three are kernel requests.
 
     The sync and the remount are queued work that may never finish on a dead
@@ -347,14 +376,46 @@ def reboot(sysrq_fd):
         except OSError as exc:
             _say("sysrq %s failed: %s" % (key.decode(), exc))
         if pause:
-            time.sleep(pause)
+            sleep(pause)
 
 
-def power_cycle(sysrq_fd, rtc_fd):
-    """Arm the RTC alarm, then power off. Falls back to a reboot without one.
+def cold_reset(sysrq_fd, type_fd):
+    """Reset through the chipset's reset register, skipping device shutdown.
+
+    The reboot key calls the kernel's emergency restart, which shuts nothing
+    down and so cannot wait on a dead disk. With the reboot type set to pci it
+    writes the full-reset value to port CF9, which on most boards drops the
+    power rails for a moment, where the default ACPI reset keeps them up.
+    Whether this board cuts power to the disk that way has to be measured: the
+    disk's own Power Cycles counter goes up by one if it does.
+    """
+    if type_fd is not None:
+        try:
+            os.lseek(type_fd, 0, os.SEEK_SET)
+            os.write(type_fd, b"pci")
+        except OSError as exc:
+            _say("reboot type not set: %s" % exc)
+    try:
+        os.write(sysrq_fd, b"b")
+    except OSError as exc:
+        _say("sysrq b failed: %s" % exc)
+
+
+def power_cycle(sysrq_fd, rtc_fd, type_fd=None, sleep=time.sleep):
+    """Arm the RTC alarm, power off, and force a reset if the power-off hangs.
 
     The alarm is a sysfs write, so it needs no disk. It is cleared first,
     because the kernel refuses to arm an alarm that is already set.
+
+    The power-off key is not the emergency path the reboot key is: it runs the
+    kernel's ordinary power-off, which shuts every device down first, the hung
+    disk included. If this process is still running POWEROFF_GRACE_SEC later,
+    that shutdown is not going to finish, and a machine that is on but will
+    never power off is the worst outcome available: the alarm fires into a
+    running system and does nothing. So it resets cold instead.
+
+    Returns "poweroff", "reboot" or "cold-reset" for the path it ended on,
+    which only a test ever sees.
     """
     armed = False
     if rtc_fd is not None:
@@ -367,15 +428,86 @@ def power_cycle(sysrq_fd, rtc_fd):
             _say("RTC alarm failed: %s" % exc)
     if not armed:
         _say("no RTC alarm, rebooting instead of powering off")
-        reboot(sysrq_fd)
-        return
+        reboot(sysrq_fd, sleep)
+        return "reboot"
     for key, pause in ((b"s", 5), (b"u", 3), (b"o", 0)):
         try:
             os.write(sysrq_fd, key)
         except OSError as exc:
             _say("sysrq %s failed: %s" % (key.decode(), exc))
         if pause:
-            time.sleep(pause)
+            sleep(pause)
+    sleep(POWEROFF_GRACE_SEC)
+    _say("still running %ss after power-off was asked for, resetting cold" % POWEROFF_GRACE_SEC)
+    cold_reset(sysrq_fd, type_fd)
+    return "cold-reset"
+
+
+# ── What the last action led to ──────────────────────────────────────────────
+
+
+def _parse_at(text):
+    try:
+        return time.mktime(time.strptime(text[:19], "%Y-%m-%dT%H:%M:%S"))
+    except (ValueError, TypeError):
+        return None
+
+
+def pending_return(lines, now):
+    """The action still waiting for its return, as (event, seconds), or None.
+
+    An action followed by a "returned" line is accounted for. An action
+    followed by exactly one start is a log written before returns were
+    recorded, and the gap runs to that start, so an old outage is reported
+    once at its real length and does not grow. Two or more starts after it
+    means it is history and is left alone.
+    """
+    action, starts, first_start = None, 0, None
+    for line in lines:
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            continue
+        kind = ev.get("event") if isinstance(ev, dict) else None
+        if kind in ("reboot", "power-cycle"):
+            action, starts, first_start = ev, 0, None
+        elif kind == "returned":
+            action = None
+        elif kind == "start" and action is not None:
+            starts += 1
+            first_start = first_start or ev.get("at")
+    if action is None or starts > 1:
+        return None
+    begin = _parse_at(action.get("at"))
+    end = _parse_at(first_start) if starts else now
+    if begin is None or end is None or end < begin:
+        return None
+    return action, int(end - begin)
+
+
+def read_event_lines():
+    for path in EVENT_LOGS:
+        try:
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                return fh.read().splitlines()[-200:]
+        except OSError:
+            continue
+    return []
+
+
+def how_long(sec):
+    if sec < 90:
+        return "%d seconds" % sec
+    if sec < 5400:
+        return "%d minutes" % round(sec / 60)
+    if sec < 172800:
+        return "%d hours" % round(sec / 3600)
+    return "%.1f days" % (sec / 86400)
+
+
+# A machine that needed longer than this did not come back by itself: the
+# longest automatic path is the alarm plus a boot.
+SELF_RETURN_MAX_SEC = POWER_CYCLE_OFF_SEC + 600
 
 
 # ── Main loop ────────────────────────────────────────────────────────────────
@@ -418,6 +550,10 @@ def main():
         rtc_fd = os.open(RTC_WAKE, os.O_WRONLY)
     except OSError:
         rtc_fd = None
+    try:
+        type_fd = os.open(REBOOT_TYPE, os.O_WRONLY)
+    except OSError:
+        type_fd = None
     tg = Telegram()
     host = socket.gethostname()
     state = {"cfg": read_conf()}
@@ -443,6 +579,22 @@ def main():
     _say("watching %s, stall limit %ss, action %s, memory locked: %s" % (
         " ".join(state["devices"]) or "nothing", state["cfg"]["stall_sec"],
         state["cfg"]["action"], locked))
+    # Before the start line is written, so the first start after an action is
+    # this one and the gap is measured to now.
+    came_back = pending_return(read_event_lines(), time.time())
+    if came_back:
+        ev, gap = came_back
+        alone = gap <= SELF_RETURN_MAX_SEC
+        record({"event": "returned", "after": ev.get("event"), "after_sec": gap,
+                "unattended": alone})
+        if alone:
+            tg.send_when_online("ok", "%s is back" % host,
+                    "The system disk stopped and the machine recovered on its own, "
+                    "%s after it acted." % how_long(gap))
+        else:
+            tg.send_when_online("warn", "%s is back, but not by itself" % host,
+                    "The system disk stopped and the machine was down for %s. "
+                    "The automatic recovery did not bring it back." % how_long(gap))
     record({"event": "start", "devices": state["devices"], "action": state["cfg"]["action"],
             "stall_sec": state["cfg"]["stall_sec"], "memory_locked": locked})
 
@@ -473,6 +625,7 @@ def main():
             "devices_setting": cfg["devices"], "devices": per, "state": verdict,
             "in_boot_grace": in_grace, "uptime_sec": int(up), "memory_locked": locked,
             "rtc_alarm": rtc_fd is not None,
+            "cold_reset": type_fd is not None,
         })
 
         # A reboot that did not happen (sysrq refused, say) must not turn into
@@ -492,10 +645,10 @@ def main():
                         "Expect it back in about %s minutes." % (
                             detail,
                             "switching itself off and back on so the disk loses power" if cycle
-                            else "rebooting itself", "four" if cycle else "three"))
+                            else "rebooting itself", "seven" if cycle else "three"))
                 rebooted_at = time.monotonic()
                 if cycle:
-                    power_cycle(sysrq_fd, rtc_fd)
+                    power_cycle(sysrq_fd, rtc_fd, type_fd)
                 else:
                     reboot(sysrq_fd)
             elif worst_dev not in alerted:

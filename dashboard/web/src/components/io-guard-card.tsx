@@ -49,6 +49,14 @@ function when(at: string) {
   return Number.isNaN(d.getTime()) ? at : d.toLocaleString()
 }
 
+/** Seconds as the largest unit that reads naturally. */
+function span(sec: number): string {
+  if (sec < 90) return `${sec} seconds`
+  if (sec < 5400) return `${Math.round(sec / 60)} minutes`
+  if (sec < 172800) return `${Math.round(sec / 3600)} hours`
+  return `${(sec / 86400).toFixed(1)} days`
+}
+
 export function IoGuardCard({
   data,
   busy,
@@ -185,7 +193,7 @@ export function IoGuardCard({
             <Rows>
               {data.events
                 .filter((e) => e.event !== "start")
-                .slice(0, 5)
+                .slice(0, 6)
                 .map((e) => (
                   <Row
                     key={e.at + e.event}
@@ -195,13 +203,23 @@ export function IoGuardCard({
                         ? "Restarted"
                         : e.event === "power-cycle"
                           ? "Power cycled"
-                          : "Alerted"
+                          : e.event === "returned"
+                            ? e.unattended
+                              ? `Back on its own after ${span(e.after_sec ?? 0)}`
+                              : `Down for ${span(e.after_sec ?? 0)}`
+                            : "Alerted"
                     }
-                    tone={e.event === "alert" ? undefined : "warn"}
+                    tone={
+                      e.event === "alert" || (e.event === "returned" && e.unattended)
+                        ? undefined
+                        : "warn"
+                    }
                     hint={
-                      e.device
-                        ? `${e.device}: ${e.in_flight ?? "?"} requests waiting, ${e.stalled_sec ?? "?"}s with none completing`
-                        : undefined
+                      e.event === "returned" && !e.unattended
+                        ? "The automatic recovery did not bring it back. Someone had to."
+                        : e.device
+                          ? `${e.device}: ${e.in_flight ?? "?"} requests waiting, ${e.stalled_sec ?? "?"}s with none completing`
+                          : undefined
                     }
                   />
                 ))}
