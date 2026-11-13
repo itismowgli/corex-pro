@@ -59,7 +59,19 @@ _rescue_disk_of() {
     lsblk -slno NAME,TYPE "$src" 2>/dev/null | awk '$2=="disk"{print $1; exit}'
 }
 
-_rescue_part() { readlink -f "/dev/disk/by-partlabel/${RESCUE_LABEL}" 2>/dev/null; }
+# The rescue partition's device, or nothing when there is none.
+#
+# readlink -f succeeds when only the last part of a path is missing, and
+# prints the path it was given. So a box with no rescue partition answered
+# with a name, setup took that as "already made", skipped the partitioning
+# and failed at the mount. Only a block device counts.
+RESCUE_BY_LABEL="${RESCUE_BY_LABEL:-/dev/disk/by-partlabel}"
+_rescue_part() {
+    local dev
+    dev="$(readlink -f "${RESCUE_BY_LABEL}/${RESCUE_LABEL}" 2>/dev/null)" || true
+    if [[ -n "$dev" && -b "$dev" ]]; then echo "$dev"; fi
+    return 0
+}
 
 # The boot number of our entry, four hex digits, or nothing.
 _rescue_bootnum() {

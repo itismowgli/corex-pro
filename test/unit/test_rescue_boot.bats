@@ -43,3 +43,21 @@ setup() {
     # Formats only what carries its own label.
     grep -q 'Not formatting it' "${REPO_ROOT}/lib/rescue_boot.sh"
 }
+
+@test "a missing rescue partition is reported as none, not as a path" {
+    # readlink -f prints the path it was given when only the last part is
+    # missing, which made setup skip the partitioning on a box with none.
+    RESCUE_BY_LABEL="${BATS_TEST_TMPDIR}/by-partlabel"
+    mkdir -p "$RESCUE_BY_LABEL"
+    run _rescue_part
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "a rescue label that is not a block device does not count" {
+    RESCUE_BY_LABEL="${BATS_TEST_TMPDIR}/by-partlabel"
+    mkdir -p "$RESCUE_BY_LABEL"
+    : > "${RESCUE_BY_LABEL}/${RESCUE_LABEL}"
+    run _rescue_part
+    [ -z "$output" ]
+}

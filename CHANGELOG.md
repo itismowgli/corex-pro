@@ -34,6 +34,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
   and drives the login end to end.
 
 ### Fixed
+- **Rescue boot setup made nothing on a box that had no rescue partition.**
+  The lookup for an existing partition used `readlink -f`, which succeeds and
+  prints the path it was given when only the last part is missing. Setup read
+  that as a partition already made, skipped the partitioning and stopped at
+  "Could not mount". Only a block device counts as the partition now.
 - **A power cycle that hung left the machine down for days.** The guard asked
   the kernel to power off after arming a 90 second wake alarm. That power-off
   shuts devices down in order, the stuck disk included, and nothing limited
