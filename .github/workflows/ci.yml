@@ -43,10 +43,10 @@ jobs:
 
       # Compose generation, validated by the real docker compose. Nothing is
       # downloaded: config generation has to work with no network.
+      # As root, because each module's _dirs gives its data directories the
+      # uid the container runs as, the same as on a real install.
       - name: Smoke tests
-        env:
-          COREX_NO_DOWNLOADS: "1"
-        run: bats test/smoke
+        run: sudo env "PATH=$PATH" COREX_NO_DOWNLOADS=1 bats test/smoke
 
   dashboard:
     name: Dashboard image
