@@ -24,6 +24,14 @@ _generated() {
                         f' "$file"
 }
 
+# macOS has no flock. The lock itself is covered by its own test; these
+# need the script to get past it.
+_flock_stub() {
+    command -v flock >/dev/null 2>&1 && return 0
+    printf '#!/bin/bash\nexit 0\n' > "$1/flock"
+    chmod +x "$1/flock"
+}
+
 @test "update safety scripts parse" {
     run bash -n "$UPDATE_LIB"
     [ "$status" -eq 0 ]
@@ -203,11 +211,16 @@ echo "parallel=\${COMPOSE_PARALLEL_LIMIT:-} \$*" >> "$log"
 exit 0
 EOF
     chmod +x "$bin/sensors" "$bin/docker"
+    _flock_stub "$bin"
 
+    # The lock path is set because the default is under /run/corex, which
+    # only root can create: without it the script exits before it reads a
+    # marker, and these two tests passed only when the suite ran as root.
     run env PATH="$bin:$PATH" COREX_UPDATE_STATE_DIR="$marks" \
         COREX_STATE_FILE="${BATS_TEST_TMPDIR}/state.json" \
         COREX_CONFIG_FILE="${BATS_TEST_TMPDIR}/corex.conf" \
         COREX_UPDATE_THERMAL_CONF="${BATS_TEST_TMPDIR}/missing-thermal.conf" \
+        COREX_UPDATE_LOCK="${BATS_TEST_TMPDIR}/update.lock" \
         COREX_BLACKBOX_LOG="${BATS_TEST_TMPDIR}/blackbox.log" bash "$script"
     [ "$status" -eq 0 ]
     [ ! -e "$marks/n8n" ]
@@ -233,11 +246,13 @@ echo "\$*" >> "$log"
 exit 0
 EOF
     chmod +x "$bin/sensors" "$bin/docker"
+    _flock_stub "$bin"
 
     run env PATH="$bin:$PATH" COREX_UPDATE_STATE_DIR="$marks" \
         COREX_STATE_FILE="${BATS_TEST_TMPDIR}/state-disabled.json" DOCKER_ROOT="$root" \
         COREX_CONFIG_FILE="${BATS_TEST_TMPDIR}/missing.conf" \
         COREX_UPDATE_THERMAL_CONF="${BATS_TEST_TMPDIR}/missing-thermal.conf" \
+        COREX_UPDATE_LOCK="${BATS_TEST_TMPDIR}/update.lock" \
         COREX_BLACKBOX_LOG="${BATS_TEST_TMPDIR}/blackbox-disabled.log" bash "$script"
     [ "$status" -eq 0 ]
     [ ! -e "$marks/n8n" ]
