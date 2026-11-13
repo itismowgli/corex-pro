@@ -1,0 +1,65 @@
+# Runs every suite on Linux, the platform the code runs on. Several unit tests
+# fail on macOS for want of GNU sed, stat and grep, and one bug in this repo
+# was "measured" on a laptop and found to behave the opposite way on the
+# server, so a green run on a developer machine is not the answer.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shell:
+    name: Shell, unit, smoke and Python
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bats
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq bats
+
+      - name: Syntax
+        run: |
+          rc=0
+          while IFS= read -r -d '' f; do
+            bash -n "$f" || rc=1
+          done < <(find . -name '*.sh' -not -path './dashboard/web/node_modules/*' -print0)
+          exit "$rc"
+
+      - name: Unit tests
+        run: bats test/unit
+
+      - name: Python tests
+        run: python3 -m unittest discover -s test/python
+
+      # Compose generation, validated by the real docker compose. Nothing is
+      # downloaded: config generation has to work with no network.
+      - name: Smoke tests
+        env:
+          COREX_NO_DOWNLOADS: "1"
+        run: bats test/smoke
+
+  dashboard:
+    name: Dashboard image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      # The image build is the only supported build path. It runs the type
+      # check, every frontend check including the accessibility rules, go vet
+      # and the Go tests, so a failure in any of them fails here.
+      - name: Build
+        run: docker build -t corex-dashboard:ci dashboard
+
+      - name: Login, end to end
+        run: ./test/e2e/dashboard-auth.sh
