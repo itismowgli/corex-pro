@@ -177,6 +177,20 @@
   * {
     @apply border-border outline-ring/50;
   }
+  /* Someone who has asked their system for less motion gets none here. The
+     durations go to near zero and not to zero, so a transitionend or
+     animationend handler still fires and nothing waits on an event that
+     never comes. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
   body {
     @apply bg-background text-foreground antialiased;
     font-size: var(--text-body);

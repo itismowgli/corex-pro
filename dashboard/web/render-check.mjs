@@ -54,6 +54,7 @@ const SECTIONS = [
 ]
 
 import { DATA, SIGNED_IN } from "./fixtures.mjs"
+import { a11yFailures } from "./a11y-rules.mjs"
 
 // A duck-typed Response. jsdom does not ship one, and api.ts only ever touches
 // these four members.
@@ -116,6 +117,8 @@ const EXPECT = {
   // The disk guard reads its fixture: a live stall, and the restart it did.
   systemIoGuard: "Disk stalled for 45s",
   systemIoGuardEvent: "22 requests waiting, 120s with none completing",
+  // A recovery that took days is shown as the outage it was.
+  systemIoGuardReturn: "Down for 3.6 days",
   maintenance: "Never run",
   // The any-hour schedule, which must not render as a clock time.
   maintenanceAnyHour: "whenever it falls due",
@@ -249,6 +252,11 @@ for (const tab of TABS) {
         failures.push("mounted but did not show " + JSON.stringify(want))
       }
     }
+  }
+  // Only with data: the failing state draws error panels, and what has to be
+  // reachable there is covered by the same components.
+  if (withData) {
+    for (const f of a11yFailures(window.document)) failures.push("accessibility: " + f)
   }
   for (const line of consoleErrors) {
     if (line.includes("dashboard render failed")) failures.push("error boundary caught: " + line)

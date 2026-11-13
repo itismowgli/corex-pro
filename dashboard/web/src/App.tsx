@@ -559,6 +559,19 @@ function Dashboard({
 
   return (
     <div className="min-h-screen">
+      {/* First in the tab order, so a keyboard gets past twenty navigation
+          entries in one press. The section is in the URL hash, so the click
+          is handled here: following the link would read as a section change. */}
+      <a
+        href="#content"
+        onClick={(e) => {
+          e.preventDefault()
+          document.getElementById("content")?.focus()
+        }}
+        className="bg-card text-foreground text-body sr-only rounded-md border px-3 py-2 focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50"
+      >
+        Skip to content
+      </a>
       {/* The nav is a fixed column on a wide screen, so it cannot be scrolled
           away from and nothing rendered on the page can push it off. */}
       <aside
@@ -663,7 +676,11 @@ function Dashboard({
           </div>
         </header>
 
-        <main className="mx-auto flex w-full max-w-[90rem] flex-col gap-4 p-3 sm:p-5">
+        <main
+          id="content"
+          tabIndex={-1}
+          className="mx-auto flex w-full max-w-[90rem] flex-col gap-4 p-3 outline-none sm:p-5"
+        >
           <PageHeader title={navLabel(tab, me?.auth_enabled)} />
 
           {/* Banners and the running job sit under the header, never above the
