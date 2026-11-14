@@ -42,6 +42,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
   and drives the login end to end.
 
 ### Fixed
+- **One backup off schedule pushed every later one off it.** A task waited a
+  full interval even at its own hour, so a catch-up backup at 08:56 made
+  03:00 the next morning too soon, and the next backup came 36 hours after
+  the last. At its own hour a task now needs half an interval.
+- **Cleanup warned about old kernels on every run.** It printed "Old
+  kernels/orphans not removed" whether or not anything was left to remove.
+  It now counts what apt would remove and says so only when there is
+  something, and still never removes packages itself.
 - **Rescue boot setup made nothing on a box that had no rescue partition.**
   The lookup for an existing partition used `readlink -f`, which succeeds and
   prints the path it was given when only the last part is missing. Setup read

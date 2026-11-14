@@ -307,18 +307,27 @@ due() {
     last="$(state_get_last "$task")"
     now="$(date +%s)"
     elapsed=$(( now - last ))
-    (( elapsed >= interval * 3600 )) || return 1
-    # Its own hour, or overdue by half an interval again. The second clause is
-    # what makes this work on a machine that is switched off at night: without
-    # it a backup scheduled for 03:00 on a box that sleeps from 01:00 never
-    # happens, and the history says it is due forever.
     # "*" means any hour: a task cheap enough to run whenever its interval has
     # elapsed does not want a time of day, and pinning one to an hour makes a
     # six hourly task run once a day.
-    [[ "$hour" == "*" ]] && return 0
-    [[ "$(date +%-H)" == "$hour" ]] && return 0
-    (( elapsed >= interval * 3600 * 3 / 2 )) && return 0
-    return 1
+    if [[ "$hour" == "*" ]]; then
+        (( elapsed >= interval * 3600 ))
+        return
+    fi
+    # At its own hour, half an interval is enough. Asking for a whole one
+    # there lets a run that happened off schedule push every later one off
+    # it: a catch-up backup at 08:56 made 03:00 the next day only 18 hours
+    # later, so it was skipped, and the next backup came 36 hours after the
+    # last. The hour comes round once a day, so this cannot run twice.
+    if [[ "$(date +%-H)" == "$hour" ]]; then
+        (( elapsed >= interval * 3600 / 2 ))
+        return
+    fi
+    # Away from its hour, only when overdue by half an interval again. That is
+    # what makes this work on a machine that is switched off at night: without
+    # it a backup scheduled for 03:00 on a box that sleeps from 01:00 never
+    # happens, and the history says it is due forever.
+    (( elapsed >= interval * 3600 * 3 / 2 ))
 }
 
 # ── The tasks ───────────────────────────────────────────────────────────────

@@ -1138,8 +1138,16 @@ cmd_cleanup() {
         echo -e "  ${BOLD}Still eligible:${NC} $(_human "$after_total")"
     fi
     echo ""
-    log_warning "Old kernels/orphans not removed (dpkg transaction)."
-    echo "    Run manually when the system is stable: apt-get autoremove --purge"
+    # Packages are never removed here: removing one is a dpkg transaction,
+    # and a box that thermal trips part way through one is gotcha #18. So
+    # this only says whether there is anything to remove, and printed a
+    # warning on every run whether or not there was.
+    local removable
+    removable="$(apt-get -s autoremove 2>/dev/null | grep -c '^Remv ')" || true
+    if [[ "${removable:-0}" -gt 0 ]]; then
+        log_info "${removable} package(s) apt no longer needs, kept on purpose."
+        echo "    Remove them by hand when the machine is cool: sudo apt-get autoremove --purge"
+    fi
 
     if [[ $failures -gt 0 ]]; then
         log_warning "Cleanup finished with ${failures} failed step(s)."
