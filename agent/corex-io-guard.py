@@ -295,12 +295,20 @@ def record(event):
     event = dict(event, at=time.strftime("%Y-%m-%dT%H:%M:%S%z"))
     line = json.dumps(event, sort_keys=True) + "\n"
 
+    # Flushed to the disk before returning, not left in the page cache. The
+    # line that matters most is written seconds before a reset, and the sync
+    # key that follows can stall on the dead disk before it reaches this one.
+    # On 2026-11-17 that left the action as a run of NUL bytes: ext4 had grown
+    # the file and never written the data, so the next start found no action
+    # and recorded no return.
     def write():
         for path in EVENT_LOGS:
             if os.path.isdir(os.path.dirname(path)):
                 try:
                     with open(path, "a", encoding="utf-8") as fh:
                         fh.write(line)
+                        fh.flush()
+                        os.fsync(fh.fileno())
                     return
                 except OSError:
                     continue
@@ -464,8 +472,10 @@ def pending_return(lines, now):
     """
     action, starts, first_start = None, 0, None
     for line in lines:
+        # A reset part way through an append leaves NUL bytes where the data
+        # should be, and the next line is written straight after them.
         try:
-            ev = json.loads(line)
+            ev = json.loads(line.strip("\x00 \t"))
         except ValueError:
             continue
         kind = ev.get("event") if isinstance(ev, dict) else None

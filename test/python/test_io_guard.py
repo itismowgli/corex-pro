@@ -196,3 +196,33 @@ class Returned(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EventLog(unittest.TestCase):
+    """The log line written seconds before a reset has to survive it.
+    On 2026-11-17 the action was left as NUL bytes on the data disk."""
+
+    def test_an_event_is_flushed_to_disk_before_record_returns(self):
+        synced = []
+        real = os.fsync
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "io-guard.log")
+            old_logs = g.EVENT_LOGS
+            g.EVENT_LOGS = (path,)
+            os.fsync = lambda fd: synced.append(fd) or real(fd)
+            try:
+                g.record({"event": "power-cycle", "device": "dm-0"})
+            finally:
+                os.fsync = real
+                g.EVENT_LOGS = old_logs
+            with open(path) as fh:
+                self.assertIn('"power-cycle"', fh.read())
+        self.assertEqual(len(synced), 1)
+
+    def test_a_line_after_a_run_of_nul_bytes_is_still_read(self):
+        lines = [
+            '{"at": "2026-11-17T04:09:00+0530", "event": "power-cycle"}',
+            "\x00" * 40 + '{"at": "2026-11-17T04:13:57+0530", "event": "start"}',
+        ]
+        ev, gap = g.pending_return(lines, now=0)
+        self.assertEqual((ev["event"], gap), ("power-cycle", 297))

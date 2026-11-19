@@ -42,6 +42,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and thi
   and drives the login end to end.
 
 ### Fixed
+- **The disk guard could lose the record of what it did.** It wrote its
+  action seconds before resetting the machine and left the line in memory,
+  so on 2026-11-17 the log held NUL bytes where the action should have been
+  and the next start recorded no return. Each event is now flushed to disk
+  before the guard goes on, and a line written after such damage is still
+  read.
 - **One backup off schedule pushed every later one off it.** A task waited a
   full interval even at its own hour, so a catch-up backup at 08:56 made
   03:00 the next morning too soon, and the next backup came 36 hours after

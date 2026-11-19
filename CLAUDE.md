@@ -3579,6 +3579,16 @@ guard has to survive a dead disk, and the heartbeat has to stop with one, so
 each beat starts a process, writes to the system disk and asks Docker
 something first.
 
+It has since worked for real. On 2026-11-14 the disk hung at 21:58, the
+guard acted at 22:00:50, and the guard's next start recorded a return 237
+seconds later with nobody there. That is shorter than the five minute alarm,
+so the power-off hung as predicted and the cold reset brought it back. The
+disk's Power Cycles count rose by one for each reset that week, so on this
+board a CF9 reset does cut power to the M.2 slot. A second hang on
+2026-11-17 came back the same way in about seven minutes, and showed one more
+trap: the action was written seconds before the reset and left in the page
+cache, so the log held NUL bytes in its place. Events are fsynced now.
+
 The general rule is gotcha #84's with the condition added: a test of a
 recovery path has to reproduce the fault the path exists for. A power-off
 test with a healthy disk tested the alarm and nothing else.
